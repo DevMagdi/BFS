@@ -1,8 +1,10 @@
 # BusinessFlow AI — Technical Baseline Proposal
 
-- **Status:** Technical recommendation for owner review; **not owner-approved, implemented, installed, or tested as an integrated stack**.
-- **Evidence date:** 2026-11-21 UTC. Stable package/release metadata was checked through PyPI, npm registry, and GitHub. No BusinessFlow baseline dependency was installed or added; the earlier temporary Gateway test install is recorded in `OPEN_SOURCE_INVENTORY.md`.
+- **Status:** Technical recommendation for owner review; it remains **not owner-approved**. Some component categories now appear in a separately task-authorized backend baseline; see [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md) for the actual versions/ranges, runtime choices, limits, and test evidence. This proposal's exact versions are not an approved lock or an integrated-stack claim.
+- **Evidence date:** 2026-11-21 UTC. Stable package/release metadata was checked through PyPI, npm registry, and GitHub. At the time of that review, no BusinessFlow baseline dependency had been installed or added; the earlier temporary Gateway test install is recorded in `OPEN_SOURCE_INVENTORY.md`.
 - **Scope:** Recommended initial component versions, compatibility, license observations, operations, alternatives, and open approvals.
+
+The later limited implementation does not approve the product or adopt the choices in this proposal wholesale. In particular, the current backend uses a task-scoped synchronous FastAPI/SQLAlchemy/PostgreSQL setup; it does not implement the proposed Keycloak/OIDC integration, frontend, outbox/worker, or storage adapter.
 
 The owner-confirmed product directions remain unchanged: self-hosted/on-prem first with future cloud portability; separate `Tenant` and `Company` with exactly one Company per Tenant in the MVP; first-party authentication plus OIDC/enterprise SSO, MFA, account linking/recovery, session management, and authorization. None of those directions approves the specific products or versions below.
 
@@ -63,4 +65,4 @@ A release/tag link identifies upstream source/version evidence, not a complete u
 - Confirmed product direction: Tenant/Company 1:1 MVP; self-hosted/on-prem first with cloud portability; hybrid first-party/OIDC identity and required MFA/linking/recovery/session/authorization.
 - Technical recommendations **not approved**: Python 3.13/FastAPI, Next/React, PostgreSQL 18.7, SQLAlchemy/Alembic, psycopg, Keycloak/Authlib, local filesystem storage, outbox, pytest/Playwright, OCI/Compose, and exact versions.
 - Open decisions: supported Linux platform, installation tenant topology, exact customer IdPs, MFA policy, local registration/bootstrap and SMTP, storage encryption/backup, PostgreSQL patch support policy, packaging and operational responsibilities.
-- No BusinessFlow dependencies were installed or introduced; no M0 or implementation work has started. The previously run external Gateway test used a temporary upstream checkout only.
+- **Historical at proposal review:** No BusinessFlow dependencies had been installed or introduced, and no M0/implementation work had started. A later explicit task authorized the bounded backend described in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md). The earlier external Gateway test still used only a temporary upstream checkout.

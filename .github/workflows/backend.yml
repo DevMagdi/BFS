@@ -1,0 +1,116 @@
+name: Backend checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-backend:
+    name: PostgreSQL integration and quality gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # These test-only credentials are scoped to this disposable service/job.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: bf_bootstrap
+          POSTGRES_PASSWORD: ci-bootstrap-password
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bf_bootstrap -d postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql+psycopg://bf_runtime:ci-runtime-password@127.0.0.1:5432/businessflow_test
+      MIGRATION_DATABASE_URL: postgresql+psycopg://bf_migrator:ci-migrator-password@127.0.0.1:5432/businessflow_test
+      TEST_DATABASE_URL: postgresql+psycopg://bf_runtime:ci-runtime-password@127.0.0.1:5432/businessflow_test
+      TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://bf_migrator:ci-migrator-password@127.0.0.1:5432/businessflow_test
+      TEST_ADMIN_DATABASE_URL: postgresql+psycopg://bf_bootstrap:ci-bootstrap-password@127.0.0.1:5432/businessflow_test
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate an ephemeral application signing key
+        run: echo "APP_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(48))')" >> "$GITHUB_ENV"
+
+      - name: Install project and development tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Create isolated PostgreSQL test roles and database
+        run: |
+          python - <<'PY'
+          import psycopg
+          from psycopg import sql
+
+          bootstrap_password = "ci-bootstrap-password"
+          with psycopg.connect(
+              dbname="postgres",
+              user="bf_bootstrap",
+              password=bootstrap_password,
+              host="127.0.0.1",
+              port=5432,
+              autocommit=True,
+          ) as connection, connection.cursor() as cursor:
+              cursor.execute(
+                  sql.SQL(
+                      "CREATE ROLE bf_migrator LOGIN PASSWORD {} "
+                      "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"
+                  ).format(sql.Literal("ci-migrator-password"))
+              )
+              cursor.execute(
+                  sql.SQL(
+                      "CREATE ROLE bf_runtime LOGIN PASSWORD {} "
+                      "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"
+                  ).format(sql.Literal("ci-runtime-password"))
+              )
+              cursor.execute("CREATE DATABASE businessflow_test OWNER bf_migrator")
+              cursor.execute("REVOKE ALL ON DATABASE businessflow_test FROM PUBLIC")
+              cursor.execute(
+                  "GRANT CONNECT ON DATABASE businessflow_test TO bf_runtime, bf_migrator"
+              )
+
+          with psycopg.connect(
+              dbname="businessflow_test",
+              user="bf_bootstrap",
+              password=bootstrap_password,
+              host="127.0.0.1",
+              port=5432,
+              autocommit=True,
+          ) as connection, connection.cursor() as cursor:
+              cursor.execute("REVOKE ALL ON SCHEMA public FROM PUBLIC")
+              cursor.execute("ALTER SCHEMA public OWNER TO bf_migrator")
+              cursor.execute("GRANT USAGE ON SCHEMA public TO bf_runtime")
+          PY
+
+      - name: Check formatting and lint
+        run: |
+          ruff format --check src migrations tests
+          ruff check src migrations tests
+
+      - name: Type check
+        run: mypy src/businessflow
+
+      - name: Upgrade schema and check model drift
+        run: |
+          alembic upgrade head
+          alembic check
+
+      - name: Run PostgreSQL integration tests
+        run: pytest -q

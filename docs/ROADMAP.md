@@ -1,7 +1,11 @@
 # BusinessFlow AI — Milestone Roadmap and Acceptance Gates
 
-- **Status:** Proposed sequencing; no milestone is complete.
+- **Status:** Proposed sequencing; no product milestone is declared complete by this roadmap.
 - **Rule:** A milestone advances only after implementation, tests, security review, documentation and acceptance evidence are reviewed. Do not start the next milestone while the current one is unverified.
+
+## Subsequent implementation authorization — 2026-11-21
+
+A later, explicit delivery task authorized a limited backend foundation, documented in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md). This supersedes the earlier no-implementation direction below only for that bounded code scope. It does not approve the proposed technical baseline as a product decision, complete the full sequential Milestone 0/1 gates, accept product/finance behavior, or authorize features outside that implementation note. The historical review and gate statements below remain accurate for the documentation review at the time they were written; use the backend guide for the current code status and verified local commands.
 
 ## Pre-Milestone 0 — Initial technical assessment (this review)
 
@@ -143,7 +147,7 @@ Record the exact commit/branch and commands; environment/tool versions; test tot
 
 ## Git and sequencing note
 
-The Arena session pins work to the active branch `arena/bcf45ac4-bfs`; do not switch, rename, or create another branch in this session. A documentation-only baseline may be committed and merged when explicitly authorized without marking a product milestone complete. Product/implementation changes still require their milestone gates and owner approval before integration; no unverified implementation code is to be merged.
+Use the branch selected by the current Arena coding session; do not switch, rename, or create another branch in that session. A documentation or code delivery may be merged only when its own requested scope is explicitly authorized and its applicable tests, security review, documentation, and acceptance gates have verified evidence. Such a delivery does not by itself mark unrelated product or finance milestones complete.
 
 ## Phase 1 product and market validation gate (before Product Baseline)
 

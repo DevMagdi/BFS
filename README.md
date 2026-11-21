@@ -1,17 +1,26 @@
 # BusinessFlow AI
 
-**Project documentation baseline** — New-Project Feasibility Decision Support for Project-Based Services Companies.
+**Project:** New-Project Feasibility Decision Support for Project-Based Services Companies.
 
 ## Current status
 
-The provisional MVP is documented and reviewed for this documentation delivery, initially hypothesizing Software & IT Services. It supports a human decision on whether to accept a proposed project and under what conditions. It is not a customer-validated Product Baseline or implementation approval.
+The product and MVP documents remain provisional; they are not customer-validated product approval. This repository now also contains a small Milestone 2 backend foundation, implemented under explicit task authorization. That work does not retroactively approve the proposed stack, settle finance policies, or complete the product definition.
 
-- Core scope, workflows, screens, and acceptance criteria are linked below.
-- The technical stack and proposed database/security controls remain unapproved. Finance policies and production calculations remain pending Finance-owner approval.
-- Tenant and Company remain distinct with a 1:1 MVP direction; self-hosted/on-prem-first and hybrid identity are requirements, not approval of particular technologies.
+- Product scope, workflows, screens, and acceptance criteria remain linked below.
+- The technical choices in the code are a minimal working baseline, not a permanent architecture or product decision.
+- Finance policies, accounting assumptions, and production calculations remain outside this implementation and require their own owners and approval.
 - The exact original 24 Part 2 requirements were not supplied. [`REQUIREMENTS_TRACEABILITY.md`](docs/REQUIREMENTS_TRACEABILITY.md) remains **BLOCKED**; no substitute list is used.
-- Founder-led 9–12 exploratory interviews continue separately under the bounded protocol; discovery does not block this provisional definition.
-- No Milestone 0 or implementation is authorized by these documents.
+- Discovery and product validation continue separately. This implementation does not claim that discovery or business acceptance gates are complete.
+
+## Backend implementation
+
+The current backend provides a versioned FastAPI API, PostgreSQL schema and Alembic migration, registration/login and refresh-session lifecycle, tenant-scoped owner/admin/member authorization, atomic tenant/company/owner onboarding, audit events, and PostgreSQL row-level security. It is intentionally a backend baseline, not a full MVP or a production-hardening approval.
+
+- [Backend implementation and local developer guide](docs/BACKEND_IMPLEMENTATION.md)
+- [PostgreSQL role initialization](scripts/README.md)
+- Safe placeholder configuration: [`.env.example`](.env.example)
+
+The integration tests require real PostgreSQL and separate runtime, migration, and test-admin connections. SQLite is not a supported test substitute for RLS. See the backend guide for setup and commands.
 
 ## Product requirements — start here
 
@@ -22,11 +31,11 @@ The provisional MVP is documented and reviewed for this documentation delivery, 
 5. [MVP Acceptance Criteria](docs/MVP_ACCEPTANCE_CRITERIA.md)
 6. [Roadmap and Approval Gates](docs/ROADMAP.md)
 
-The BRD's traceability map covers only its own BR/NFR IDs. It does not resolve the blocked original-24 exercise.
+The BRD traceability map covers only its own BR/NFR IDs. It does not resolve the blocked original-24 exercise.
 
 ## Domain and technical proposals
 
-These documents describe proposed designs; they do not freeze the technology or authorize implementation:
+These documents describe proposed designs. They do not freeze the technology or authorize additional implementation beyond the current task:
 
 - [Initial Technical Assessment](docs/INITIAL_TECHNICAL_ASSESSMENT.md)
 - [System Architecture](docs/ARCHITECTURE.md)
@@ -54,4 +63,4 @@ These documents describe proposed designs; they do not freeze the technology or 
 
 ## Delivery boundary
 
-This repository currently contains documentation proposals and requirements only. A merge of the documentation baseline does not approve the technical stack, accounting/finance policies, or implementation. Do not add product code, dependencies, migrations, or deployment artifacts until the separately documented owner and technical approval gates are met.
+The backend does not implement product/business calculations, resource or finance engines, AI/LLM/RAG or semantic engines, workflow automation, external ERP integrations, a large frontend, microservices, Kubernetes, or unrelated product features. It does not reconstruct the original 24 requirements or decide finance policy. Treat it as a limited implementation baseline; evaluate production deployment and future technical choices independently.

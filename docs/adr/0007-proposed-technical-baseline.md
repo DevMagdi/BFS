@@ -1,8 +1,10 @@
 # ADR 0007: Recommend a versioned Python/PostgreSQL self-hosted baseline
 
-- **Status:** Proposed technical recommendation; not owner-approved and not implementation authorization.
+- **Status:** Proposed technical recommendation; not owner-approved. The exact stack/version recommendations below remain proposals.
 - **Date:** 2026-11-21
 - **Detailed component matrix:** `../TECHNICAL_BASELINE_PROPOSAL.md`
+
+A later, separate delivery task authorized the limited backend described in [`../BACKEND_IMPLEMENTATION.md`](../BACKEND_IMPLEMENTATION.md). That task-scoped baseline uses some of the same component categories but does not accept this ADR, select the proposed versions wholesale, or approve product/finance decisions.
 
 ## Context
 
@@ -38,7 +40,6 @@ Metadata constraints were checked against PyPI/npm/GitHub on the review date, bu
 
 ## Consequences and approval gate
 
-- No package, image, database, identity service or deployment configuration has been installed or added.
-- The proposal does not approve PostgreSQL, Keycloak, storage, Compose, or any exact versions.
-- Owner review must accept or revise the baseline before implementation decisions are locked.
-- Milestone 0 remains unstarted and unauthorized until the owner explicitly approves it after reviewing the complete package.
+- **Historical at proposal review:** No package, image, database, identity service or deployment configuration had been installed or added. The later task added only the bounded code/configuration documented in `BACKEND_IMPLEMENTATION.md`.
+- The proposal does not approve PostgreSQL, Keycloak, storage, Compose, or any exact versions; the implementation does not change that status.
+- The full Milestone 0 gates and owner review of this proposed baseline remain incomplete; the separate backend task is not blanket authorization for other implementation decisions.

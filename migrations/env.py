@@ -7,6 +7,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from businessflow import models  # noqa: F401 - registers model metadata
+from businessflow.company_context import models as company_context_models  # noqa: F401
 from businessflow.database import Base
 
 config = context.config

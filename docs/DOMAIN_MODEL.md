@@ -1,8 +1,9 @@
 # BusinessFlow AI — Proposed Universal Domain Model
 
-- **Status:** Logical proposal for owner review; this is not an implemented database schema.
+- **Status:** This document remains the broad logical domain proposal; it is not a complete implemented schema.
 - **MVP hypothesis:** Software & IT Services, beginning with “Should we accept a new project?”
-- **Scope precedence:** This conceptual model is broader than the current provisional release boundary. [`BRD.md`](BRD.md) and [`MVP_SCOPE.md`](MVP_SCOPE.md) govern Must/Should/Out priority; candidate cash, hire/outsource, action and outcome concepts below are not automatically core-MVP commitments.
+- **Scope precedence:** This conceptual model is broader than the bounded Milestone 3 company-context implementation and the current provisional release boundary. [`BRD.md`](BRD.md) and [`MVP_SCOPE.md`](MVP_SCOPE.md) govern Must/Should/Out priority; candidate cash, hire/outsource, action and outcome concepts below are not automatically core-MVP commitments.
+- **Implemented subset:** The backend implements Business Unit, Department, Employee, Skill, Employee Skill, versioned Weekly Capacity, Project and Resource Assignment records. See [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md) for their actual fields, states, APIs, constraints and limitations. Parties, contracts, finance, imports, analytics and decision entities below remain proposals, not implemented M3 features.
 
 ## 1. Domain rules
 
@@ -19,15 +20,18 @@
 |---|---|
 | Tenant | Customer account and security/data-isolation boundary. Has exactly one `Company` in the MVP, plus memberships, sources, policies and tenant-scoped records. The tenant remains the parent if the company cardinality later expands. |
 | Company | The actual operating/legal business entity and its operational/financial context; belongs to one tenant and has base currency, timezone, locale and profile. Exactly one per tenant in the MVP; a future tenant may own multiple companies. |
-| Business Unit | Company organizational grouping; may contain departments. |
-| Department | Company subdivision with optional parent/business unit, manager and employees. |
+| Business Unit | Implemented company grouping with a name, optional description and active/inactive status; may contain departments. |
+| Department | Implemented company subdivision with a name, optional description and active/inactive status; it may reference one optional business unit. Nested departments and managers are not implemented. |
 | User / Membership | Authenticated person or service principal; a membership grants access to a tenant and optionally scoped roles. This is separate from an employee record. |
 | Access Role / Permission | Platform authorization role and permission catalog. Grants view/edit/approve/execute rights within a tenant/company/department scope. |
-| Job Role | Business position (e.g. developer, delivery lead, project manager); not an access-control role. |
-| Employee | Person working for a company, optionally linked to a user account. Has department, job role, manager, skills and restricted employment/cost data. |
-| Business Resource | Capacity-bearing resource, initially an employee and eventually other resource types such as a contractor or subcontractor. Has capacity, skill and allocation facts. |
-| Customer / Supplier | Roles played by a canonical external `Business Party`. One party may be both a customer and a supplier. |
-| Project | Planned, proposed, active or closed body of work for a company; can link to customer, contract(s), resources, time entries, revenue facts, expenses, invoices and commitments. A proposed project can be the subject of an acceptance decision before execution begins. |
+| Job Role | Business-position catalog (e.g. developer, delivery lead, project manager), distinct from access control. The current Employee model stores a job-title string; a Job Role entity is not implemented. |
+| Employee | Implemented tenant/company-scoped person record with employee code, full name, job title, optional department, active/on-leave/inactive/terminated status, employment dates and standard weekly hours. It is separate from `UserAccount`; employee logins, manager links, compensation and payroll are not implemented. |
+| Skill / Employee Skill | Implemented tenant-owned skill catalog and employee association. Proficiency is an explicit integer from 1 to 5 with labels from beginner through expert; both catalog and association have active/inactive status. |
+| Weekly Capacity | Implemented employee-specific Monday-start week record with confirmed/estimated/unknown availability, scheduled/non-project/unavailable hours, source and optional reason. Each correction appends a version; unknown/missing capacity is not treated as available. |
+| Business Resource | A broader future abstraction for employees and possible contractors/subcontractors. The current implementation supports employees only; a separate generic resource model is not implemented. |
+| Customer / Supplier | Roles played by a canonical external `Business Party`. One party may be both a customer and a supplier; parties and roles are not implemented. |
+| Project | Implemented company project with code, name, description, lifecycle status, start/planned/actual end dates and optional employee manager. It does not store customer, contract, financial facts or feasibility results. |
+| Resource Assignment | Implemented employee-to-project record with start/end dates, planned hours per week, proposed/committed/completed/cancelled status and audit-backed change history. It records intent, not a capacity-feasibility calculation. |
 | Contract | Commercial agreement with parties, value/currency, dates, payment terms and commitments. Terms are versioned or source-linked; the system does not replace the signed contract. |
 | Revenue Fact | Imported/verified recognized or planned revenue amount, date, currency and project/customer/source link. It is not a general ledger. Invoice value is not automatically treated as recognized revenue. |
 | Expense | Imported expense/cost fact, optional project/contract/supplier link, amount/currency/date/category and source evidence. |
@@ -53,14 +57,14 @@
 ## 3. Core relationship examples
 
 - A tenant has exactly one company in the MVP; people may have tenant memberships and separately be employees in that company. Tenant and company remain distinct 1:1 entities by owner decision. There is no multi-company selection or consolidation in the MVP.
-- A company has business units, departments, employees/resources, customers/suppliers, projects, contracts, budgets, goals, metrics, financial facts, policies and data sources.
-- A project can have a customer, be governed by one or more contracts, consume planned resource capacity, accrue time entries/expenses/commitments, generate revenue facts, and be invoiced. An invoice's due date and later payment receipt influence cash collection, not the accounting recognition rule.
-- A project acceptance case uses current project, contract, capacity, timesheet, cost, invoice/receivable and commitment facts. Its scenario must disclose which of these are absent or contradictory.
+- The implemented company-context subset supports business units, departments, employees, tenant-owned skills, weekly capacity, projects and employee resource assignments. The broader company concepts in this document—parties, contracts, budgets, goals, metrics, financial facts, policies and data sources—are not created by Milestone 3.
+- Future project relationships may include customers, contracts, time entries, expenses, commitments, revenue and invoices; none of those relationships or facts are part of the current M3 schema. An invoice's due date and later payment receipt influence cash collection, not the accounting recognition rule.
+- A future project-acceptance case may use current project, contract, capacity, timesheet, cost, invoice/receivable and commitment facts. It must disclose which are absent or contradictory. M3 creates no acceptance case, recommendation or calculation.
 - A decision case has one or more recommendation versions; each recommendation has alternatives and evidence. A human approval points to an exact option/version. Any resulting action has attempts and separate verification. Outcomes are attached to the original decision and may be recorded even if no external action was necessary.
 
 ## 4. Initial project-acceptance slice
 
-The following is a broad domain-design candidate, not the current release feature list. The provisional core is narrowed in [`MVP_SCOPE.md`](MVP_SCOPE.md): four options (current resources, manual reallocation, phase/defer, decline), with cash evidence, hiring/outsourcing estimates, internal actions and outcomes remaining conditional/Should Have. The first decision is not a canned AI answer. It is a deterministic calculation over validated, tenant-scoped facts:
+The following is a broad future domain-design candidate, not an implemented M3 capability or the current release feature list. The provisional core is narrowed in [`MVP_SCOPE.md`](MVP_SCOPE.md): four options (current resources, manual reallocation, phase/defer, decline), with cash evidence, hiring/outsourcing estimates, internal actions and outcomes remaining conditional/Should Have. The first decision is not a canned AI answer. It is intended to be a deterministic calculation over validated, tenant-scoped facts:
 
 1. Import project, employee/resource, timesheet, project cost/expense, invoice/receivable, contract and commitment data.
 2. Validate data types, required fields, uniqueness, currency, dates, relationships and reconciliation. Preserve raw input and source identifiers.
@@ -94,6 +98,6 @@ The domain is structured so the future change is primarily cardinality and polic
 
 ## 7. MVP model and decision contract references
 
-`MVP_ENTITY_CATALOG.md` defines each MVP entity’s status, ownership boundary, primary and important foreign keys, tenant isolation and uniqueness/integrity constraints. It also identifies deferred entities and makes clear that the model is logical only; no schema or migration is created.
+`MVP_ENTITY_CATALOG.md` remains the logical entity catalog: it describes candidate status, ownership boundaries, keys, tenant isolation and integrity constraints and identifies deferred entities. The implemented database subset is the two Alembic revisions described in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md); those migrations enforce the one-company-per-tenant foundation and add the limited M3 company-context schema.
 
-`MVP_DECISION_MODEL.md` is the proposed acceptance-decision contract. The listed formulas and action are recommendations for owner/finance review, not approved accounting policies or a release commitment. A recommendation must abstain when required evidence, an approved formula/policy, currency conversion, or authorization is missing.
+`MVP_DECISION_MODEL.md` is still a proposed acceptance-decision contract. The listed formulas and action are recommendations for owner/finance review, not approved accounting policies or a release commitment. No M3 implementation produces a recommendation; a future recommendation must abstain when required evidence, an approved formula/policy, currency conversion, or authorization is missing.

@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from businessflow.api.auth_routes import router as auth_router
+from businessflow.api.company_context_routes import router as company_context_router
 from businessflow.api.health_routes import router as health_router
 from businessflow.api.tenant_routes import router as tenant_router
 from businessflow.config import Settings, get_settings
@@ -109,6 +110,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(health_router)
     application.include_router(auth_router, prefix="/api/v1")
     application.include_router(tenant_router, prefix="/api/v1")
+    application.include_router(company_context_router, prefix="/api/v1")
     return application
 
 

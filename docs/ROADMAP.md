@@ -1,11 +1,11 @@
 # BusinessFlow AI — Milestone Roadmap and Acceptance Gates
 
-- **Status:** Proposed sequencing; no product milestone is declared complete by this roadmap.
-- **Rule:** A milestone advances only after implementation, tests, security review, documentation and acceptance evidence are reviewed. Do not start the next milestone while the current one is unverified.
+- **Status:** The Milestone 2 backend foundation is merged; a bounded Milestone 3 company-context implementation has been delivered and verified as described below. This roadmap does not declare the broader product, finance or original-requirements gates complete.
+- **Rule:** A milestone advances only after implementation, tests, security review, documentation and acceptance evidence are reviewed. Do not treat the M3 backend slice as authorization to begin later feature scope.
 
 ## Subsequent implementation authorization — 2026-11-21
 
-A later, explicit delivery task authorized a limited backend foundation, documented in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md). This supersedes the earlier no-implementation direction below only for that bounded code scope. It does not approve the proposed technical baseline as a product decision, complete the full sequential Milestone 0/1 gates, accept product/finance behavior, or authorize features outside that implementation note. The historical review and gate statements below remain accurate for the documentation review at the time they were written; use the backend guide for the current code status and verified local commands.
+Subsequent explicit delivery tasks authorized the Milestone 2 backend foundation and the bounded Milestone 3 company-context slice, documented in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md). These supersede the earlier no-implementation direction below only for those code scopes. They do not approve the proposed technical baseline as a general product decision, complete the full sequential Milestone 0/1 gates, accept product/finance behavior, or authorize features outside the implementation guide. The historical review and gate statements below remain accurate for the documentation review at the time they were written; use the backend guide for current code status and verified commands.
 
 ## Pre-Milestone 0 — Initial technical assessment (this review)
 
@@ -21,7 +21,7 @@ The founder's direction is to define a narrow MVP now, while customer discovery 
 
 The core is file-based intake, data-quality/freshness review, deterministic weekly capacity and finance observations, four bounded options (current resources, manual reallocation, phase/defer, decline), a source-linked brief, and a human-recorded choice with explicit abstention. Hiring/outsourcing estimates, cash observations, internal follow-up tasks, and outcome tracking remain conditional/Should Have. No preferred option appears without the required business/finance policy approval. See [`MVP_SCOPE.md`](MVP_SCOPE.md) for the complete boundary and planning-only demonstrable slices.
 
-Customer discovery remains the already-authorized 9–12 founder-led exploratory interviews; it may revise the hypothesis but does not block defining this provisional scope. Keep the existing technical-baseline approval, finance-policy approval, and exact-original-24 traceability gates separate. **Do not start Milestone 0 or any implementation.**
+Customer discovery remains the already-authorized 9–12 founder-led exploratory interviews; it may revise the hypothesis but does not block defining this provisional scope. Keep the existing technical-baseline approval, finance-policy approval, and exact-original-24 traceability gates separate. The original instruction not to start implementation was superseded only by the subsequent M2 and M3 delivery authorizations described above; it does not authorize other milestones or product/finance behavior.
 
 ## Milestone 0 — Repository initialization and engineering standards
 
@@ -59,13 +59,20 @@ Customer discovery remains the already-authorized 9–12 founder-led exploratory
 
 ## Milestone 3 — Company context and canonical business model
 
-**Scope:** Company, business units/departments, employees/job roles/resources/capacity, parties, projects, contracts, financial facts, commitments, goals/KPIs/policies as approved; data source registry and first lineage references.
+**Status:** The bounded M3 backend slice is implemented for delivery as documented in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md). This does not claim that the broader canonical model or product acceptance gates are complete.
 
-**Acceptance gates:**
-- Canonical relationships are constrained and tenant-aware.
-- Imported source identifiers and company context are preserved.
-- Company/project/resource/party operations do not depend on a particular ERP schema.
-- Domain invariants and sensitive access are tested and documented.
+**Delivered scope:** Tenant-isolated business units and departments; employees kept separate from user accounts; tenant-owned skills and employee-skill proficiency/status; versioned employee weekly capacity; project lifecycle and employee resource assignments; and a factual, bounded company-context summary. Pydantic validation, paginated/filterable APIs, owner/admin write and member read permissions, audit-backed change history, tenant-aware foreign keys and forced PostgreSQL RLS are included.
+
+**Explicitly not delivered:** Job-role catalogs, non-employee resources, parties/CRM, contracts, financial facts or policies, commitments, goals/KPIs, imports/lineage, HR/payroll, analytics, AI, feasibility or utilization calculations, or other Milestone 3 concepts from the broader logical proposal. These require separate scope and policy decisions.
+
+**Acceptance evidence for this implementation slice:**
+- Migration `0002_company_context` cleanly upgrades M2's `0001_backend_foundation`; a real-PostgreSQL test upgrades a populated M2 schema and checks that existing tenant/company/membership rows remain.
+- All eight M3 tables use forced tenant RLS and the non-owner `bf_runtime` role. Tests cover missing context, pooled connection reuse across two tenants, cross-tenant writes and tenant/company composite-FK integrity.
+- Domain/API tests cover role permissions, validation, pagination/filters, audit history, Monday-start capacity versions, missing/unknown capacity, assignment/project lifecycle and factual summary limits.
+- Clean migration, Alembic drift, Ruff, mypy and the preserved M2 PostgreSQL regression suite are verified as reported in the backend guide. Docker, Compose and alternative container runtimes were unavailable, so no container run is claimed; real-PostgreSQL checks used an embedded PostgreSQL 18 test instance. CI results are reported separately after the delivery PR.
+- B.I.A.S.E.D. was reviewed for reuse: the inspected Apache-2.0 snapshot exposed no suitable canonical M3 model, and its Python `>=3.14` requirement is incompatible with this project's supported `>=3.11,<3.14`; no code or dependency was reused.
+
+The exact original 24 Part 2 requirements remain blocked, and product/finance policy approval remains separate. Milestone 4 is not started by this delivery.
 
 ## Milestone 4 — Data integration and data quality
 

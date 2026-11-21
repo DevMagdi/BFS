@@ -1,13 +1,13 @@
-# BusinessFlow AI — Initial Database Design Proposal
+# BusinessFlow AI — Database Design Proposal and Implemented Subset
 
-- **Status:** Logical database proposal for owner review; no migrations or production schema have been created.
-- **Primary store proposal:** PostgreSQL; this is not an approved technology selection.
+- **Status:** The ERD and broad table catalog remain logical proposals. The bounded backend baseline now has Alembic migrations `0001_backend_foundation` and `0002_company_context`; this is not a claim that the full proposed production schema is implemented.
+- **Primary store:** The authorized M2/M3 backend uses PostgreSQL; this does not approve every technology choice in the broader proposal or establish production architecture.
 - **Scope precedence:** Table groups and entities below are schema candidates, not a promise that every capability is in the core release. [`BRD.md`](BRD.md) and [`MVP_SCOPE.md`](MVP_SCOPE.md) govern business priority; optional cash, action and outcome entities do not make those features Must Have.
 - **Design goal:** Multi-tenant canonical business facts and traceable decisions without replacing a customer's book-of-record.
 
 ## 1. Logical ERD
 
-The diagram is logical, not a migration contract. `tenant_id` is omitted from many diagram nodes for legibility; every Tenant-owned business row carries it, while the `tenant` root table uses its own `id` as the isolation key (no redundant `tenant_id`). Global identity/permission catalogs are the other limited exceptions described below. The owner confirmed `Tenant` and `Company` as separate entities with exactly one company per tenant in the MVP. The proposed schema uses a unique company-per-tenant constraint plus a deferred tenant-to-company reference to enforce the 1:1 pair at transaction commit; implementation and PostgreSQL validation are still pending. The 1:1 is an MVP cardinality constraint, not a permanent domain limitation.
+The diagram is logical, not a migration contract. `tenant_id` is omitted from many diagram nodes for legibility; every Tenant-owned business row carries it, while the `tenant` root table uses its own `id` as the isolation key (no redundant `tenant_id`). Global identity/permission catalogs are the other limited exceptions described below. The backend foundation enforces `Tenant` and `Company` as separate entities with exactly one company per tenant: a unique company-per-tenant constraint plus a deferred tenant-to-company reference enforces the 1:1 pair at transaction commit. PostgreSQL validates this implementation and M3 adds company-scoped tables that preserve the same tenant/company pairing. The 1:1 is an MVP cardinality constraint, not a permanent domain limitation; expanding it remains a future, separately approved migration.
 
 ```mermaid
 erDiagram
@@ -98,7 +98,11 @@ The ERD shows the MVP 1:1 constraint. The domain keeps tenant-scoped facts and e
 | Decision and governance | `decision_case`, `decision_subject`, `recommendation`, `recommendation_option`, `recommendation_evidence`, `approval_request`, `approval_decision`, `action`, `action_attempt`, `action_verification`, `outcome_measurement` |
 | Audit | `audit_event` (separate from business events and mutable operational state) |
 
-Global lookup catalogs (for example, the permission catalog or currency metadata) need not be tenant-owned. All business records, memberships, imports, policies, decisions, approvals, actions, outcomes and audit rows are tenant-scoped.
+### Implemented M2/M3 subset
+
+The implemented schema is intentionally smaller than the table catalog above. `0001_backend_foundation` creates users, authentication sessions/tokens/throttles, tenants, the one primary company, memberships, onboarding idempotency records and audit events. `0002_company_context` creates `business_units`, `departments`, `employees`, `skills`, `employee_skills`, `employee_weekly_capacity`, `projects` and `resource_assignments`. All are UUID-backed, tenant-owned and protected by forced RLS; company-context relationships use composite tenant/company foreign keys. Skills use tenant scope; other listed business-context rows carry tenant and company scope. Weekly capacity versions and assignment changes preserve history. This subset does not create the other candidate tables in the broad catalog.
+
+Global lookup catalogs (for example, the permission catalog or currency metadata) need not be tenant-owned. In the implemented subset, all new company-context business rows are explicitly tenant-scoped; memberships and audit rows are tenant-scoped. Imports, policies, decisions, approvals, actions and outcomes remain unimplemented candidates.
 
 ## 3. Keys, references and constraints
 
@@ -121,11 +125,11 @@ Global lookup catalogs (for example, the permission catalog or currency metadata
 5. Keep tenant context inside the transaction so pooled connections cannot retain another tenant's scope. Do not provide a general application `SET ROLE` or bypass flag.
 6. Any system-wide maintenance/admin operation uses a narrow, audited, separately authorized path. Do not expose an ordinary “skip RLS” application mode.
 
-**Required isolation tests:** run against PostgreSQL and exercise read, insert, update, delete, joins, foreign keys, conflict/upsert paths, background jobs, connection-pool reuse, missing tenant context, object-ID guessing, and privileged/admin behavior across two tenants. Include company-scope and department/compensation permissions. SQLite cannot validate PostgreSQL RLS semantics.
+**Required isolation tests:** run against PostgreSQL and exercise read, insert, update, delete, joins, foreign keys, conflict/upsert paths, background jobs, connection-pool reuse, missing tenant context, object-ID guessing, and privileged/admin behavior across two tenants. Include company-scope and department/compensation permissions. SQLite cannot validate PostgreSQL RLS semantics. The implemented M3 integration suite covers forced RLS on all eight new tables, missing context, two-tenant pooled-connection reuse, wrong-tenant writes, same-tenant/company composite-FK rejection, and restricted runtime grants; future tables and background jobs need their own coverage.
 
 ## 5. Company and organization hierarchy
 
-`tenant` → exactly one `company` in the MVP, as owner-confirmed separate entities. Provision them together. Multiple companies and consolidated reporting are not supported within a tenant; a future migration may expand the cardinality while retaining company-scoped facts. Within a company: `business_unit` → `department` (departments may have a parent department) → `employee` / `business_resource`. Managers are explicit relationships, not inferred from names. `job_role` describes work; `access_role` grants product permissions. An employee can be linked to a user account but is not required to have login access.
+`tenant` → exactly one `company` in the implemented MVP foundation. Provision them together. Multiple companies and consolidated reporting are not supported within a tenant; a future migration may expand the cardinality while retaining company-scoped facts. The M3 organization hierarchy is `business_unit` → `department` → `employee`; a department has at most one optional business-unit reference. Nested departments, manager relationships, a `job_role` catalog, and generic `business_resource` records are not implemented. The Employee model stores a job-title string and is separate from `UserAccount`; employees do not need login access. `access_role` remains the product-permission role, not a business job title.
 
 Compensation and cost-rate data are more restricted than general employee/resource capacity. The initial permission catalog must distinguish `workforce:capacity:read` from `workforce:compensation:read` and log sensitive reads.
 
@@ -196,10 +200,10 @@ Initial index strategy (confirm with query plans after representative data exist
 ## 11. Migration and rollout strategy
 
 - Use version-controlled Alembic migrations; every schema change has a migration and review.
-- Migrations run from a clean PostgreSQL database in CI and are tested forward. No production `create_all`, schema push, or manual DDL.
+- Revisions `0001_backend_foundation` and `0002_company_context` run from a clean PostgreSQL database. A PostgreSQL integration test also upgrades a populated `0001_backend_foundation` schema to head and verifies existing tenant/company/membership data is preserved. No production `create_all`, schema push, or manual DDL is used.
 - Runtime and migration roles are separate. Production deployments use expand/backfill/contract steps for incompatible changes; migration rollback policy is documented per change rather than assuming every data migration is reversible.
 - Seed only stable reference catalogs in production. Realistic example data is test-only and cannot masquerade as customer analytics.
-- Before enabling a new RLS table, migration tests prove policy coverage, forced RLS and runtime role behavior.
+- Before enabling a new RLS table, migration tests prove policy coverage, forced RLS and runtime role behavior. M3 tests verify all eight new tables use forced RLS and the intended runtime grants.
 
 ## 12. Retention, deletion and privacy
 
@@ -211,4 +215,4 @@ Design requirements: minimize collected personal data; separate compensation acc
 
 [`MVP_ENTITY_CATALOG.md`](MVP_ENTITY_CATALOG.md) supplements this logical ERD with an entity-by-entity MVP/deferred status, ownership boundary, UUID/composite primary key convention, important foreign keys, tenant/company isolation, uniqueness and integrity constraints. It adds the identity/session/recovery lifecycle, immutable mapping/normalization/reconciliation versions, metric/calculation versions, scenario and evidence snapshots, and the internal follow-up task action.
 
-This catalog is not DDL. The exact one-Company-per-Tenant deferred-FK scheme remains a proposal; database owners must validate atomic provisioning, same-tenant pointers, constraint timing, concurrency and active/deleted company semantics against PostgreSQL before migrations. The previously specified RLS and security acceptance tests still apply. No migration has been created.
+This catalog remains logical and is not the DDL contract for the implemented subset. The one-Company-per-Tenant deferred-FK scheme has been implemented and validated in the M2 PostgreSQL migration. M3's implemented schema is defined by `0002_company_context`; clean upgrade, populated M2-to-M3 upgrade, RLS and drift checks are part of its verification. Broader catalog entities still require their own approved schema design, migrations and security acceptance tests.

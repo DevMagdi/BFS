@@ -610,13 +610,14 @@ def test_upgrade_from_milestone_2_schema_preserves_existing_data(admin_engine):
     database_name = f"businessflow_upgrade_{uuid4().hex[:12]}_test"
     migration_url = make_url(TEST_MIGRATION_DATABASE_URL).set(database=database_name)
     admin_url = make_url(TEST_ADMIN_DATABASE_URL).set(database=database_name)
+    migration_url_string = migration_url.render_as_string(hide_password=False)
     prior_migration_url = os.environ.get("MIGRATION_DATABASE_URL")
 
     with admin_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
         connection.exec_driver_sql(f'CREATE DATABASE "{database_name}" OWNER bf_migrator')
 
-    scratch_migration_engine = create_engine(str(migration_url), hide_parameters=True)
-    scratch_admin_engine = create_engine(str(admin_url), hide_parameters=True)
+    scratch_migration_engine = create_engine(migration_url, hide_parameters=True)
+    scratch_admin_engine = create_engine(admin_url, hide_parameters=True)
     try:
         with scratch_admin_engine.begin() as connection:
             connection.execute(text(f"REVOKE ALL ON DATABASE {database_name} FROM PUBLIC"))
@@ -629,9 +630,9 @@ def test_upgrade_from_milestone_2_schema_preserves_existing_data(admin_engine):
             connection.execute(text("GRANT USAGE ON SCHEMA public TO bf_runtime"))
             connection.execute(text("REVOKE CREATE ON SCHEMA public FROM bf_runtime"))
 
-        os.environ["MIGRATION_DATABASE_URL"] = str(migration_url)
+        os.environ["MIGRATION_DATABASE_URL"] = migration_url_string
         config = Config(str(ROOT / "alembic.ini"))
-        config.set_main_option("sqlalchemy.url", str(migration_url).replace("%", "%%"))
+        config.set_main_option("sqlalchemy.url", migration_url_string.replace("%", "%%"))
         command.upgrade(config, "0001_backend_foundation")
 
         tenant_id, company_id, owner_id = uuid4(), uuid4(), uuid4()

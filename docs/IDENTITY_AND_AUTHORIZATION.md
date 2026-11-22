@@ -113,7 +113,11 @@ Roles group permissions; membership assignments can be scoped to a company and, 
 
 A recommendation is not an approval. Approval records must identify the authenticated human principal, tenant/company, exact recommendation version/option or immutable payload hash, applicable policy version, decision and timestamp. Never trust a free-text `by` or actor field from a request. Enforce separation of duties where approved policy requires it; prevent an agent/model from approving its own action. An approved action may execute only the exact approved payload, with an idempotency key, attempt records and independent verification. High-impact irreversible actions remain disabled in MVP.
 
-### 5.4 Background jobs and administrative access
+### 5.4 Implemented M7 capacity-stage approval policy
+
+The bounded M7 API enforces active tenant/company membership and these server-side capabilities: owner/admin `decision:read`, `decision:write` and `decision:approve`; member `decision:read` only. Owners/admins may submit and review, but the authenticated reviewer must differ from the submitter for the exact immutable decision version. This separation-of-duties rule is mandatory, not configurable, and is checked in both the service and database trigger; one review result is permitted per version. A superseding version requires fresh review and cannot inherit an earlier approval. Decisions and approvals bind the exact M6 assessment/intake and M5 metric evidence IDs and hashes, and stale/invalid evidence blocks new approval. The approver is taken from the authenticated request principal, never from submitted body data. `capacity_declined` is not commercial rejection; M7 has no financial decision or action execution. See [`M7_DECISION_APPROVAL.md`](M7_DECISION_APPROVAL.md).
+
+### 5.5 Background jobs and administrative access
 
 A worker receives a persisted, integrity-checked job ID, loads the associated tenant/object from the database, revalidates status and policy, binds tenant context for each transaction and records a service actor. Do not carry a caller-supplied tenant in an untrusted queue payload or add a general RLS-bypass flag.
 
@@ -143,7 +147,7 @@ Before identity/authorization implementation is accepted, require tests against 
 - PostgreSQL: absent/invalid tenant context, RLS read/write/delete, composite FK mismatch, duplicate company per tenant, tenant-without-company and mismatched tenant/company pairing, runtime role without `BYPASSRLS`, owner/migration-role distinction, upsert paths, pooled connection reuse and background-job isolation.
 - Operational: secret/key rotation, backup/restore of required identity/session state, security log redaction, admin emergency process and deployment misconfiguration.
 
-No such BusinessFlow tests exist yet. PostgreSQL and identity-provider acceptance cannot be replaced by SQLite or static code inspection.
+The bounded M7 decision workflow covers its project-specific owner/admin/member permissions, cross-tenant/company scope, submitter self-review, stale evidence, forced RLS, composite-FK integrity, immutability, rollback and concurrency requirements with PostgreSQL integration tests. The broader identity-provider, first-party account, linking, session, operational and remaining authorization plan above is not all implemented or accepted; PostgreSQL and identity-provider acceptance cannot be replaced by SQLite or static code inspection.
 
 ## 8. Decisions required before implementation
 

@@ -151,6 +151,13 @@ class CapacityAssessment(Base):
         UniqueConstraint(
             "tenant_id", "company_id", "id", name="uq_capacity_assessments_tenant_company_id"
         ),
+        UniqueConstraint(
+            "tenant_id",
+            "company_id",
+            "project_intake_id",
+            "id",
+            name="uq_capacity_assessments_project_ref",
+        ),
         ForeignKeyConstraint(
             ["tenant_id", "company_id", "project_intake_id"],
             ["project_intakes.tenant_id", "project_intakes.company_id", "project_intakes.id"],

@@ -347,6 +347,16 @@ class PositionReviewOperationalImport(Base):
             name="fk_position_review_operational_imports_import",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["tenant_id", "company_id", "company_data_ingestion_id"],
+            [
+                "company_data_ingestions.tenant_id",
+                "company_data_ingestions.company_id",
+                "company_data_ingestions.id",
+            ],
+            name="fk_position_review_operational_imports_company_data",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "dataset_type IN ('employees', 'projects', 'weekly_capacity', 'resource_assignments')",
             name="ck_position_review_operational_imports_type",
@@ -371,6 +381,7 @@ class PositionReviewOperationalImport(Base):
     review_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     dataset_type: Mapped[str] = mapped_column(String(32), nullable=False)
     import_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    company_data_ingestion_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     file_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     validation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     mapping_version: Mapped[int] = mapped_column(Integer, nullable=False)

@@ -26,6 +26,7 @@ from businessflow.company_context.models import (
     ResourceAssignment,
     Skill,
 )
+from businessflow.company_data.service import m10_company_data_reference
 from businessflow.config import Settings
 from businessflow.data_imports.models import DataImport, DataImportRecordLink, DataImportRow
 from businessflow.data_imports.parsers import ImportFileError, parse_file, read_limited_upload
@@ -1125,24 +1126,26 @@ def _validate_operational_imports(
                             "duplicate warnings; no existing records are overwritten."
                         ),
                     )
+        company_data_reference = m10_company_data_reference(session, tenant_id, company_id, record)
         links_by_dataset[dataset_type] = links
-        result_rows.append(
-            {
-                "dataset_type": dataset_type,
-                "import_id": str(record.id),
-                "file_name": record.file_name,
-                "file_hash": record.file_hash,
-                "validation_hash": record.validation_hash,
-                "mapping_version": record.mapping_version,
-                "status": record.status,
-                "total_rows": record.total_rows,
-                "invalid_rows": record.invalid_rows,
-                "warning_rows": record.warning_rows,
-                "duplicate_rows": record.duplicate_rows,
-                "created_rows": record.created_rows,
-                "skipped_rows": record.skipped_rows,
-            }
-        )
+        import_snapshot: dict[str, object] = {
+            "dataset_type": dataset_type,
+            "import_id": str(record.id),
+            "file_name": record.file_name,
+            "file_hash": record.file_hash,
+            "validation_hash": record.validation_hash,
+            "mapping_version": record.mapping_version,
+            "status": record.status,
+            "total_rows": record.total_rows,
+            "invalid_rows": record.invalid_rows,
+            "warning_rows": record.warning_rows,
+            "duplicate_rows": record.duplicate_rows,
+            "created_rows": record.created_rows,
+            "skipped_rows": record.skipped_rows,
+        }
+        if company_data_reference is not None:
+            import_snapshot["company_data"] = company_data_reference
+        result_rows.append(import_snapshot)
 
     metric_input = current_run.input_snapshot
     selected_employee_import_id = str(selected_ids["employees"])
@@ -1398,6 +1401,59 @@ def _verify_brief_integrity(
                 "position_review_integrity_error",
                 "An operational source link does not match the saved M10 input snapshot.",
             )
+        raw_company_data = source.get("company_data")
+        if link.company_data_ingestion_id is None:
+            if raw_company_data is not None:
+                raise ApiError(
+                    409,
+                    "position_review_integrity_error",
+                    "The M10 company-data reference is not bound to its immutable source link.",
+                )
+        else:
+            if not isinstance(raw_company_data, dict) or raw_company_data.get(
+                "ingestion_id"
+            ) != str(link.company_data_ingestion_id):
+                raise ApiError(
+                    409,
+                    "position_review_integrity_error",
+                    "The M10 company-data reference does not match its immutable source link.",
+                )
+            source_import = session.scalar(
+                select(DataImport).where(
+                    DataImport.id == link.import_id,
+                    DataImport.tenant_id == review.tenant_id,
+                    DataImport.company_id == review.company_id,
+                )
+            )
+            evaluated_at_text = raw_company_data.get("freshness_evaluated_at")
+            if source_import is None or not isinstance(evaluated_at_text, str):
+                raise ApiError(
+                    409,
+                    "position_review_integrity_error",
+                    "The saved M10 company-data evidence is incomplete.",
+                )
+            try:
+                evaluated_at = datetime.fromisoformat(evaluated_at_text)
+            except ValueError:
+                raise ApiError(
+                    409,
+                    "position_review_integrity_error",
+                    "The saved M10 freshness evidence has an invalid timestamp.",
+                ) from None
+            verified_company_data = m10_company_data_reference(
+                session,
+                review.tenant_id,
+                review.company_id,
+                source_import,
+                freshness_evaluated_at=evaluated_at,
+                require_current_freshness=False,
+            )
+            if verified_company_data != raw_company_data:
+                raise ApiError(
+                    409,
+                    "position_review_integrity_error",
+                    "The saved M10 company-data evidence failed its integrity check.",
+                )
         result.append(
             {
                 **source,
@@ -1671,6 +1727,12 @@ def create_position_review(
     session.flush()
     for selected in operational_imports:
         record = selected_by_id[UUID(str(selected["import_id"]))]
+        company_data = selected.get("company_data")
+        company_data_ingestion_id = (
+            UUID(str(company_data["ingestion_id"]))
+            if isinstance(company_data, dict) and isinstance(company_data.get("ingestion_id"), str)
+            else None
+        )
         session.add(
             PositionReviewOperationalImport(
                 tenant_id=tenant_id,
@@ -1678,6 +1740,7 @@ def create_position_review(
                 review_id=review.id,
                 dataset_type=str(selected["dataset_type"]),
                 import_id=record.id,
+                company_data_ingestion_id=company_data_ingestion_id,
                 file_hash=record.file_hash,
                 validation_hash=cast(str, record.validation_hash),
                 mapping_version=record.mapping_version,

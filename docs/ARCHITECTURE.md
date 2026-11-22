@@ -6,9 +6,9 @@
 
 ## 1. Current implementation
 
-The repository contains a Python/FastAPI modular-monolith backend using SQLAlchemy, Alembic, and PostgreSQL. Migrations `0001_backend_foundation`–`0008_monthly_position_review` cover bounded M2–M8 backend slices plus M10; M9 was documentation-only. Current modules include identity/tenancy, company context, staged data imports, metrics, project assessments, project decisions, project financial assessments, and the synthetic-only monthly position review. See [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md) and the source tree under `../src/businessflow/`.
+The repository contains a Python/FastAPI modular-monolith backend using SQLAlchemy, Alembic, and PostgreSQL. Migrations `0001_backend_foundation`–`0009_company_data_intelligence` cover bounded M2–M8 backend slices plus M10 and M12; M9 was documentation-only and M11 is a database-free calculation/verification package. Current modules include identity/tenancy, company context, staged data imports, metrics, project assessments, project decisions, project financial assessments, the synthetic-only monthly position review, and the bounded company-data registry. See [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md), [`M12_COMPANY_DATA_INTELLIGENCE.md`](M12_COMPANY_DATA_INTELLIGENCE.md), and the source tree under `../src/businessflow/`.
 
-Current business data is narrow: employees, tenant-owned skills, employee skill records, weekly capacity, projects, employee-project assignments, staged imports of those data types, and project-scoped intake/decision/financial observations. Projects are one supported business domain, not the product boundary. M5 has five draft, observational non-financial metrics. M8 preserves sourced project financial observations and always reports `incomplete` without an approved financial policy. M10 adds a separate Company-scoped workflow over only the exact built-in synthetic templates: four operational datasets, optional source-native finance rows, immutable evidence-linked briefs, and human dispositions. It is not a general-purpose frontend or a customer-data workflow. The backend still has no general BI layer, company-wide financial fact model, live connector framework, non-project decision engine, AI runtime, or permission-aware AI retrieval.
+Current business data is narrow: employees, tenant-owned skills, employee skill records, weekly capacity, projects, employee-project assignments, staged imports of those data types, and project-scoped intake/decision/financial observations. M12 adds company-scoped registration of named sources that bind existing M4 imports to six versioned M4 contracts, plus quality/freshness assessments and immutable evidence snapshots; it reuses M4 storage, M5 snapshots, and M4 lineage rather than adding a second importer or copying source rows. Projects are one supported business domain, not the product boundary. M5 has five draft, observational non-financial metrics. M8 preserves sourced project financial observations and always reports `incomplete` without an approved financial policy. M10 remains a separate Company-scoped, synthetic-only workflow over exact built-in templates: four operational datasets, optional source-native finance rows, immutable evidence-linked briefs, and human dispositions. It can bind optional M12 ingestion evidence, but M10 remains synthetic-only. M12 reuses the existing M4 file intake for its six supported datasets and adds no separate importer, live connector, or scheduled ingestion. Neither slice implies production readiness. The backend still has no general BI layer, company-wide financial fact model, non-project decision engine, AI runtime, or permission-aware AI retrieval.
 
 ## 2. Target architectural posture
 
@@ -30,7 +30,7 @@ flowchart LR
     SEC -. governs .-> VIEW
 ```
 
-This is a target flow, not a system diagram of the whole implemented platform. Current code implements the bounded M2–M8 slices and the separate M10 synthetic workflow only; it does not implement the general company-level read model, finance policy, broad domain coverage, or AI flow shown above.
+This is a target flow, not a system diagram of the whole implemented platform. Current code implements the bounded M2–M8 slices, separate M10 synthetic workflow, M11 pure calculation/verification core, and M12 company-data registration/evidence slice only; it does not implement the general company-level read model, finance policy, broad domain coverage, live connectors, or AI flow shown above.
 
 ## 3. Architecture rules
 
@@ -52,5 +52,6 @@ This is a target flow, not a system diagram of the whole implemented platform. C
 - [Product roadmap proposal](roadmap/PRODUCT_ROADMAP.md)
 - [Database design and actual schema subset](DATABASE_DESIGN.md)
 - [Backend implementation and tests](BACKEND_IMPLEMENTATION.md)
+- [M12 company data intelligence](M12_COMPANY_DATA_INTELLIGENCE.md)
 
 The former project-acceptance requirements and milestone sequencing remain historical input. See [`BRD.md`](BRD.md), [`MVP_SCOPE.md`](MVP_SCOPE.md), and [`ROADMAP.md`](ROADMAP.md) for their supersession notices.

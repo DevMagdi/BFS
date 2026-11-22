@@ -8,9 +8,11 @@ The approved foundational trust principle is **Evidence Before Answers — No ev
 
 ## Current implementation status
 
-The repository contains bounded **M2–M8 backend slices** plus a separately scoped M10 slice in a Python/FastAPI modular monolith backed by PostgreSQL. The migration sequence is `0001_backend_foundation` through `0008_monthly_position_review`; M9 was documentation-only, and no separate M1 runtime/schema feature is evidenced in that sequence. The implementation includes tenant/company security foundations, a narrow workforce/project model, staged imports for six workforce/project dataset types, five draft observational metrics, a project capacity assessment, a project-stage human decision/approval flow, and project-scoped financial observations whose assessment remains incomplete without approved policy.
+The repository contains bounded **M2–M8 backend slices**, a separately scoped M10 synthetic-only slice, and M12 company-data registration/evidence in a Python/FastAPI modular monolith backed by PostgreSQL. The migration sequence is `0001_backend_foundation` through `0009_company_data_intelligence`; M9 was documentation-only, M11 is a database-free calculation/verification package, and no separate M1 runtime/schema feature is evidenced in that sequence. The implementation includes tenant/company security foundations, a narrow workforce/project model, staged imports for six workforce/project dataset types, five draft observational metrics, a project capacity assessment, a project-stage human decision/approval flow, project-scoped financial observations whose assessment remains incomplete without approved policy, and a Company-scoped registry that binds named sources and immutable evidence to existing M4 imports.
 
-M10 adds an **internal, synthetic-only monthly position-review walkthrough**: an explicitly seeded synthetic baseline, four exact-hash operational CSV templates, optional source-native synthetic finance observations, a hash-bound evidence brief with limitations/abstentions, and an immutable human disposition. This bounded slice is not production-ready and does not accept customer data. See [`docs/M10_SYNTHETIC_DEMO.md`](docs/M10_SYNTHETIC_DEMO.md) for scope and local steps.
+M10 adds an **internal, synthetic-only monthly position-review walkthrough**: an explicitly seeded synthetic baseline, four exact-hash operational CSV templates, optional source-native synthetic finance observations, a hash-bound evidence brief with limitations/abstentions, and an immutable human disposition. It may bind optional M12 evidence but continues to accept only exact built-in templates in seeded demo Companies. This bounded slice is not production-ready and does not accept customer data. See [`docs/M10_SYNTHETIC_DEMO.md`](docs/M10_SYNTHETIC_DEMO.md) for scope and local steps.
+
+M12 versions the six M4 mapping contracts and records Company-scoped source registrations, quality/freshness status, immutable snapshots and existing M4 lineage; it does not add a second importer, live connector, sync worker, or scheduler. See [`docs/M12_COMPANY_DATA_INTELLIGENCE.md`](docs/M12_COMPANY_DATA_INTELLIGENCE.md).
 
 BusinessFlow is **not yet** a company-wide BI platform: broad company-domain coverage, a general KPI/analytics layer, approved financial calculations or policies, reusable non-project decision subjects, a general-purpose frontend, live connectors, and external actions are not implemented. M8 is not a company-wide finance engine; M10 does not change that boundary. The exact current behavior, schema paths, and tests are in [`docs/BACKEND_IMPLEMENTATION.md`](docs/BACKEND_IMPLEMENTATION.md).
 
@@ -24,7 +26,7 @@ Start with these documentation-only assessment deliverables:
 4. [Financial intelligence architecture](docs/architecture/FINANCIAL_INTELLIGENCE_ARCHITECTURE.md)
 5. [Product roadmap proposal](docs/roadmap/PRODUCT_ROADMAP.md)
 
-M9 itself changed documentation only and did not authorize a general implementation milestone. M10 is a later, separately requested synthetic-only implementation slice with the strict limits documented above; it does not approve customer-data handling, production deployment, a broader product baseline, or finance policy. See the M10 guide and the M9 gap analysis for their distinct scopes.
+M9 itself changed documentation only and did not authorize a general implementation milestone. M10 and M12 are later, separately scoped implementation slices: M10 remains synthetic-only, and M12 registers existing M4 imports with versioned contracts and evidence but does not add connectors or production data handling. Neither approves production deployment, a broader product baseline, or finance policy. See the M10/M12 guides and the M9 gap analysis for their distinct scopes.
 
 ## Earlier project-feasibility hypothesis (historical)
 
@@ -35,6 +37,7 @@ The original 24 Part 2 requirements were not supplied. [`REQUIREMENTS_TRACEABILI
 ## Developer and implementation references
 
 - [Backend implementation and local developer guide](docs/BACKEND_IMPLEMENTATION.md)
+- [M12 company data intelligence](docs/M12_COMPANY_DATA_INTELLIGENCE.md)
 - [PostgreSQL role initialization](scripts/README.md)
 - Safe placeholder configuration: [`.env.example`](.env.example)
 - [Current architecture overview](docs/ARCHITECTURE.md)
@@ -47,4 +50,4 @@ The integration tests use PostgreSQL roles and forced RLS; SQLite is not a subst
 
 ## Delivery boundary
 
-The M9 change was documentation-only. The later M10 slice adds APIs, models, migration `0008`, deterministic calculations, and a narrow internal browser workflow, all restricted to built-in synthetic data. It is **not production-ready** and does not authorize customer-data processing, general finance calculations, external actions, or deployment. Product, finance-policy, data-handling, and production-approval gates remain separate.
+The M9 change was documentation-only. Later M10 adds APIs, models, migration `0008`, deterministic comparisons, and a narrow internal browser workflow restricted to built-in synthetic data. M12 adds APIs, models, migration `0009`, versioned M4 contracts, Company-scoped source registration and immutable ingestion evidence for existing M4 imports. M10 is **not production-ready**; M12 reuses the existing M4 file intake and does not add a second upload workflow, live connectors, general finance calculations, external actions, or production approval. Product, finance-policy, data-handling, and production-approval gates remain separate.

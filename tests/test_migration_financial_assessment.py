@@ -18,8 +18,8 @@ def _config_for_database(url: str) -> Config:
     return config
 
 
-def test_m10_migration_upgrade_downgrade_and_reupgrade():
-    database_name = f"businessflow_m10_migration_test_{uuid4().hex[:12]}"
+def test_migration_head_upgrade_downgrade_and_reupgrade():
+    database_name = f"businessflow_m12_migration_test_{uuid4().hex[:12]}"
     admin_base_url = make_url(os.environ["TEST_ADMIN_DATABASE_URL"])
     admin_url = admin_base_url.set(database="postgres")
     admin_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT", hide_parameters=True)
@@ -50,7 +50,7 @@ def test_m10_migration_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0008_monthly_position_review"
+                "0009_company_data_intelligence"
             )
             assert (
                 connection.scalar(text("SELECT to_regclass('public.financial_assessments')"))
@@ -115,6 +115,94 @@ def test_m10_migration_upgrade_downgrade_and_reupgrade():
                         )
                         is False
                     )
+
+            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 6
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT has_table_privilege('bf_runtime', "
+                        "'company_data_contracts', 'SELECT')"
+                    )
+                )
+                is True
+            )
+            for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE"):
+                assert (
+                    connection.scalar(
+                        text(
+                            "SELECT has_table_privilege("
+                            "'bf_runtime', 'company_data_contracts', :privilege)"
+                        ),
+                        {"privilege": privilege},
+                    )
+                    is False
+                )
+            for table_name in ("company_data_sources", "company_data_ingestions"):
+                assert (
+                    connection.scalar(
+                        text(
+                            "SELECT relrowsecurity AND relforcerowsecurity FROM pg_class "
+                            "WHERE oid = to_regclass(:table_name)"
+                        ),
+                        {"table_name": f"public.{table_name}"},
+                    )
+                    is True
+                )
+                assert (
+                    connection.scalar(
+                        text("SELECT has_table_privilege('bf_runtime', :table_name, 'SELECT')"),
+                        {"table_name": f"public.{table_name}"},
+                    )
+                    is True
+                )
+                assert (
+                    connection.scalar(
+                        text("SELECT has_table_privilege('bf_runtime', :table_name, 'INSERT')"),
+                        {"table_name": f"public.{table_name}"},
+                    )
+                    is True
+                )
+                for privilege in ("UPDATE", "DELETE", "TRUNCATE"):
+                    assert (
+                        connection.scalar(
+                            text(
+                                "SELECT has_table_privilege('bf_runtime', :table_name, :privilege)"
+                            ),
+                            {"table_name": f"public.{table_name}", "privilege": privilege},
+                        )
+                        is False
+                    )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal "
+                        "AND tgname IN ('trg_company_data_contracts_append_only', "
+                        "'trg_company_data_sources_append_only', "
+                        "'trg_company_data_ingestions_append_only', "
+                        "'trg_position_review_company_data_guard')"
+                    )
+                )
+                == 4
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_constraint "
+                        "WHERE conname = 'fk_position_review_operational_imports_company_data'"
+                    )
+                )
+                == 1
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT has_column_privilege('bf_runtime', "
+                        "'position_review_operational_imports', "
+                        "'company_data_ingestion_id', 'INSERT')"
+                    )
+                )
+                is True
+            )
             assert (
                 connection.scalar(
                     text(
@@ -158,11 +246,42 @@ def test_m10_migration_upgrade_downgrade_and_reupgrade():
                 )
                 is None
             )
+            for table_name in (
+                "company_data_contracts",
+                "company_data_sources",
+                "company_data_ingestions",
+            ):
+                assert (
+                    connection.scalar(
+                        text("SELECT to_regclass(:table_name)"),
+                        {"table_name": f"public.{table_name}"},
+                    )
+                    is None
+                )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM information_schema.columns "
+                        "WHERE table_name = 'position_review_operational_imports' "
+                        "AND column_name = 'company_data_ingestion_id'"
+                    )
+                )
+                == 0
+            )
 
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0008_monthly_position_review"
+                "0009_company_data_intelligence"
+            )
+            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 6
+            assert (
+                connection.scalar(text("SELECT to_regclass('public.company_data_sources')"))
+                == "company_data_sources"
+            )
+            assert (
+                connection.scalar(text("SELECT to_regclass('public.company_data_ingestions')"))
+                == "company_data_ingestions"
             )
             assert (
                 connection.scalar(

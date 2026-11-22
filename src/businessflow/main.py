@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from businessflow.api.auth_routes import router as auth_router
@@ -16,6 +18,7 @@ from businessflow.api.data_import_routes import router as data_import_router
 from businessflow.api.financial_assessment_routes import router as financial_assessment_router
 from businessflow.api.health_routes import router as health_router
 from businessflow.api.metrics_routes import router as metrics_router
+from businessflow.api.position_review_routes import router as position_review_router
 from businessflow.api.project_assessment_routes import router as project_assessment_router
 from businessflow.api.project_decision_routes import router as project_decision_router
 from businessflow.api.tenant_routes import router as tenant_router
@@ -76,6 +79,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request.state.now = datetime.now(UTC)
         response = await call_next(request)
         response.headers["X-Request-ID"] = str(request.state.request_id)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        if request.url.path == "/" or request.url.path.startswith("/assets/"):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; base-uri 'self'; object-src 'none'; "
+                "frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; "
+                "style-src 'self'; script-src 'self'; connect-src 'self'"
+            )
         return response
 
     @application.exception_handler(ApiError)
@@ -121,6 +132,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(project_assessment_router, prefix="/api/v1")
     application.include_router(project_decision_router, prefix="/api/v1")
     application.include_router(financial_assessment_router, prefix="/api/v1")
+    application.include_router(position_review_router, prefix="/api/v1")
+    application.mount(
+        "/",
+        StaticFiles(directory=Path(__file__).resolve().parent / "web", html=True),
+        name="web",
+    )
     return application
 
 

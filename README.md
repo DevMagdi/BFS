@@ -8,9 +8,11 @@ The approved foundational trust principle is **Evidence Before Answers — No ev
 
 ## Current implementation status
 
-The repository contains bounded **M2–M8 backend slices** in a Python/FastAPI modular monolith backed by PostgreSQL. The migration sequence is `0001_backend_foundation` through `0007_financial_feasibility`. No separate M1 runtime/schema feature is evidenced in that sequence. The implementation includes tenant/company security foundations, a narrow workforce/project model, staged imports for six workforce/project dataset types, five draft observational metrics, a project capacity assessment, a project-stage human decision/approval flow, and project-scoped financial observations whose assessment remains incomplete without approved policy.
+The repository contains bounded **M2–M8 backend slices** plus a separately scoped M10 slice in a Python/FastAPI modular monolith backed by PostgreSQL. The migration sequence is `0001_backend_foundation` through `0008_monthly_position_review`; M9 was documentation-only, and no separate M1 runtime/schema feature is evidenced in that sequence. The implementation includes tenant/company security foundations, a narrow workforce/project model, staged imports for six workforce/project dataset types, five draft observational metrics, a project capacity assessment, a project-stage human decision/approval flow, and project-scoped financial observations whose assessment remains incomplete without approved policy.
 
-It is **not yet** a company-wide BI platform: broad company-domain coverage, a general KPI/analytics layer, financial calculations or policies, reusable non-project decision subjects, a frontend, live connectors, and external actions are not implemented. M8 is not a company-wide finance engine. The exact current behavior, schema paths, and tests are in [`docs/BACKEND_IMPLEMENTATION.md`](docs/BACKEND_IMPLEMENTATION.md).
+M10 adds an **internal, synthetic-only monthly position-review walkthrough**: an explicitly seeded synthetic baseline, four exact-hash operational CSV templates, optional source-native synthetic finance observations, a hash-bound evidence brief with limitations/abstentions, and an immutable human disposition. This bounded slice is not production-ready and does not accept customer data. See [`docs/M10_SYNTHETIC_DEMO.md`](docs/M10_SYNTHETIC_DEMO.md) for scope and local steps.
+
+BusinessFlow is **not yet** a company-wide BI platform: broad company-domain coverage, a general KPI/analytics layer, approved financial calculations or policies, reusable non-project decision subjects, a general-purpose frontend, live connectors, and external actions are not implemented. M8 is not a company-wide finance engine; M10 does not change that boundary. The exact current behavior, schema paths, and tests are in [`docs/BACKEND_IMPLEMENTATION.md`](docs/BACKEND_IMPLEMENTATION.md).
 
 ## M9 product and architecture assessment
 
@@ -22,7 +24,7 @@ Start with these documentation-only assessment deliverables:
 4. [Financial intelligence architecture](docs/architecture/FINANCIAL_INTELLIGENCE_ARCHITECTURE.md)
 5. [Product roadmap proposal](docs/roadmap/PRODUCT_ROADMAP.md)
 
-M9 does not change existing backend business logic or authorize a future implementation milestone. See the gap analysis and roadmap for explicit owner gates and candidate next steps.
+M9 itself changed documentation only and did not authorize a general implementation milestone. M10 is a later, separately requested synthetic-only implementation slice with the strict limits documented above; it does not approve customer-data handling, production deployment, a broader product baseline, or finance policy. See the M10 guide and the M9 gap analysis for their distinct scopes.
 
 ## Earlier project-feasibility hypothesis (historical)
 
@@ -45,4 +47,4 @@ The integration tests use PostgreSQL roles and forced RLS; SQLite is not a subst
 
 ## Delivery boundary
 
-The M9 change is documentation-only. It does not add or modify existing M2–M8 business logic, APIs, models, tables, migrations, calculations, UI, AI runtime, integrations, or deployment infrastructure. Product, finance-policy, data-handling, and owner-approval gates remain separate.
+The M9 change was documentation-only. The later M10 slice adds APIs, models, migration `0008`, deterministic calculations, and a narrow internal browser workflow, all restricted to built-in synthetic data. It is **not production-ready** and does not authorize customer-data processing, general finance calculations, external actions, or deployment. Product, finance-policy, data-handling, and production-approval gates remain separate.

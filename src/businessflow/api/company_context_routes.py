@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from businessflow.api.dependencies import get_current_user, get_session
@@ -49,7 +50,10 @@ from businessflow.company_context.schemas import (
     WeeklyCapacityPage,
     WeeklyCapacityResponse,
 )
-from businessflow.models import UserAccount
+from businessflow.errors import ApiError
+from businessflow.models import Company, UserAccount
+from businessflow.position_reviews.models import PositionDemoSeed
+from businessflow.services.company_context_access import require_company_context_access
 from businessflow.services.company_context_summary import company_context_summary
 from businessflow.services.company_organization import (
     create_business_unit,
@@ -97,7 +101,45 @@ from businessflow.services.company_workforce import (
     update_skill,
 )
 
-router = APIRouter(prefix="/tenants/{tenant_id}", tags=["company context"])
+
+def _protect_seeded_demo_workspace(
+    request: Request,
+    tenant_id: UUID,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> None:
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return
+    access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    # Use the same Company-row lock as explicit demo seeding. A direct write that races with
+    # seeding must either finish before the emptiness check or observe the committed seed.
+    session.scalar(
+        select(Company.id)
+        .where(Company.id == access.company.id, Company.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    seed_exists = session.scalar(
+        select(PositionDemoSeed.id).where(
+            PositionDemoSeed.tenant_id == tenant_id,
+            PositionDemoSeed.company_id == access.company.id,
+        )
+    )
+    if seed_exists is not None:
+        raise ApiError(
+            409,
+            "synthetic_demo_operational_api_read_only",
+            (
+                "M10 workspaces accept canonical operational writes only through their exact "
+                "built-in synthetic M4 templates; direct record changes are disabled."
+            ),
+        )
+
+
+router = APIRouter(
+    prefix="/tenants/{tenant_id}",
+    tags=["company context"],
+    dependencies=[Depends(_protect_seeded_demo_workspace)],
+)
 PageLimit = Annotated[int, Query(ge=1, le=100)]
 PageOffset = Annotated[int, Query(ge=0, le=100_000)]
 

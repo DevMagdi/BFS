@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="description" content="Internal synthetic-data demonstration of the BusinessFlow monthly position review.">
+    <title>Monthly Position Review · BusinessFlow</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="wordmark" href="/" aria-label="BusinessFlow home">
+          <span class="mark" aria-hidden="true">B</span>
+          <span>business<span class="wordmark-light">flow</span></span>
+        </a>
+        <div class="topbar-right">
+          <span class="demo-stamp">INTERNAL · SYNTHETIC DATA ONLY</span>
+          <span id="user-label" class="user-label" hidden></span>
+          <button id="logout-button" class="button button-quiet button-small" type="button" hidden>Sign out</button>
+        </div>
+      </header>
+
+      <main>
+        <section id="auth-panel" class="auth-layout" aria-labelledby="welcome-title">
+          <div class="auth-intro">
+            <p class="eyebrow">MONTHLY FINANCIAL &amp; OPERATING POSITION REVIEW</p>
+            <h1 id="welcome-title">A clearer view.<br><em>With evidence attached.</em></h1>
+            <p class="lede">A local, synthetic-data walkthrough of the review workflow. No customer data, external services, or automated decisions.</p>
+            <div class="promise-list" aria-label="Demo boundaries">
+              <p><span class="promise-icon" aria-hidden="true">01</span> Recorded plans are not actual work.</p>
+              <p><span class="promise-icon" aria-hidden="true">02</span> Finance stays source-native.</p>
+              <p><span class="promise-icon" aria-hidden="true">03</span> A person records the final review.</p>
+            </div>
+          </div>
+
+          <div class="panel auth-card">
+            <div class="panel-heading">
+              <p class="eyebrow">LOCAL DEMO WORKSPACE</p>
+              <h2>Sign in to continue</h2>
+            </div>
+            <form id="auth-form" novalidate>
+              <div class="field">
+                <label for="auth-mode">Account</label>
+                <select id="auth-mode" name="mode">
+                  <option value="login">Sign in</option>
+                  <option value="register">Create a local account</option>
+                </select>
+              </div>
+              <div id="display-name-field" class="field" hidden>
+                <label for="display-name">Your name</label>
+                <input id="display-name" name="display_name" type="text" maxlength="120" autocomplete="name">
+              </div>
+              <div class="field">
+                <label for="email">Email</label>
+                <input id="email" name="email" type="email" maxlength="320" autocomplete="email" required>
+              </div>
+              <div class="field">
+                <label for="password">Password</label>
+                <input id="password" name="password" type="password" maxlength="1024" autocomplete="current-password" required>
+                <small id="password-help">Use your existing BusinessFlow local account.</small>
+              </div>
+              <button class="button button-primary button-wide" type="submit">Continue <span aria-hidden="true">→</span></button>
+            </form>
+            <p class="fine-print">Credentials are sent only to this local BusinessFlow server. The browser stores tokens in this tab's session storage.</p>
+          </div>
+        </section>
+
+        <section id="tenant-panel" class="panel setup-panel" aria-labelledby="tenant-title" hidden>
+          <p class="eyebrow">ONE COMPANY · ONE SYNTHETIC WORKSPACE</p>
+          <h1 id="tenant-title">Set up your demo space.</h1>
+          <p class="lede">Create a clearly labeled local tenant first. Demo seeding is available only for an empty Company whose name includes “Synthetic”.</p>
+          <form id="tenant-form" class="form-grid">
+            <div class="field">
+              <label for="tenant-name">Workspace name</label>
+              <input id="tenant-name" type="text" value="M10 Synthetic Demo" maxlength="160" required>
+            </div>
+            <div class="field">
+              <label for="company-name">Company name</label>
+              <input id="company-name" type="text" value="Synthetic Demo Company" maxlength="200" required>
+            </div>
+            <div class="field">
+              <label for="company-currency">Company base currency</label>
+              <input id="company-currency" type="text" value="USD" maxlength="3" pattern="[A-Z]{3}" required>
+            </div>
+            <div class="field">
+              <label for="company-timezone">Company time zone</label>
+              <input id="company-timezone" type="text" value="Africa/Cairo" maxlength="64" required>
+            </div>
+            <div class="form-actions">
+              <button class="button button-primary" type="submit">Create synthetic workspace <span aria-hidden="true">→</span></button>
+            </div>
+          </form>
+        </section>
+
+        <section id="workspace" hidden>
+          <div class="workspace-heading">
+            <div>
+              <p class="eyebrow">MONTHLY POSITION REVIEW</p>
+              <h1>Make the evidence <em>reviewable.</em></h1>
+              <p id="company-caption" class="lede"></p>
+            </div>
+            <div class="company-picker" id="company-picker-wrap" hidden>
+              <label for="company-picker">Workspace</label>
+              <select id="company-picker" aria-label="Choose a workspace"></select>
+            </div>
+          </div>
+
+          <div class="notice notice-demo" role="note">
+            <span class="notice-symbol" aria-hidden="true">!</span>
+            <p><strong>Synthetic demo only.</strong> Do not upload real customer, payroll, accounting, or other confidential data. The seed action refuses to run if the Company already contains workforce, project, import, or metric data.</p>
+          </div>
+
+          <nav class="step-nav" aria-label="Review workflow">
+            <button class="step-button is-current" type="button" data-screen="create" aria-current="step"><span>01</span> Create Review</button>
+            <button class="step-button" type="button" data-screen="brief" aria-current="false"><span>02</span> Position Brief</button>
+            <button class="step-button" type="button" data-screen="record" aria-current="false"><span>03</span> Record Review</button>
+          </nav>
+
+          <section id="screen-create" class="screen" aria-labelledby="create-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">STEP 01 · PREPARE EVIDENCE</p>
+                <h2 id="create-title">Create Review</h2>
+              </div>
+              <span class="section-index">01 / 03</span>
+            </div>
+            <div id="workspace-status" class="stack" aria-live="polite"></div>
+
+            <div id="seed-card" class="panel seed-panel" hidden>
+              <div class="seed-copy">
+                <p class="eyebrow">EXPLICIT, ONE-TIME ACTION</p>
+                <h3>Prepare the synthetic baseline</h3>
+                <p>This creates two synthetic roster records, one synthetic project, four prior weeks of capacity and committed-assignment records, then saves an immutable M5 baseline run. The operation is idempotent and runs only if the Company is empty; it never overwrites existing records.</p>
+                <p class="fine-print">The tenant must include “Demo” in its name and the Company must include “Synthetic”.</p>
+              </div>
+              <button id="seed-button" class="button button-primary" type="button">Seed synthetic demo data <span aria-hidden="true">→</span></button>
+            </div>
+
+            <div id="pack-card" hidden>
+              <div class="panel period-panel">
+                <div>
+                  <p class="eyebrow">SAVED BASELINE · M5</p>
+                  <h3 id="baseline-title">Prior four-week plan</h3>
+                  <p id="baseline-meta" class="muted"></p>
+                </div>
+                <div class="period-divider" aria-hidden="true"></div>
+                <div>
+                  <p class="eyebrow">CURRENT FOUR-WEEK WINDOW</p>
+                  <h3 id="current-title">Current recorded plan</h3>
+                  <p id="current-meta" class="muted"></p>
+                </div>
+              </div>
+
+              <div class="intake-intro">
+                <div>
+                  <p class="eyebrow">CURRENT OPERATIONAL PACK</p>
+                  <h3>Upload, map, validate, then apply.</h3>
+                </div>
+                <p>Reuse the guarded M4 CSV workflow with the exact built-in synthetic templates. Every source column must be mapped or explicitly ignored; the server rejects any changed or non-demo file before M10 can use it.</p>
+              </div>
+              <div id="operational-imports" class="import-grid">
+                <article class="import-card" data-dataset="employees">
+                  <div class="import-card-head"><span class="dataset-number">A</span><div><h4>Employees</h4><p>Roster and explicit employment status</p></div></div>
+                  <a class="template-link" href="#" data-template="employees">Download synthetic CSV <span aria-hidden="true">↓</span></a>
+                  <label class="file-picker">Choose roster file<input class="file-input" type="file" accept=".csv"></label>
+                  <button class="button button-secondary inspect-button" type="button">Inspect and map</button>
+                  <p class="import-state muted" aria-live="polite">No current import selected.</p>
+                  <div class="import-wizard" hidden>
+                    <div class="field"><label>Worksheet<select class="worksheet-select"></select></label></div>
+                    <button class="button button-quiet load-mapping-button" type="button">Load mapping</button>
+                    <div class="mapping-editor"></div>
+                    <button class="button button-secondary validate-button" type="button" hidden>Save mapping and validate</button>
+                    <div class="preview-area"></div>
+                    <div class="confirm-area" hidden>
+                      <label class="check-row"><input class="acknowledge-warnings" type="checkbox"><span>I reviewed the duplicate warnings. M4 will skip duplicates and will not overwrite the seeded roster.</span></label>
+                      <button class="button button-primary apply-button" type="button">Confirm and apply</button>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="import-card" data-dataset="weekly_capacity">
+                  <div class="import-card-head"><span class="dataset-number">B</span><div><h4>Weekly capacity</h4><p>Availability status and source hours</p></div></div>
+                  <a class="template-link" href="#" data-template="weekly_capacity">Download synthetic CSV <span aria-hidden="true">↓</span></a>
+                  <label class="file-picker">Choose capacity file<input class="file-input" type="file" accept=".csv"></label>
+                  <button class="button button-secondary inspect-button" type="button">Inspect and map</button>
+                  <p class="import-state muted" aria-live="polite">No current import selected.</p>
+                  <div class="import-wizard" hidden>
+                    <div class="field"><label>Worksheet<select class="worksheet-select"></select></label></div>
+                    <button class="button button-quiet load-mapping-button" type="button">Load mapping</button>
+                    <div class="mapping-editor"></div>
+                    <button class="button button-secondary validate-button" type="button" hidden>Save mapping and validate</button>
+                    <div class="preview-area"></div>
+                    <div class="confirm-area" hidden>
+                      <button class="button button-primary apply-button" type="button">Confirm and apply</button>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="import-card" data-dataset="projects">
+                  <div class="import-card-head"><span class="dataset-number">C</span><div><h4>Projects</h4><p>Project code, name, and explicit status</p></div></div>
+                  <a class="template-link" href="#" data-template="projects">Download synthetic CSV <span aria-hidden="true">↓</span></a>
+                  <label class="file-picker">Choose project file<input class="file-input" type="file" accept=".csv"></label>
+                  <button class="button button-secondary inspect-button" type="button">Inspect and map</button>
+                  <p class="import-state muted" aria-live="polite">No current import selected.</p>
+                  <div class="import-wizard" hidden>
+                    <div class="field"><label>Worksheet<select class="worksheet-select"></select></label></div>
+                    <button class="button button-quiet load-mapping-button" type="button">Load mapping</button>
+                    <div class="mapping-editor"></div>
+                    <button class="button button-secondary validate-button" type="button" hidden>Save mapping and validate</button>
+                    <div class="preview-area"></div>
+                    <div class="confirm-area" hidden>
+                      <label class="check-row"><input class="acknowledge-warnings" type="checkbox"><span>I reviewed the duplicate warnings. M4 will skip duplicates and will not overwrite the seeded project.</span></label>
+                      <button class="button button-primary apply-button" type="button">Confirm and apply</button>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="import-card" data-dataset="resource_assignments">
+                  <div class="import-card-head"><span class="dataset-number">D</span><div><h4>Resource assignments</h4><p>Committed planned hours per week</p></div></div>
+                  <a class="template-link" href="#" data-template="resource_assignments">Download synthetic CSV <span aria-hidden="true">↓</span></a>
+                  <label class="file-picker">Choose assignments file<input class="file-input" type="file" accept=".csv"></label>
+                  <button class="button button-secondary inspect-button" type="button">Inspect and map</button>
+                  <p class="import-state muted" aria-live="polite">No current import selected.</p>
+                  <div class="import-wizard" hidden>
+                    <div class="field"><label>Worksheet<select class="worksheet-select"></select></label></div>
+                    <button class="button button-quiet load-mapping-button" type="button">Load mapping</button>
+                    <div class="mapping-editor"></div>
+                    <button class="button button-secondary validate-button" type="button" hidden>Save mapping and validate</button>
+                    <div class="preview-area"></div>
+                    <div class="confirm-area" hidden>
+                      <button class="button button-primary apply-button" type="button">Confirm and apply</button>
+                    </div>
+                  </div>
+                </article>
+              </div>
+
+              <section class="panel finance-panel" aria-labelledby="finance-title">
+                <div class="finance-heading">
+                  <div>
+                    <p class="eyebrow">SOURCE-NATIVE FINANCE · OPTIONAL FOR THIS SLICE</p>
+                    <h3 id="finance-title">Add a finance export</h3>
+                  </div>
+                  <span class="tag tag-muted">No formulas or comparisons</span>
+                </div>
+                <p class="muted">M10 accepts a single UTF-8 CSV using the exact synthetic template. Values, currencies, source labels, and periods are preserved; BusinessFlow does not calculate a financial variance or conclusion.</p>
+                <div class="finance-actions">
+                  <a class="template-link" href="#" data-template="financial_export">Download synthetic finance CSV <span aria-hidden="true">↓</span></a>
+                  <label class="file-picker">Choose finance CSV<input id="finance-file" type="file" accept=".csv"></label>
+                  <button id="finance-upload-button" class="button button-secondary" type="button">Validate finance rows</button>
+                </div>
+                <label class="field finance-history-field" for="finance-history"><span>Confirmed source import</span><select id="finance-history"><option value="">No finance file — create an explicit abstention</option></select></label>
+                <div id="finance-preview" class="preview-area"></div>
+              </section>
+
+              <section class="panel attest-panel" aria-labelledby="attest-title">
+                <div>
+                  <p class="eyebrow">OWNER / OPERATIONS ATTESTATIONS</p>
+                  <h3 id="attest-title">Make the assumptions visible.</h3>
+                  <p class="muted">These are human attestations, stored with your identity and time. They do not independently prove source completeness or currentness. If left unchecked, the four-week change is explicitly abstained.</p>
+                </div>
+                <div class="attestation-grid">
+                  <label class="check-row"><input id="attest-m5" type="checkbox"><span>I acknowledge M5 is an implementation draft and these are planned assignment hours, not actual work or utilization.</span></label>
+                  <label class="check-row"><input id="attest-cohort" type="checkbox"><span>I attest that the prior/current active employee cohort is comparable.</span></label>
+                  <label class="check-row"><input id="attest-baseline-capacity" type="checkbox"><span>I attest that the baseline capacity source was current for its saved period.</span></label>
+                  <label class="check-row"><input id="attest-current-capacity" type="checkbox"><span>I attest that the current capacity source is current for this four-week window.</span></label>
+                  <label class="check-row"><input id="attest-assignments" type="checkbox"><span>I attest that all relevant committed assignments are represented in both periods.</span></label>
+                </div>
+                <label class="check-row synthetic-confirm-row"><input id="synthetic-confirm" type="checkbox"><span>I confirm that every file selected for this brief contains synthetic/demo data only.</span></label>
+                <button id="create-review-button" class="button button-primary" type="button">Create Position Brief <span aria-hidden="true">→</span></button>
+              </section>
+            </div>
+          </section>
+
+          <section id="screen-brief" class="screen" aria-labelledby="brief-title" hidden>
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">STEP 02 · INSPECT THE EVIDENCE</p>
+                <h2 id="brief-title">Position Decision Brief</h2>
+              </div>
+              <span class="section-index">02 / 03</span>
+            </div>
+            <div class="brief-picker-row">
+              <label class="field" for="brief-history"><span>Saved synthetic brief</span><select id="brief-history"><option value="">No saved brief yet</option></select></label>
+              <button id="reload-brief-button" class="button button-quiet" type="button" disabled>Reload exact version</button>
+            </div>
+            <div id="brief-content" class="stack" aria-live="polite">
+              <div class="empty-state"><span class="empty-mark" aria-hidden="true">↗</span><h3>No brief selected</h3><p>Complete the intake in Create Review, then generate a versioned evidence brief.</p></div>
+            </div>
+          </section>
+
+          <section id="screen-record" class="screen" aria-labelledby="record-title" hidden>
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">STEP 03 · HUMAN DISPOSITION</p>
+                <h2 id="record-title">Record Review</h2>
+              </div>
+              <span class="section-index">03 / 03</span>
+            </div>
+            <div id="review-binding" class="panel binding-panel">
+              <p class="eyebrow">EXACT BRIEF VERSION</p>
+              <p id="review-binding-text" class="muted">Select a saved brief in Position Brief first.</p>
+            </div>
+            <form id="disposition-form" class="panel disposition-panel" hidden>
+              <div class="field">
+                <label for="disposition">Your disposition</label>
+                <select id="disposition" required>
+                  <option value="noted">Noted</option>
+                  <option value="follow_up_required">Follow-up required</option>
+                  <option value="deferred">Deferred</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="rationale">Rationale / follow-up note</label>
+                <textarea id="rationale" rows="5" maxlength="2000" required placeholder="Write what you reviewed or what a person should verify next. No external action will be triggered."></textarea>
+                <small>Saved immutably with your user ID, timestamp, and the exact brief result hash.</small>
+              </div>
+              <label class="check-row"><input id="no-external-action" type="checkbox" checked disabled><span>Record only. This does not approve, execute, or claim completion of an external action.</span></label>
+              <button class="button button-primary" type="submit">Save human review <span aria-hidden="true">→</span></button>
+            </form>
+            <div id="disposition-history" class="stack"></div>
+          </section>
+        </section>
+
+        <div id="global-message" class="global-message" role="status" aria-live="polite" hidden></div>
+      </main>
+      <footer class="site-footer">
+        <span>Evidence before answers.</span>
+        <span>Internal implementation · Synthetic data · Not production-ready</span>
+      </footer>
+    </div>
+  </body>
+</html>

@@ -106,5 +106,36 @@ def get_current_user(
     return user
 
 
+def get_metrics_session(
+    request: Request,
+    user: UserAccount = Depends(get_current_user),
+) -> Iterator[Session]:
+    """Use a repeatable-read transaction and bind the verified principal for RLS."""
+    connection = request.app.state.engine.connect()
+    connection = connection.execution_options(isolation_level="REPEATABLE READ")
+    request_id: UUID = request.state.request_id
+    session = Session(bind=connection, autoflush=False, expire_on_commit=False)
+    deferred_error: ApiError | None = None
+    try:
+        try:
+            with session.begin():
+                set_user_context(session, user.id)
+                try:
+                    yield session
+                except CommitAndRaise as exc:
+                    session.flush()
+                    deferred_error = exc.error
+            if deferred_error is not None:
+                raise deferred_error
+        except IntegrityError:
+            logger.info("request %s rejected by a database constraint", request_id)
+            raise ApiError(
+                409, "conflict", "The requested change conflicts with current state."
+            ) from None
+    finally:
+        session.close()
+        connection.close()
+
+
 def request_id(request: Request) -> UUID:
     return request.state.request_id

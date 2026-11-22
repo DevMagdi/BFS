@@ -4,6 +4,7 @@
 - **Decision:** “Should we accept this new project?” for the initial Software & IT Services hypothesis.
 - **Scope precedence:** [`BRD.md`](BRD.md) and [`MVP_SCOPE.md`](MVP_SCOPE.md) govern current Must/Should/Out priorities. The scenario and action concepts in this broader decision model are candidates, not a release commitment.
 - **Invariant:** BusinessFlow owns the canonical calculations, scenario versions, evidence, recommendation, approval and outcome. A model may help explain inputs/results but may not supply authoritative values.
+- **Implementation boundary:** The bounded M5 backend provides non-financial observations for recorded weekly capacity, committed/proposed assignments, recorded overload comparisons and skill inventory. It does not implement this acceptance-decision contract: it has no proposed-project effort/skill requirements, finance inputs or policies, scenarios, recommendations, approvals, actual-work or utilization measures. A metric run is evidence about recorded inputs, never an acceptance result. See [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md).
 
 ## 1. Decision output states
 

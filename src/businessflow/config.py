@@ -35,6 +35,18 @@ class Settings(BaseSettings):
     )
     db_pool_size: int = Field(default=5, ge=1, le=50, validation_alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(default=5, ge=0, le=50, validation_alias="DB_MAX_OVERFLOW")
+    import_max_file_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        ge=1024,
+        le=100 * 1024 * 1024,
+        validation_alias="IMPORT_MAX_FILE_BYTES",
+    )
+    import_max_rows: int = Field(
+        default=10_000, ge=1, le=100_000, validation_alias="IMPORT_MAX_ROWS"
+    )
+    import_staging_ttl_hours: int = Field(
+        default=24, ge=1, le=168, validation_alias="IMPORT_STAGING_TTL_HOURS"
+    )
 
     @field_validator("app_secret_key")
     @classmethod

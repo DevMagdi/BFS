@@ -1,7 +1,7 @@
 # BusinessFlow AI — Database Design Proposal and Implemented Subset
 
-- **Status:** The ERD and broad table catalog remain logical proposals. The bounded backend baseline now has Alembic migrations `0001_backend_foundation` and `0002_company_context`; this is not a claim that the full proposed production schema is implemented.
-- **Primary store:** The authorized M2/M3 backend uses PostgreSQL; this does not approve every technology choice in the broader proposal or establish production architecture.
+- **Status:** The ERD and broad table catalog remain logical proposals. The bounded backend has Alembic migrations `0001_backend_foundation`, `0002_company_context`, and `0003_staged_data_imports`; this is not a claim that the full proposed production schema is implemented.
+- **Primary store:** The authorized M2/M3 backend and bounded M4 import slice use PostgreSQL; the M4 migration/integration suite has been exercised locally on PostgreSQL 16.2, while project Compose/CI targets PostgreSQL 18. This does not approve every technology choice in the broader proposal or establish production architecture.
 - **Scope precedence:** Table groups and entities below are schema candidates, not a promise that every capability is in the core release. [`BRD.md`](BRD.md) and [`MVP_SCOPE.md`](MVP_SCOPE.md) govern business priority; optional cash, action and outcome entities do not make those features Must Have.
 - **Design goal:** Multi-tenant canonical business facts and traceable decisions without replacing a customer's book-of-record.
 
@@ -98,11 +98,11 @@ The ERD shows the MVP 1:1 constraint. The domain keeps tenant-scoped facts and e
 | Decision and governance | `decision_case`, `decision_subject`, `recommendation`, `recommendation_option`, `recommendation_evidence`, `approval_request`, `approval_decision`, `action`, `action_attempt`, `action_verification`, `outcome_measurement` |
 | Audit | `audit_event` (separate from business events and mutable operational state) |
 
-### Implemented M2/M3 subset
+### Implemented M2–M4 subset
 
-The implemented schema is intentionally smaller than the table catalog above. `0001_backend_foundation` creates users, authentication sessions/tokens/throttles, tenants, the one primary company, memberships, onboarding idempotency records and audit events. `0002_company_context` creates `business_units`, `departments`, `employees`, `skills`, `employee_skills`, `employee_weekly_capacity`, `projects` and `resource_assignments`. All are UUID-backed, tenant-owned and protected by forced RLS; company-context relationships use composite tenant/company foreign keys. Skills use tenant scope; other listed business-context rows carry tenant and company scope. Weekly capacity versions and assignment changes preserve history. This subset does not create the other candidate tables in the broad catalog.
+The implemented schema is intentionally smaller than the table catalog above. `0001_backend_foundation` creates users, authentication sessions/tokens/throttles, tenants, the one primary company, memberships, onboarding idempotency records and audit events. `0002_company_context` creates `business_units`, `departments`, `employees`, `skills`, `employee_skills`, `employee_weekly_capacity`, `projects` and `resource_assignments`. `0003_staged_data_imports` creates `data_imports`, `data_import_rows`, and `data_import_record_links` for tenant/company-scoped staged file imports and source-to-canonical traceability. All newly added tenant-owned tables use forced RLS; company-scoped rows and import data use composite tenant/company foreign keys. Skills use tenant scope. Weekly capacity versions preserve history; staged payload values are cleared on apply, cancellation, or expiry while import metadata, row hashes, issues, audit events, and trace links remain.
 
-Global lookup catalogs (for example, the permission catalog or currency metadata) need not be tenant-owned. In the implemented subset, all new company-context business rows are explicitly tenant-scoped; memberships and audit rows are tenant-scoped. Imports, policies, decisions, approvals, actions and outcomes remain unimplemented candidates.
+Global lookup catalogs (for example, the permission catalog or currency metadata) need not be tenant-owned. Policies, decisions, approvals, actions and outcomes remain logical candidates and are not part of these migrations. The M4 import migration is implemented in the branch; its clean live upgrade and model drift check passed on PostgreSQL 16.2. Verification against the PostgreSQL 18 CI target remains pending.
 
 ## 3. Keys, references and constraints
 
@@ -200,10 +200,10 @@ Initial index strategy (confirm with query plans after representative data exist
 ## 11. Migration and rollout strategy
 
 - Use version-controlled Alembic migrations; every schema change has a migration and review.
-- Revisions `0001_backend_foundation` and `0002_company_context` run from a clean PostgreSQL database. A PostgreSQL integration test also upgrades a populated `0001_backend_foundation` schema to head and verifies existing tenant/company/membership data is preserved. No production `create_all`, schema push, or manual DDL is used.
+- Revisions `0001_backend_foundation`, `0002_company_context`, and `0003_staged_data_imports` are version-controlled Alembic migrations. The M3 populated-M2 upgrade test verifies tenant/company/membership preservation at head. A clean upgrade through M4 and `alembic check` passed against PostgreSQL 16.2; the full suite also covers the populated upgrade path. CI against the project's PostgreSQL 18 target remains pending. No production `create_all`, schema push, or manual DDL is used.
 - Runtime and migration roles are separate. Production deployments use expand/backfill/contract steps for incompatible changes; migration rollback policy is documented per change rather than assuming every data migration is reversible.
 - Seed only stable reference catalogs in production. Realistic example data is test-only and cannot masquerade as customer analytics.
-- Before enabling a new RLS table, migration tests prove policy coverage, forced RLS and runtime role behavior. M3 tests verify all eight new tables use forced RLS and the intended runtime grants.
+- Before enabling a new RLS table, migration tests prove policy coverage, forced RLS and runtime role behavior. M3 tests cover its eight tables; M4 tests cover forced RLS and least-privilege grants on the three import tables. The complete database-backed suite passed locally on PostgreSQL 16.2; PostgreSQL 18 CI is pending.
 
 ## 12. Retention, deletion and privacy
 
@@ -215,4 +215,4 @@ Design requirements: minimize collected personal data; separate compensation acc
 
 [`MVP_ENTITY_CATALOG.md`](MVP_ENTITY_CATALOG.md) supplements this logical ERD with an entity-by-entity MVP/deferred status, ownership boundary, UUID/composite primary key convention, important foreign keys, tenant/company isolation, uniqueness and integrity constraints. It adds the identity/session/recovery lifecycle, immutable mapping/normalization/reconciliation versions, metric/calculation versions, scenario and evidence snapshots, and the internal follow-up task action.
 
-This catalog remains logical and is not the DDL contract for the implemented subset. The one-Company-per-Tenant deferred-FK scheme has been implemented and validated in the M2 PostgreSQL migration. M3's implemented schema is defined by `0002_company_context`; clean upgrade, populated M2-to-M3 upgrade, RLS and drift checks are part of its verification. Broader catalog entities still require their own approved schema design, migrations and security acceptance tests.
+This catalog remains logical and is not the DDL contract for the implemented subset. The one-Company-per-Tenant deferred-FK scheme has been implemented and validated in the M2 PostgreSQL migration. M3's implemented schema is defined by `0002_company_context`, and the bounded M4 import tables by `0003_staged_data_imports`; M4 clean upgrade, forced-RLS/runtime grants, and Alembic drift checks passed against a live PostgreSQL 16.2 test database. PostgreSQL 18 CI verification remains pending. Broader catalog entities still require their own approved schema design, migrations and security acceptance tests.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal, Inexact, Subnormal, localcontext
 from uuid import UUID
 
 import pytest
@@ -42,13 +42,14 @@ def _source(
     source_id: str = "import:csv",
     *,
     tenant_id: UUID = TENANT_ID,
+    source_hash: str = "a" * 64,
     dataset_type: str | None = None,
     mapping_version: int | None = None,
     record_hash: str | None = None,
 ) -> SourceReference:
     return SourceReference(
         source_id=source_id,
-        source_hash="a" * 64,
+        source_hash=source_hash,
         record_hash=record_hash,
         dataset_type=dataset_type,
         mapping_version=mapping_version,
@@ -118,6 +119,32 @@ def _snapshot(
     )
 
 
+def _with_test_approval(formula: FormulaDefinition) -> FormulaDefinition:
+    """Bind a synthetic approval fixture; this does not represent real authorization."""
+    pending = FormulaDefinition.model_validate(
+        {
+            **formula.model_dump(),
+            "policy_binding": {
+                "policy_id": "policy.synthetic-test",
+                "policy_version": "1.0",
+                "approval_status": "pending",
+            },
+        }
+    )
+    binding = FormulaPolicyBinding(
+        policy_id="policy.synthetic-test",
+        policy_version="1.0",
+        approval_status="approved",
+        approved_by_user_id=USER_ID,
+        approved_at=CAPTURED_AT,
+        approval_reference="Synthetic unit-test fixture; not authorization.",
+        approved_formula_hash=formula_contract_hash(pending),
+    )
+    return FormulaDefinition.model_validate(
+        {**pending.model_dump(), "policy_binding": binding.model_dump()}
+    )
+
+
 def _formula(
     *,
     operation: FormulaOperation = "add",
@@ -128,8 +155,9 @@ def _formula(
     target: RoundingTarget = "none",
     mode: RoundingMode = "half_even",
     scale: int | None = None,
+    with_approval: bool = True,
 ) -> FormulaDefinition:
-    return FormulaDefinition(
+    formula = FormulaDefinition(
         formula_id="test.generic-arithmetic",
         formula_version="1.0.0",
         operation=operation,
@@ -141,6 +169,7 @@ def _formula(
         output_label="Generic arithmetic test output",
         rounding_policy=RoundingPolicy(target=target, mode=mode, scale=scale),
     )
+    return _with_test_approval(formula) if with_approval else formula
 
 
 def _two_values(
@@ -190,6 +219,56 @@ def test_decimal_output_rendering_and_quantization_are_bounded() -> None:
     assert fixed_scale_text(Decimal("-0"), scale=2) == "0.00"
 
 
+def test_decimal_text_avoids_unbounded_rendering_of_redundant_digits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = Decimal((0, (1,) + (0,) * 4096, -4096))
+
+    def forbidden_format(*args: object, **kwargs: object) -> str:
+        raise AssertionError("decimal_text must not render the untrimmed coefficient")
+
+    monkeypatch.setattr("builtins.format", forbidden_format)
+    assert decimal_text(value) == "1"
+
+
+def test_calculation_and_verification_ignore_ambient_decimal_context() -> None:
+    with localcontext() as ambient:
+        ambient.prec = 2
+        ambient.rounding = ROUND_DOWN
+        ambient.Emin = -9
+        ambient.Emax = 9
+        ambient.traps[Inexact] = True
+        ambient.traps[Subnormal] = True
+
+        divided = calculate_formula(
+            _formula(operation="divide", target="fixed_scale", scale=4),
+            _two_values("1", "3"),
+        )
+        large_product = calculate_formula(
+            _formula(operation="multiply"),
+            _two_values("9" * 63, "9" * 63),
+        )
+        rounded = round_currency_amount(Decimal("10.005"), "USD", mode="half_even")
+        fine_scale = quantize_decimal(Decimal("1.123"), scale=18, mode="half_even")
+        negative_zero = quantize_decimal(Decimal("-0.004"), scale=2, mode="half_even")
+        reconciliation = reconcile_values(
+            expected_value="100",
+            actual_value="101.2345",
+            absolute_tolerance="0",
+            relative_tolerance="0.012345",
+            currency_code=None,
+        )
+
+    assert divided.output is not None and divided.output.value == "0.3333"
+    assert large_product.output is not None
+    assert large_product.output.value == str((10**63 - 1) ** 2)
+    assert rounded == "10.00"
+    assert fine_scale == Decimal("1.123000000000000000")
+    assert negative_zero == Decimal("0.00") and not negative_zero.is_signed()
+    assert reconciliation.state == "passed"
+    assert reconciliation.effective_tolerance == "1.2345"
+
+
 def test_maximum_input_precision_is_preserved_in_decimal_multiplication() -> None:
     value = "9" * 63
     trace = calculate_formula(
@@ -235,17 +314,19 @@ def test_rounding_policy_requires_explicit_scale_only_for_fixed_scale() -> None:
 
 
 def test_formula_trace_is_golden_and_captures_exact_assumption_and_source() -> None:
-    formula = FormulaDefinition(
-        formula_id="test.generic-scale",
-        formula_version="1.0.0",
-        operation="multiply",
-        left_input_key="measured_value",
-        left_input_kind="observation",
-        right_input_key="explicit_factor",
-        right_input_kind="assumption",
-        output_key="scaled_value",
-        output_label="Generic scaled value",
-        rounding_policy=RoundingPolicy(target="currency_minor_unit", mode="half_even"),
+    formula = _with_test_approval(
+        FormulaDefinition(
+            formula_id="test.generic-scale",
+            formula_version="1.0.0",
+            operation="multiply",
+            left_input_key="measured_value",
+            left_input_kind="observation",
+            right_input_key="explicit_factor",
+            right_input_kind="assumption",
+            output_key="scaled_value",
+            output_label="Generic scaled value",
+            rounding_policy=RoundingPolicy(target="currency_minor_unit", mode="half_even"),
+        )
     )
     snapshot = _snapshot(
         observations=(
@@ -283,7 +364,7 @@ def test_formula_trace_is_golden_and_captures_exact_assumption_and_source() -> N
     assert trace.rounding.currency_exponent == 2
     assert trace.rounding.quantization_performed is True
     assert trace.rounding.value_changed_by_rounding is False
-    assert trace.trace_hash == "8a8f4cf7de5cb774dc34ebb1cf471843d1b4bb11b9998853d7f849fb8ecdb88e"
+    assert trace.trace_hash == "f9ec8e87bdf518707f2bba794b1cdf46ef2e3fc74ec440020e53060004c89d99"
 
 
 def test_addition_commutes_and_subtraction_is_antisymmetric() -> None:
@@ -382,6 +463,12 @@ def test_missing_evidence_and_unapproved_policy_abstain_without_output() -> None
     assert missing.output is None
     assert {item.code for item in missing.missing_evidence} == {"required_observation_missing"}
     assert {item.input_key for item in missing.missing_evidence} == {"left", "right"}
+
+    unbound = calculate_formula(_formula(with_approval=False), _two_values())
+    assert unbound.state == "abstained"
+    assert unbound.output is None
+    assert "policy_approval_required" in {item.code for item in unbound.missing_evidence}
+    assert any(item.policy_id is None for item in unbound.missing_evidence)
 
     pending_formula = FormulaDefinition.model_validate(
         {
@@ -496,7 +583,7 @@ def test_independent_expected_result_requires_same_tenant_and_matches_source() -
     expected = IndependentExpectedResult(
         value="5.00",
         currency_code=None,
-        source=_source("independent:expected-result"),
+        source=_source("independent:expected-result", source_hash="d" * 64),
     )
 
     passed = verify_independent_expected_result(
@@ -506,6 +593,15 @@ def test_independent_expected_result_requires_same_tenant_and_matches_source() -
     assert passed.variance == "0"
     assert passed.expected_source == expected.source
     assert passed.actual_trace_hash == trace.trace_hash
+
+    same_source = expected.model_copy(
+        update={"source": trace.input_snapshot.observations[0].source}
+    )
+    dependent = verify_independent_expected_result(
+        trace, same_source, absolute_tolerance="0", relative_tolerance="0"
+    )
+    assert dependent.state == "not_verifiable"
+    assert dependent.reason_codes == ("expected_source_overlaps_input_evidence",)
 
     different = verify_independent_expected_result(
         trace,
@@ -537,6 +633,41 @@ def test_independent_expected_result_requires_same_tenant_and_matches_source() -
         verify_independent_expected_result(
             trace, other_tenant, absolute_tolerance="0", relative_tolerance="0"
         )
+
+
+def test_independent_expected_result_rejects_each_source_overlap_key() -> None:
+    snapshot = _snapshot(
+        observations=(
+            NumericObservation(
+                key="left",
+                value="2",
+                currency_code=None,
+                source=_source("import:left", source_hash="a" * 64, record_hash="b" * 64),
+            ),
+            NumericObservation(
+                key="right",
+                value="3",
+                currency_code=None,
+                source=_source("import:right", source_hash="c" * 64, record_hash="d" * 64),
+            ),
+        )
+    )
+    trace = calculate_formula(_formula(), snapshot)
+    overlapping_sources = (
+        _source("independent:same-file", source_hash="a" * 64, record_hash="e" * 64),
+        _source("independent:same-record", source_hash="e" * 64, record_hash="b" * 64),
+        _source("import:left", source_hash="e" * 64, record_hash="e" * 64),
+    )
+
+    for source in overlapping_sources:
+        report = verify_independent_expected_result(
+            trace,
+            IndependentExpectedResult(value="5", currency_code=None, source=source),
+            absolute_tolerance="0",
+            relative_tolerance="0",
+        )
+        assert report.state == "not_verifiable"
+        assert report.reason_codes == ("expected_source_overlaps_input_evidence",)
 
 
 def test_replay_checks_hashes_and_detects_trace_tampering() -> None:

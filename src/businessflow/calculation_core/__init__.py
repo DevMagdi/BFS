@@ -2,6 +2,8 @@
 
 The core has no database or finance-policy catalog integration. Callers must provide
 versioned formula and evidence contracts; missing evidence produces an abstention.
+A formula without an approved policy binding abstains. Caller-supplied approval
+metadata is not proof of approver authority and must be externally authorized.
 """
 
 from businessflow.calculation_core.contracts import (

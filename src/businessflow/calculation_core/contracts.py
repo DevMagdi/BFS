@@ -175,7 +175,7 @@ class RoundingPolicy(ContractModel):
 
 
 class FormulaPolicyBinding(ContractModel):
-    """An approval record exists only for formulas explicitly bound to a policy."""
+    """A caller-supplied policy/hash assertion; it does not prove approver authority."""
 
     policy_id: Identifier
     policy_version: VersionText

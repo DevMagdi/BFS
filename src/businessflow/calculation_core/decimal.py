@@ -10,9 +10,12 @@ from decimal import (
     ROUND_HALF_EVEN,
     ROUND_HALF_UP,
     ROUND_UP,
+    Context,
     Decimal,
     DecimalException,
+    DivisionByZero,
     InvalidOperation,
+    Overflow,
     localcontext,
 )
 from typing import Final, Literal
@@ -86,16 +89,16 @@ def _validate_scale(scale: int) -> None:
         raise ValueError(f"scale must be an integer between 0 and {MAX_DECIMAL_SCALE}")
 
 
-def _trimmed_decimal_parts(value: Decimal) -> tuple[int, tuple[int, ...], int]:
+def _trimmed_decimal_parts(value: Decimal) -> tuple[int, tuple[int, ...], int, int]:
     sign, raw_digits, raw_exponent = value.as_tuple()
     if not isinstance(raw_exponent, int):
         raise ValueError("value must be finite")
+    digit_count = len(raw_digits)
     exponent = raw_exponent
-    digits = list(raw_digits)
-    while len(digits) > 1 and digits[-1] == 0:
-        digits.pop()
+    while digit_count > 1 and raw_digits[digit_count - 1] == 0:
+        digit_count -= 1
         exponent += 1
-    return sign, tuple(digits), exponent
+    return sign, raw_digits, digit_count, exponent
 
 
 def decimal_text(value: Decimal) -> str:
@@ -105,21 +108,25 @@ def decimal_text(value: Decimal) -> str:
     if value.is_zero():
         return "0"
 
-    sign, digits, exponent = _trimmed_decimal_parts(value)
-    point = len(digits) + exponent
+    sign, raw_digits, digit_count, exponent = _trimmed_decimal_parts(value)
+    point = digit_count + exponent
     if exponent >= 0:
-        rendered_length = sign + len(digits) + exponent
+        rendered_length = sign + digit_count + exponent
     elif point > 0:
-        rendered_length = sign + len(digits) + 1
+        rendered_length = sign + digit_count + 1
     else:
-        rendered_length = sign + 2 - point + len(digits)
+        rendered_length = sign + 2 - point + digit_count
     if rendered_length > MAX_DECIMAL_OUTPUT_LENGTH:
         raise ValueError("rendered output exceeds the supported decimal length")
 
-    rendered = format(value, "f")
-    if "." in rendered:
-        rendered = rendered.rstrip("0").rstrip(".")
-    return rendered
+    coefficient = "".join(map(str, raw_digits[:digit_count]))
+    if exponent >= 0:
+        rendered = coefficient + "0" * exponent
+    elif point > 0:
+        rendered = coefficient[:point] + "." + coefficient[point:]
+    else:
+        rendered = "0." + "0" * -point + coefficient
+    return ("-" if sign else "") + rendered
 
 
 def validate_currency_code(value: object) -> str:
@@ -152,18 +159,30 @@ def rounding_constant(mode: RoundingMode) -> str:
         raise ValueError("unsupported decimal rounding mode") from exc
 
 
+def _new_decimal_context(precision: int, mode: RoundingMode = "half_even") -> Context:
+    """Create an isolated context so caller-local settings cannot affect results."""
+    return Context(
+        prec=precision,
+        rounding=rounding_constant(mode),
+        Emin=-999_999,
+        Emax=999_999,
+        capitals=1,
+        clamp=0,
+        flags=[],
+        traps=[InvalidOperation, DivisionByZero, Overflow],
+    )
+
+
 def quantize_decimal(value: Decimal, *, scale: int, mode: RoundingMode) -> Decimal:
     """Quantize to an explicit decimal scale with a named rounding mode."""
     if not value.is_finite():
         raise ValueError("value must be finite")
     _validate_scale(scale)
-    quantum = Decimal(1).scaleb(-scale)
     try:
-        with localcontext() as context:
-            context.prec = 256
-            context.rounding = rounding_constant(mode)
+        with localcontext(_new_decimal_context(precision=256, mode=mode)):
+            quantum = Decimal(1).scaleb(-scale)
             rounded = value.quantize(quantum)
-            return abs(rounded) if rounded.is_zero() else rounded
+            return rounded.copy_abs() if rounded.is_zero() else rounded
     except DecimalException as exc:
         raise ValueError("value cannot be represented at the requested decimal scale") from exc
 
@@ -176,13 +195,14 @@ def fixed_scale_text(value: Decimal, *, scale: int) -> str:
     if value.is_zero():
         return "0" if scale == 0 else "0." + "0" * scale
 
-    sign, digits, exponent = _trimmed_decimal_parts(value)
+    sign, raw_digits, digit_count, exponent = _trimmed_decimal_parts(value)
     if exponent < -scale:
         raise ValueError("value must be quantized to the requested decimal scale")
-    integer_digits = max(1, len(digits) + exponent)
+    integer_digits = max(1, digit_count + exponent)
     rendered_length = sign + integer_digits + (scale + 1 if scale else 0)
     if rendered_length > MAX_DECIMAL_OUTPUT_LENGTH:
         raise ValueError("rendered output exceeds the supported decimal length")
+    del raw_digits
     return format(value, f".{scale}f")
 
 

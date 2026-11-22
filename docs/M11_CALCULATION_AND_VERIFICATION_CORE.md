@@ -38,8 +38,10 @@ Contract rules:
   Original input text is retained in the snapshot.
 - An observation must include a source reference: tenant and company, source ID,
   source/file hash, record locator, and optional record hash, dataset type and
-  mapping version. Each source is scope-checked against the snapshot. Assumptions
-  carry an explicit version, rationale, user attribution and timezone-aware
+  mapping version. Each source is scope-checked against the snapshot. The core
+  preserves and hashes these references but does not retrieve source bytes or
+  authenticate that a caller-supplied source hash is genuine. Assumptions carry
+  an explicit version, rationale, user attribution and timezone-aware
   timestamp; an external source reference is optional because the attestation
   itself may be the evidence.
 - Formula definitions carry a formula ID/version, operation, named input keys
@@ -47,18 +49,20 @@ Contract rules:
   output, formula, source, snapshot and trace schemas are versioned. Inputs and
   assumptions are sorted by key before snapshot hashing and trace construction,
   so list order alone cannot change the result.
-- A formula only has an approval-status object when it is explicitly bound to a
-  policy. A pending policy binding abstains. An approved binding must identify
-  the approver, timestamp and approval reference and bind to the exact formula
-  contract hash. The pure library cannot establish the approver's authority;
-  production callers would have to resolve that through an authorized policy
-  catalog. No such catalog is added here, and M8 continues to report
-  `no_approved_policy` with an empty formula catalog.
-- A required observation/assumption that is absent, a wrong input kind, or a
-  pending policy gate yields an `abstained` trace with reason codes and **no
-  output**. Invalid contracts, unsupported currency arithmetic, division by
-  zero, and non-terminating division without an output-rounding rule raise an
-  explicit calculation error; they are not defaulted to zero.
+- Calculation requires a formula explicitly bound to an approved policy. An
+  absent binding or pending binding yields an `abstained` trace with no output.
+  An approved binding must identify the approver, timestamp and approval
+  reference and bind to the exact formula contract hash. The binding is a
+  caller-supplied assertion and does **not** prove that the named approver is
+  authorized or that the policy is in force. Production callers must authorize
+  the binding through an authorized policy catalog before supplying it. No such
+  catalog is added here, and M8 continues to report `no_approved_policy` with an
+  empty formula catalog.
+- A required observation/assumption that is absent, a wrong input kind, or an
+  absent/pending policy approval yields an `abstained` trace with reason codes
+  and **no output**. Invalid contracts, unsupported currency arithmetic,
+  division by zero, and non-terminating division without an output-rounding rule
+  raise an explicit calculation error; they are not defaulted to zero.
 - The trace includes the full versioned input snapshot and source references,
   assumptions and attribution, formula plus formula/contract hashes, input hash,
   engine version, tenant/company scope, rounding details, output or abstention,
@@ -68,12 +72,14 @@ Contract rules:
 ## Decimal, rounding and currency behavior
 
 - Calculation operands are base-10 `Decimal` values created only from validated
-  text. The single supported operation uses an explicit 256-digit local Decimal
-  context. With the 64-character input bound, add/subtract/multiply remain exact;
-  256 digits also leave guard precision for the largest bounded input ratio when
-  rounding to the maximum scale of 18. Division records whether its intermediate
-  was inexact. An inexact division without a final rounding target raises
-  `CalculationPrecisionError` rather than presenting an unqualified result.
+  text. Each formula executes one operation using a fresh Decimal context with
+  explicit precision, rounding, exponent bounds and traps, independent of the
+  caller's ambient settings. With the 64-character input bound, add/subtract/
+  multiply remain exact. The 256-digit context also leaves guard precision for
+  the largest bounded input ratio before rounding to the maximum scale of 18.
+  Division records whether its intermediate was inexact; an inexact division
+  without a final rounding target raises `CalculationPrecisionError` rather
+  than presenting an unqualified result.
 - `RoundingPolicy` must name a target (`none`, `fixed_scale`, or
   `currency_minor_unit`) and a mode (`half_even`, `half_up`, `half_down`,
   `down`, `up`, `floor`, `ceiling`, or `05up`). `fixed_scale` requires a scale
@@ -81,15 +87,15 @@ Contract rules:
   decimal rendering is capped at 512 characters and rejects oversized values
   before allocating their fixed-point representation. Currency rounding uses the
   existing `iso4217` package's minor-unit exponent (e.g. USD/EGP 2, JPY 0,
-  KWD 3). A currency output may instead
-  use `fixed_scale` if its formula contract explicitly says so. There is no
-  implicit two-decimal rule and no rounding on input.
+  KWD 3). A currency output may use an explicit `fixed_scale` when its formula
+  contract requires it. There is no implicit two-decimal rule and no rounding
+  on input.
 - Output quantization uses a 256-digit context and the same named mode. The trace
   records the intermediate precision, rounding precision/mode/target, currency
   exponent or fixed scale, whether quantization occurred, whether the numeric
   value changed, the unrounded value and the output text. Currency-rounded
-  outputs retain the declared minor-unit scale; rounded negative zero is rendered
-  as positive zero while the original input text remains unchanged in the snapshot.
+  outputs retain the declared minor-unit scale. Rounded negative zero is rendered
+  as positive zero; original input text remains unchanged in the snapshot.
 - Add/subtract require both inputs to have the same currency (or both be
   currency-free). Multiply rejects two currency-bearing operands. Divide rejects
   cross-currency operands and a scalar divided by a currency-bearing value;
@@ -110,17 +116,23 @@ Contract rules:
   currency exponent and rounding vectors, currency mismatch rejection and
   policy-gate behavior.
 - Missing/invalid-evidence tests: floats, invalid decimal syntax/currencies,
-  missing input, wrong input kind, pending approval and cross-tenant source
-  references.
+  missing input, wrong input kind, missing/pending approval and cross-tenant
+  source references.
 - Reconciliation: exact variance and explicit absolute/relative thresholds,
   including zero expected values.
-- Independent expected result: the expected value has a separate source/hash and
-  must match the calculated trace's tenant/company. Currency mismatch or an
-  abstained/tampered trace is `not_verifiable`, never a numeric pass.
+- Independent expected result: the expected value must be in the trace's
+  tenant/company scope and its source hash, record hash, and source-ID/locator
+  pair must not overlap input evidence. Currency mismatch, overlapping evidence,
+  or an abstained/tampered trace is `not_verifiable`, never a numeric pass. This
+  check does not authenticate the external source or prove organizational
+  independence; callers must verify those facts.
 - Replay: recomputes from the same formula and snapshot, checks the recorded
   trace's self-hash, formula hash, input hash, engine version and replayed trace
-  hash. It detects both stale self-hashes and a self-consistently re-hashed
-  altered output.
+  hash. It detects stale self-hashes and a self-consistently re-hashed altered
+  output that no longer follows the formula. A fully altered snapshot with a
+  correspondingly recomputed output and hashes is a valid new replay; detecting
+  replacement requires comparison with a trusted, externally stored trace hash
+  and authentic source evidence, neither of which this pure package provides.
 
 These are software verification checks, not evidence that a business formula is
 correct or financially accurate.
@@ -278,11 +290,8 @@ reimplementation.
   comparison. M10 remains synthetic-only, incomplete and unchanged.
 - **No database migration** was appropriate: the new package is not wired to
   storage or API. Existing M5/M8/M10 tenant isolation, RLS and DB privileges are
-  not relaxed. CI integration/RLS tests are still required before review.
-- `.github/workflows/backend.yml` now also runs on pushes to `arena/**`. This is
-  solely to run the repository's existing isolated PostgreSQL 18 integration and
-  quality job on this active feature branch before opening a PR; the job creates
-  its own disposable service database and test-only roles.
+  not relaxed. The existing pull-request CI job runs its PostgreSQL 18 integration
+  and RLS tests against a disposable service database; those checks pass for M11.
 
 ## Deferred capabilities and limits
 

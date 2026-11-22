@@ -18,12 +18,12 @@ from businessflow.calculation_core.contracts import (
 )
 from businessflow.calculation_core.decimal import (
     RoundingMode,
+    _new_decimal_context,
     currency_exponent,
     decimal_text,
     fixed_scale_text,
     parse_decimal_text,
     quantize_decimal,
-    rounding_constant,
 )
 from businessflow.metrics.snapshot import content_hash
 
@@ -123,10 +123,9 @@ def _evaluate_operation(
     operation: str, left: Decimal, right: Decimal, mode: RoundingMode
 ) -> tuple[Decimal, bool]:
     try:
-        with localcontext() as context:
-            context.prec = CALCULATION_PRECISION
-            context.rounding = rounding_constant(mode)
-            context.clear_flags()
+        with localcontext(
+            _new_decimal_context(precision=CALCULATION_PRECISION, mode=mode)
+        ) as context:
             if operation == "add":
                 result = left + right
             elif operation == "subtract":
@@ -278,7 +277,19 @@ def calculate_formula(
             missing.append(reason)
 
     binding = formula.policy_binding
-    if binding is not None and binding.approval_status != "approved":
+    if binding is None:
+        missing.append(
+            MissingEvidence(
+                code="policy_approval_required",
+                input_key=None,
+                policy_id=None,
+                message=(
+                    f"Formula {formula.formula_id!r} version {formula.formula_version!r} "
+                    "must be bound to an explicitly approved policy before calculation."
+                ),
+            )
+        )
+    elif binding.approval_status != "approved":
         missing.append(
             MissingEvidence(
                 code="policy_approval_required",

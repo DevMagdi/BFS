@@ -19,6 +19,7 @@ from businessflow.calculation_core.contracts import (
     input_snapshot_hash,
 )
 from businessflow.calculation_core.decimal import (
+    _new_decimal_context,
     decimal_text,
     parse_decimal_text,
     parse_output_decimal_text,
@@ -98,29 +99,49 @@ def reconcile_values(
     if currency_code is not None:
         validate_currency_code(currency_code)
 
-    with localcontext() as context:
-        context.prec = RECONCILIATION_PRECISION
-        context.clear_flags()
+    with localcontext(_new_decimal_context(precision=RECONCILIATION_PRECISION)) as context:
         variance = actual - expected
-        relative_tolerance_value = abs(expected) * relative
+        relative_tolerance_value = expected.copy_abs() * relative
         effective_tolerance = max(absolute, relative_tolerance_value)
         inexact = context.flags[Inexact]
     if inexact:
         raise ValueError("reconciliation exceeded the supported exact Decimal precision")
+    absolute_variance = variance.copy_abs()
     return ReconciliationReport(
         arithmetic_precision=RECONCILIATION_PRECISION,
-        state="passed" if abs(variance) <= effective_tolerance else "failed",
+        state="passed" if absolute_variance <= effective_tolerance else "failed",
         reason_codes=(),
         expected_value=decimal_text(expected),
         actual_value=decimal_text(actual),
         currency_code=currency_code,
         variance=decimal_text(variance),
-        absolute_variance=decimal_text(abs(variance)),
+        absolute_variance=decimal_text(absolute_variance),
         absolute_tolerance=decimal_text(absolute),
         relative_tolerance=decimal_text(relative),
         effective_tolerance=decimal_text(effective_tolerance),
         expected_source=None,
         actual_trace_hash=None,
+    )
+
+
+def _expected_source_overlaps_input_evidence(
+    expected_source: SourceReference,
+    snapshot: CalculationInputSnapshot,
+) -> bool:
+    input_sources = tuple(item.source for item in snapshot.observations) + tuple(
+        item.source for item in snapshot.assumptions if item.source is not None
+    )
+    return any(
+        expected_source.source_hash == source.source_hash
+        or (
+            expected_source.record_hash is not None
+            and expected_source.record_hash == source.record_hash
+        )
+        or (
+            expected_source.source_id == source.source_id
+            and expected_source.record_locator == source.record_locator
+        )
+        for source in input_sources
     )
 
 
@@ -187,6 +208,23 @@ def verify_independent_expected_result(
             expected_value=expected.value,
             actual_value=output.value,
             currency_code=None,
+            variance=None,
+            absolute_variance=None,
+            absolute_tolerance=decimal_text(absolute),
+            relative_tolerance=decimal_text(relative),
+            effective_tolerance=None,
+            expected_source=expected.source,
+            actual_trace_hash=trace.trace_hash,
+        )
+
+    if _expected_source_overlaps_input_evidence(expected.source, trace.input_snapshot):
+        return ReconciliationReport(
+            arithmetic_precision=RECONCILIATION_PRECISION,
+            state="not_verifiable",
+            reason_codes=("expected_source_overlaps_input_evidence",),
+            expected_value=expected.value,
+            actual_value=output.value,
+            currency_code=output.currency_code,
             variance=None,
             absolute_variance=None,
             absolute_tolerance=decimal_text(absolute),

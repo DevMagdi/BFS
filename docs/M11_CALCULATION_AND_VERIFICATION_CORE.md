@@ -77,8 +77,11 @@ Contract rules:
 - `RoundingPolicy` must name a target (`none`, `fixed_scale`, or
   `currency_minor_unit`) and a mode (`half_even`, `half_up`, `half_down`,
   `down`, `up`, `floor`, `ceiling`, or `05up`). `fixed_scale` requires a scale
-  from 0 to 18. Currency rounding uses the existing `iso4217` package's minor
-  unit exponent (e.g. USD/EGP 2, JPY 0, KWD 3). A currency output may instead
+  from 0 to 18; the public Decimal helpers enforce that same bound. Canonical
+  decimal rendering is capped at 512 characters and rejects oversized values
+  before allocating their fixed-point representation. Currency rounding uses the
+  existing `iso4217` package's minor-unit exponent (e.g. USD/EGP 2, JPY 0,
+  KWD 3). A currency output may instead
   use `fixed_scale` if its formula contract explicitly says so. There is no
   implicit two-decimal rule and no rounding on input.
 - Output quantization uses a 256-digit context and the same named mode. The trace

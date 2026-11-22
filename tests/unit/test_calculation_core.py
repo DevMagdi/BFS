@@ -19,6 +19,7 @@ from businessflow.calculation_core import (
     SourceReference,
     calculate_formula,
     currency_exponent,
+    decimal_text,
     formula_contract_hash,
     parse_decimal_text,
     reconcile_values,
@@ -27,7 +28,7 @@ from businessflow.calculation_core import (
     verify_replay,
 )
 from businessflow.calculation_core.contracts import FormulaOperation, InputKind, RoundingTarget
-from businessflow.calculation_core.decimal import RoundingMode
+from businessflow.calculation_core.decimal import RoundingMode, fixed_scale_text, quantize_decimal
 from businessflow.calculation_core.engine import CalculationPrecisionError
 from businessflow.metrics.snapshot import content_hash
 
@@ -166,6 +167,27 @@ def test_decimal_parser_requires_bounded_plain_decimal_text() -> None:
             parse_decimal_text(invalid)
     with pytest.raises(ValueError, match="plain base-10"):
         parse_decimal_text("1" * 65)
+
+
+def test_decimal_output_rendering_and_quantization_are_bounded() -> None:
+    assert decimal_text(Decimal("1.2300")) == "1.23"
+    assert decimal_text(Decimal("-0.000")) == "0"
+    assert len(decimal_text(Decimal("1E+511"))) == 512
+    assert len(decimal_text(Decimal("1E-510"))) == 512
+
+    with pytest.raises(ValueError, match="output exceeds"):
+        decimal_text(Decimal("1E+512"))
+    with pytest.raises(ValueError, match="output exceeds"):
+        decimal_text(Decimal("1E-511"))
+    with pytest.raises(ValueError, match="integer between 0 and 18"):
+        quantize_decimal(Decimal("1"), scale=19, mode="half_even")
+    with pytest.raises(ValueError, match="integer between 0 and 18"):
+        fixed_scale_text(Decimal("1"), scale=19)
+    with pytest.raises(ValueError, match="output exceeds"):
+        fixed_scale_text(Decimal("1E+1000000000"), scale=2)
+    with pytest.raises(ValueError, match="quantized"):
+        fixed_scale_text(Decimal("1.234"), scale=2)
+    assert fixed_scale_text(Decimal("-0"), scale=2) == "0.00"
 
 
 def test_maximum_input_precision_is_preserved_in_decimal_multiplication() -> None:

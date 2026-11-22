@@ -99,6 +99,21 @@ jobs:
               cursor.execute("GRANT USAGE ON SCHEMA public TO bf_runtime")
           PY
 
+      - name: Verify PostgreSQL 18 service version
+        run: |
+          python - <<'PY'
+          import os
+          import psycopg
+
+          with psycopg.connect(os.environ["TEST_ADMIN_DATABASE_URL"]) as connection:
+              version, version_num = connection.execute(
+                  "SELECT version(), current_setting('server_version_num')::int"
+              ).fetchone()
+          print(version)
+          if not 180000 <= version_num < 190000:
+              raise SystemExit("CI integration tests must run against PostgreSQL 18")
+          PY
+
       - name: Check formatting and lint
         run: |
           ruff format --check src migrations tests

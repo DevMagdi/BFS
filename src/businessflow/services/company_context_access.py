@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from businessflow.authorization import lock_and_revalidate_access, require_tenant_access
+from businessflow.database import set_company_context
 from businessflow.errors import ApiError
 from businessflow.models import Company, Tenant, UserAccount
 
@@ -41,4 +42,5 @@ def require_company_context_access(
     )
     if company is None:
         raise ApiError(404, "company_not_found", "Company was not found.")
+    set_company_context(session, company.id)
     return CompanyContextAccess(tenant=tenant_access.tenant, company=company, user=user)

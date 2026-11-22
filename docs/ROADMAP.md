@@ -1,11 +1,11 @@
 # BusinessFlow AI — Milestone Roadmap and Acceptance Gates
 
-- **Status:** Milestones 2–4 backend slices are merged; bounded Milestone 5 metrics implementation and live-PostgreSQL verification are recorded below. This roadmap does not declare the broader product, finance, original-requirements or M5 owner-approval gates complete.
-- **Rule:** A milestone advances only after implementation, tests, security review, documentation and acceptance evidence are reviewed. Do not treat the M3/M4/M5 backend slices as authorization to begin unrelated or deferred feature scope.
+- **Status:** Milestones 2–5 backend slices are merged; a bounded M6 capacity-only project-assessment slice is implemented and locally verified below. The broader M6 acceptance/finance workflow, product, finance, original-requirements and owner-approval gates remain open.
+- **Rule:** A milestone advances only after implementation, tests, security review, documentation and acceptance evidence are reviewed. The bounded M6 delivery below does not authorize unrelated or deferred feature scope or close the full M6 product gate.
 
 ## Subsequent implementation authorization — 2026-11-21
 
-Subsequent explicit delivery tasks authorized the Milestone 2 backend foundation, bounded Milestone 3 company-context slice, Milestone 4 staged imports, and the bounded Milestone 5 metrics implementation documented in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md). These supersede the earlier no-implementation direction below only for those code scopes. They do not approve the proposed technical baseline as a general product decision, complete the full sequential Milestone 0/1 gates, approve any financial metric or recommendation policy, accept product/finance behavior, or authorize features outside the backend guide. The historical review and gate statements below remain accurate for the documentation review at the time they were written; use the backend guide for current code status and verified commands.
+Subsequent explicit delivery tasks authorized the Milestone 2 backend foundation, bounded Milestone 3 company-context slice, Milestone 4 staged imports, bounded Milestone 5 metrics, and the bounded M6 capacity-only project-assessment slice documented in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md) and [`M6_CAPACITY_ASSESSMENT.md`](M6_CAPACITY_ASSESSMENT.md). These supersede the earlier no-implementation direction below only for those code scopes. They do not approve the proposed technical baseline as a general product decision, complete the full sequential Milestone 0/1 gates, approve any financial metric or recommendation policy, accept product/finance behavior, or authorize features outside the bounded backend guides. The historical review and gate statements below remain accurate for the documentation review at the time they were written; use the backend guide for current code status and verified commands.
 
 ## Pre-Milestone 0 — Initial technical assessment (this review)
 
@@ -94,7 +94,7 @@ The exact original 24 Part 2 requirements remain blocked, and product/finance po
 
 **Delivered scope:** Versioned catalog `businessflow.metrics.v1` and calculation `businessflow.capacity-weekly.v1`; deterministic, exact-decimal weekly capacity, committed/proposed assignment summaries, employee-level recorded-overload comparisons, and recorded skill-inventory counts; immutable input/result snapshots and SHA-256 hashes; replay from saved inputs; and M4 import-row lineage where retained. The API labels the catalog `implementation_draft` and its use `observational_only_no_recommendation`. See [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md).
 
-**Not delivered / decision boundary:** No cash, invoice, receipt, cost, revenue, margin or other financial metric; no project-skill requirement/match; no timesheet, actual-work or utilization measure; no capacity optimizer, scenario, recommendation, or acceptance decision. Missing or unknown capacity remains null, assignment completeness is not attested, and recorded commitment comparisons are not proof of free capacity. M5 metrics do not resolve or replace the owner-approval gates in [`MVP_DECISION_MODEL.md`](MVP_DECISION_MODEL.md).
+**Not delivered / decision boundary:** M5 itself has no cash, invoice, receipt, cost, revenue, margin or other financial metric; no project-skill requirement/match; no timesheet, actual-work or utilization measure; no optimizer, recommendation, or acceptance decision. The separately authorized M6 slice adds only a demand-only hypothetical scenario in a capacity assessment; M5 remains observational. Missing or unknown capacity stays null, assignment completeness is not attested by M5, and its recorded commitment comparison is not proof of free capacity. M6 requires explicit human currentness/completeness assumptions and still does not make an acceptance decision. Neither slice resolves the broader owner-approval gates in [`MVP_DECISION_MODEL.md`](MVP_DECISION_MODEL.md).
 
 **Acceptance gates:**
 - The implementation records versioned formulas, bounded input snapshots, source lineage, exact-decimal values, replayable results and quality/limitation states. The current backend implementation evidence is reported in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md).
@@ -106,9 +106,11 @@ The exact original 24 Part 2 requirements remain blocked, and product/finance po
 
 ## Milestone 6 — First business-intelligence vertical slice
 
-**Scope:** Demonstrate “Should we accept this new project?” using the provisional BRD: proposed scope/effort, skill- and week-specific capacity, finance observations under approved formulas, four core options (current resources, manual reallocation, phase/defer, decline), and an evidence-linked brief. Cash, hire/outsource estimates, and outcome observations are optional/conditional; no collection probability or risk score.
+**Bounded implementation status:** The M6 backend slice now supports versioned project intake and immutable, company-scoped capacity-only assessment evidence over explicit weekly team-hour demand, reusing M5. It implements the four capacity statuses while always keeping business/commercial feasibility `incomplete`; see [`M6_CAPACITY_ASSESSMENT.md`](M6_CAPACITY_ASSESSMENT.md) for its API, lifecycle, evidence, RLS, assumptions, status rules, tests and limitations. This is not full M6 completion and does not decide acceptance/rejection, implement finance or skill matching, make recommendations, approve options, assign resources, or take operational action.
 
-**Acceptance gates:**
+**Full milestone scope (not delivered):** Demonstrate “Should we accept this new project?” using the provisional BRD: proposed scope/effort, skill- and week-specific capacity, finance observations under approved formulas, four core options (current resources, manual reallocation, phase/defer, decline), and an evidence-linked brief. Cash, hire/outsource estimates, and outcome observations are optional/conditional; no collection probability or risk score.
+
+**Acceptance gates for the broader milestone remain open:**
 - Runs on structured, reconciled and authorized data, not hardcoded demo answers.
 - Required inputs and abstention follow `BRD.md` and `MVP_DECISION_MODEL.md`; partial observations are not a preferred-option recommendation.
 - Capacity formulas and any financial formula/policy used for a recommendation have an approved, versioned owner definition and reviewed golden examples; no universal margin, utilization or cash threshold is assumed.

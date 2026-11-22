@@ -51,6 +51,15 @@ def get_tenant_context(session: Session) -> UUID | None:
     return value if isinstance(value, UUID) else None
 
 
+def set_company_context(session: Session, company_id: UUID) -> None:
+    """Bind the company resolved from a membership-verified tenant for company RLS."""
+    session.execute(
+        text("SELECT set_config('app.company_id', :company_id, true)"),
+        {"company_id": str(company_id)},
+    )
+    session.info["app.company_id"] = company_id
+
+
 def transaction_session(factory: sessionmaker[Session]) -> Iterator[Session]:
     """Yield one explicit unit of work; commit on success and rollback on any exception."""
     with factory() as session, session.begin():

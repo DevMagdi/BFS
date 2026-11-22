@@ -1,10 +1,10 @@
 # BusinessFlow AI — MVP Project-Acceptance Decision Contract
 
-- **Status:** Proposed product/domain contract for owner and finance review; not an approved accounting policy or implementation.
-- **Decision:** “Should we accept this new project?” for the initial Software & IT Services hypothesis.
+- **Status:** The broader project-acceptance contract remains proposed for owner/finance review and is not an approved accounting policy. A separate bounded M6 capacity-only backend slice is implemented; it does not complete this contract.
+- **Decision:** The broader product question is “Should we accept this new project?” for the initial Software & IT Services hypothesis.
 - **Scope precedence:** [`BRD.md`](BRD.md) and [`MVP_SCOPE.md`](MVP_SCOPE.md) govern current Must/Should/Out priorities. The scenario and action concepts in this broader decision model are candidates, not a release commitment.
 - **Invariant:** BusinessFlow owns the canonical calculations, scenario versions, evidence, recommendation, approval and outcome. A model may help explain inputs/results but may not supply authoritative values.
-- **Implementation boundary:** The bounded M5 backend provides non-financial observations for recorded weekly capacity, committed/proposed assignments, recorded overload comparisons and skill inventory. It does not implement this acceptance-decision contract: it has no proposed-project effort/skill requirements, finance inputs or policies, scenarios, recommendations, approvals, actual-work or utilization measures. A metric run is evidence about recorded inputs, never an acceptance result. See [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md).
+- **Implementation boundary:** M5 provides non-financial observations for recorded weekly capacity, committed/proposed assignments, overload comparisons and skill inventory. M6 adds only a versioned proposed-project intake and human capacity-only assessment that reuses M5; see [`M6_CAPACITY_ASSESSMENT.md`](M6_CAPACITY_ASSESSMENT.md). Neither slice implements this broader acceptance-decision contract: there are no finance inputs/policies, skill or employee matching, four-option recommendation, approval, actual-work or utilization measures. A metric or capacity assessment is evidence about recorded inputs, never project acceptance/rejection. See [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md).
 
 ## 1. Decision output states
 
@@ -15,6 +15,10 @@ A run returns exactly one of:
 - **`not_authorized`** — the user may not access the required tenant/company/source data or perform the requested decision operation. Do not reveal which protected records exist; do not report protected data as a data-quality blocker.
 
 A partial metric may be returned only when clearly labeled as a partial observation; it must not be promoted into a recommendation.
+
+### Separate M6 capacity-only status
+
+M6 returns a distinct `capacity_status`: `feasible`, `feasible_with_conditions`, `not_feasible`, or `incomplete`. It means only a weekly company-aggregate capacity comparison under explicit demand and human currentness/completeness assumptions. Missing or unconfirmed weekly demand, missing/unknown capacity, unconfirmed freshness/commitment completeness, unsupported evidence, or other conflicts yield `incomplete`; estimated capacity can support only a conditional result, and any reliable confirmed weekly deficit is retained rather than averaged away. These statuses do not select among project options, accept/reject the project, or authorize action. Overall `business_feasibility_status` remains `incomplete` because finance inputs and approved commercial formulas/policies are absent. See [`M6_CAPACITY_ASSESSMENT.md`](M6_CAPACITY_ASSESSMENT.md) for the full contract.
 
 ## 2. Minimum required inputs
 
@@ -116,7 +120,7 @@ Where reliable evidence exists, keep a currency- and due-period schedule. Candid
 
 ## 6. Finance/product owner approval required for formulas and policies
 
-Before M5/M6 recommendation behavior is accepted, an accountable finance/product owner must review and version:
+Before any broader project-acceptance recommendation behavior is implemented or accepted, an accountable finance/product owner must review and version:
 
 1. Working calendar, periodization, absence, utilization, resource skill matching and treatment of reserved/overlapping time.
 2. Work-estimation methods, contingency/range handling and how estimated effort maps to periods and skills.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -20,6 +21,8 @@ def _apply_synthetic_operational_template(
     tenant_id: str,
     headers: dict[str, str],
     dataset_type: str,
+    *,
+    attempt: str = "0001",
 ) -> dict[str, object]:
     base = f"/api/v1/tenants/{tenant_id}"
     template = client.get(
@@ -32,7 +35,7 @@ def _apply_synthetic_operational_template(
     staged = client.post(
         f"{base}/imports",
         files={"file": (f"synthetic_demo_{dataset_type}.csv", content, "text/csv")},
-        headers={**headers, "Idempotency-Key": f"m10-import-{dataset_type}-0001"},
+        headers={**headers, "Idempotency-Key": f"m10-import-{dataset_type}-{attempt}"},
     )
     assert staged.status_code == 201, staged.text
     import_id = staged.json()["import"]["id"]
@@ -82,6 +85,38 @@ def _apply_synthetic_operational_template(
     assert applied.status_code == 200, applied.text
     assert applied.json()["import"]["status"] in {"applied", "applied_with_warnings"}
     return applied.json()["import"]
+
+
+def _register_m10_company_data_source(
+    client,
+    tenant_id: str,
+    headers: dict[str, str],
+    dataset_type: str,
+    import_id: str,
+    *,
+    source_key: str,
+    source_as_of_at: datetime,
+) -> dict[str, object]:
+    base = f"/api/v1/tenants/{tenant_id}/company-data"
+    source = client.post(
+        f"{base}/sources",
+        json={
+            "source_key": source_key,
+            "display_name": f"Synthetic M10 {dataset_type} source",
+            "dataset_type": dataset_type,
+            "contract_version": "1.0.0",
+            "freshness_max_age_hours": 24,
+        },
+        headers=headers,
+    )
+    assert source.status_code == 201, source.text
+    ingestion = client.post(
+        f"{base}/sources/{source.json()['id']}/ingestions",
+        json={"import_id": import_id, "source_as_of_at": source_as_of_at.isoformat()},
+        headers=headers,
+    )
+    assert ingestion.status_code == 201, ingestion.text
+    return ingestion.json()
 
 
 def test_synthetic_position_review_full_workflow_finance_provenance_and_disposition(
@@ -209,6 +244,8 @@ def test_synthetic_position_review_full_workflow_finance_provenance_and_disposit
         assert import_summary["dataset_type"] == dataset
         assert import_summary["file_hash"] == seed["current_template_hashes"][dataset]
 
+    stale_import_id = str(applied_imports["employees"]["id"])
+
     finance_template = client.get(f"{position}/demo/templates/financial_export", headers=headers)
     assert finance_template.status_code == 200, finance_template.text
     finance_upload = client.post(
@@ -253,6 +290,56 @@ def test_synthetic_position_review_full_workflow_finance_provenance_and_disposit
         "synthetic_data_acknowledged": True,
         "attestations": attestations,
     }
+    legacy_brief = client.post(
+        f"{position}/briefs",
+        json=body,
+        headers={**headers, "Idempotency-Key": "m10-legacy-review-0001"},
+    )
+    assert legacy_brief.status_code == 201, legacy_brief.text
+    assert all(
+        item.get("company_data") is None for item in legacy_brief.json()["operational_imports"]
+    )
+
+    stale_ingestion = _register_m10_company_data_source(
+        client,
+        tenant_id,
+        headers,
+        "employees",
+        stale_import_id,
+        source_key="m10-employees-stale",
+        source_as_of_at=datetime.now(UTC) - timedelta(days=2),
+    )
+    assert stale_ingestion["ingestion"]["freshness_status"] == "stale"
+
+    stale_attempt = client.post(
+        f"{position}/briefs",
+        json=body,
+        headers={**headers, "Idempotency-Key": "m10-stale-review-0001"},
+    )
+    assert stale_attempt.status_code == 409
+    assert stale_attempt.json()["error"]["code"] == "company_data_not_eligible_for_m10"
+
+    # A new exact synthetic M4 version can be registered with fresh source-as-of evidence.
+    applied_imports["employees"] = _apply_synthetic_operational_template(
+        client, tenant_id, headers, "employees", attempt="0002"
+    )
+    company_data_ingestions = {}
+    for dataset, import_summary in applied_imports.items():
+        company_data_ingestions[dataset] = _register_m10_company_data_source(
+            client,
+            tenant_id,
+            headers,
+            dataset,
+            str(import_summary["id"]),
+            source_key=f"m10-{dataset.replace('_', '-')}-fresh",
+            source_as_of_at=datetime.now(UTC),
+        )
+        assert company_data_ingestions[dataset]["ingestion"]["freshness_status"] == "fresh"
+    body["operational_imports"] = {
+        dataset: applied_imports[dataset]["id"]
+        for dataset in ("employees", "projects", "weekly_capacity", "resource_assignments")
+    }
+
     create_headers = {**headers, "Idempotency-Key": "m10-synthetic-review-0001"}
     created = client.post(f"{position}/briefs", json=body, headers=create_headers)
     assert created.status_code == 201, created.text
@@ -271,6 +358,49 @@ def test_synthetic_position_review_full_workflow_finance_provenance_and_disposit
     assert all(
         item["file_hash"] == seed["current_template_hashes"][item["dataset_type"]]
         for item in brief["operational_imports"]
+    )
+    assert all(
+        item["company_data"]["freshness_status"] == "fresh" for item in brief["operational_imports"]
+    )
+    assert {
+        item["dataset_type"]: item["company_data"]["ingestion_id"]
+        for item in brief["operational_imports"]
+    } == {
+        dataset: company_data_ingestions[dataset]["ingestion"]["id"]
+        for dataset in company_data_ingestions
+    }
+
+    # The database trigger independently rejects stale bindings, even when bypassing the API.
+    with pytest.raises(DBAPIError) as bridge_error, runtime_engine.begin() as connection:
+        connection.execute(
+            text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": tenant_id},
+        )
+        connection.execute(
+            text("SELECT set_config('app.company_id', :company_id, true)"),
+            {"company_id": tenant["company"]["id"]},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO position_review_operational_imports "
+                "(tenant_id, company_id, review_id, dataset_type, import_id, "
+                "company_data_ingestion_id, file_hash, validation_hash, mapping_version) "
+                "VALUES (:tenant_id, :company_id, :review_id, 'employees', :import_id, "
+                ":ingestion_id, :file_hash, :validation_hash, :mapping_version)"
+            ),
+            {
+                "tenant_id": tenant_id,
+                "company_id": tenant["company"]["id"],
+                "review_id": brief["id"],
+                "import_id": stale_import_id,
+                "ingestion_id": stale_ingestion["ingestion"]["id"],
+                "file_hash": stale_ingestion["ingestion"]["file_hash"],
+                "validation_hash": stale_ingestion["ingestion"]["validation_hash"],
+                "mapping_version": stale_ingestion["ingestion"]["mapping_version"],
+            },
+        )
+    assert (
+        bridge_error.value.orig.diag.constraint_name == "position_review_company_data_binding_guard"
     )
 
     idempotent = client.post(f"{position}/briefs", json=body, headers=create_headers)

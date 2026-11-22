@@ -157,6 +157,26 @@ class PositionReviewDispositionResponse(StrictModel):
     created_at: datetime
 
 
+class PositionReviewCompanyDataReference(StrictModel):
+    source_id: UUID
+    source_key: str
+    ingestion_id: UUID
+    contract_key: str
+    contract_version: str
+    contract_hash: str
+    snapshot_hash: str
+    quality_status: Literal["passed", "warning"]
+    freshness_status: Literal["fresh"]
+    ingestion_freshness_status: Literal[
+        "fresh", "stale", "policy_missing", "source_as_of_missing", "future_as_of"
+    ]
+    source_as_of_at: datetime | None
+    freshness_max_age_hours: int | None
+    freshness_evaluated_at: datetime
+    ingestion_freshness_evaluated_at: datetime
+    quality_findings: list[dict[str, object]]
+
+
 class PositionReviewOperationalImportResponse(StrictModel):
     dataset_type: OperationalDataset
     import_id: UUID
@@ -171,6 +191,7 @@ class PositionReviewOperationalImportResponse(StrictModel):
     duplicate_rows: int
     created_rows: int
     skipped_rows: int
+    company_data: PositionReviewCompanyDataReference | None = None
 
 
 class PositionReviewSummary(StrictModel):

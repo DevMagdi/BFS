@@ -695,7 +695,7 @@ def test_upgrade_from_milestone_2_schema_preserves_existing_data(admin_engine):
             )
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0008_monthly_position_review"
+                == "0009_company_data_intelligence"
             )
             assert (
                 connection.scalar(

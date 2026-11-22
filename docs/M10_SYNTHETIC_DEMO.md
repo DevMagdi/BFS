@@ -2,7 +2,7 @@
 
 **Status:** internal implementation slice; synthetic data only; not production-ready. This guide does not authorize customer data, customer outreach, commercial use, or deployment.
 
-The browser workflow is served by the FastAPI process at `/`. It uses the existing auth, tenant/company context, M4 import pipeline, and M5 metric snapshots. No frontend build step, LLM, or external API is used.
+The browser workflow is served by the FastAPI process at `/`. It uses the existing auth, tenant/company context, M4 import pipeline, and M5 metric snapshots. M12 can optionally bind an eligible existing M4 import to a versioned Company source registration and immutable freshness/quality evidence; this does not relax any M10 synthetic-template or mapping restrictions. See [`M12_COMPANY_DATA_INTELLIGENCE.md`](M12_COMPANY_DATA_INTELLIGENCE.md). No frontend build step, LLM, or external API is used.
 
 ## Start a fresh local workspace
 

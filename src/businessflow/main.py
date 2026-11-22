@@ -13,6 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from businessflow.api.auth_routes import router as auth_router
 from businessflow.api.company_context_routes import router as company_context_router
 from businessflow.api.data_import_routes import router as data_import_router
+from businessflow.api.financial_assessment_routes import router as financial_assessment_router
 from businessflow.api.health_routes import router as health_router
 from businessflow.api.metrics_routes import router as metrics_router
 from businessflow.api.project_assessment_routes import router as project_assessment_router
@@ -119,6 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(metrics_router, prefix="/api/v1")
     application.include_router(project_assessment_router, prefix="/api/v1")
     application.include_router(project_decision_router, prefix="/api/v1")
+    application.include_router(financial_assessment_router, prefix="/api/v1")
     return application
 
 

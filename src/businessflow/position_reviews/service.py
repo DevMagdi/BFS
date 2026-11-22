@@ -1789,14 +1789,19 @@ def record_position_disposition(
         session, user, tenant_id, "decision:write", request_id=request_id
     )
     require_tenant_access(session, user, tenant_id, "finance:read", request_id=request_id)
+    # Serialize dispositions with other M10 writes using the Company row. Briefs themselves
+    # are immutable and the runtime role intentionally has no UPDATE privilege on that table.
+    session.scalar(
+        select(Company.id)
+        .where(Company.id == access.company.id, Company.tenant_id == tenant_id)
+        .with_for_update()
+    )
     review = session.scalar(
-        select(PositionReviewBrief)
-        .where(
+        select(PositionReviewBrief).where(
             PositionReviewBrief.id == review_id,
             PositionReviewBrief.tenant_id == tenant_id,
             PositionReviewBrief.company_id == access.company.id,
         )
-        .with_for_update()
     )
     if review is None:
         raise ApiError(404, "position_review_not_found", "The position review was not found.")

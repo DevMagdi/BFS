@@ -50,7 +50,7 @@ from businessflow.company_context.schemas import (
     WeeklyCapacityPage,
     WeeklyCapacityResponse,
 )
-from businessflow.errors import ApiError
+from businessflow.errors import ApiError, CommitAndRaise
 from businessflow.models import Company, UserAccount
 from businessflow.position_reviews.models import PositionDemoSeed
 from businessflow.services.company_context_access import require_company_context_access
@@ -112,7 +112,7 @@ def _protect_seeded_demo_workspace(
         return
     try:
         access = require_company_context_access(session, user, tenant_id, "company_context:write")
-    except ApiError:
+    except (ApiError, CommitAndRaise):
         # Preserve the endpoint's normal authorization and request-validation response. The
         # guard only adds the seeded-workspace restriction when this caller can otherwise write.
         return

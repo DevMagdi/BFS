@@ -1,6 +1,6 @@
-# ADR 0008: Make project acceptance abstention-first and defer external actions
+# ADR 0008: Historical project-acceptance proposal — abstention and action boundary
 
-- **Status:** This ADR proposes a broader project-acceptance/action contract and remains subject to finance and owner approval. A separate bounded M6 capacity-only backend slice is implemented; it does not implement or approve this proposed recommendation/action workflow. The current provisional core scope is governed by [`../MVP_SCOPE.md`](../MVP_SCOPE.md); hire/outsource options and the internal task are conditional/Should Have, not core release requirements.
+- **Status:** Historical proposal for the earlier project-acceptance hypothesis. It is not the current product direction; see [`../product/PRODUCT_VISION.md`](../product/PRODUCT_VISION.md) and [`../roadmap/PRODUCT_ROADMAP.md`](../roadmap/PRODUCT_ROADMAP.md). The proposal remains subject to finance and owner approval. M6–M8 implement bounded project-specific slices only; they do not implement or approve this broader recommendation/action workflow. Hire/outsource options and the internal task were conditional candidates, not current release requirements.
 - **Date:** 2026-11-21
 - **Detailed contract:** `../MVP_DECISION_MODEL.md` and `../MVP_ENTITY_CATALOG.md`
 

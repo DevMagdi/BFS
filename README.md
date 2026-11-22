@@ -1,66 +1,48 @@
-# BusinessFlow AI
+# BusinessFlow
 
-**Project:** New-Project Feasibility Decision Support for Project-Based Services Companies.
+**M9 product direction under assessment:** a company-wide Business Intelligence & Decision Platform.
 
-## Current status
+BusinessFlow is intended to help a company use selected, governed business facts and deterministic analyses to support reviewable human decisions across the domains it chooses to enable. Projects are one currently supported business domain, not the product boundary. This is a proposed product direction—not a validated market position, approved Product Baseline, or description of capabilities already shipped.
 
-The product and MVP documents remain provisional; they are not customer-validated product approval. This repository now also contains a small Milestone 2 backend foundation, implemented under explicit task authorization. That work does not retroactively approve the proposed stack, settle finance policies, or complete the product definition.
+The approved foundational trust principle is **Evidence Before Answers — No evidence, no confident answer**. Any future AI response must be evidence-grounded, traceable, transparent, permission-aware, honest about insufficient evidence, and reproducible for important assessments/decisions. Local/on-prem inference is a target requirement for any separately approved AI capability; no AI runtime or model is implemented or selected. See [`docs/AI_GOVERNANCE.md`](docs/AI_GOVERNANCE.md).
 
-- Product scope, workflows, screens, and acceptance criteria remain linked below.
-- The technical choices in the code are a minimal working baseline, not a permanent architecture or product decision.
-- Finance policies, accounting assumptions, and production calculations remain outside this implementation and require their own owners and approval.
-- The exact original 24 Part 2 requirements were not supplied. [`REQUIREMENTS_TRACEABILITY.md`](docs/REQUIREMENTS_TRACEABILITY.md) remains **BLOCKED**; no substitute list is used.
-- Discovery and product validation continue separately. This implementation does not claim that discovery or business acceptance gates are complete.
+## Current implementation status
 
-## Backend implementation
+The repository contains bounded **M2–M8 backend slices** in a Python/FastAPI modular monolith backed by PostgreSQL. The migration sequence is `0001_backend_foundation` through `0007_financial_feasibility`. No separate M1 runtime/schema feature is evidenced in that sequence. The implementation includes tenant/company security foundations, a narrow workforce/project model, staged imports for six workforce/project dataset types, five draft observational metrics, a project capacity assessment, a project-stage human decision/approval flow, and project-scoped financial observations whose assessment remains incomplete without approved policy.
 
-The current backend provides a versioned FastAPI API, PostgreSQL schema and Alembic migration, registration/login and refresh-session lifecycle, tenant-scoped owner/admin/member authorization, atomic tenant/company/owner onboarding, audit events, and PostgreSQL row-level security. It is intentionally a backend baseline, not a full MVP or a production-hardening approval.
+It is **not yet** a company-wide BI platform: broad company-domain coverage, a general KPI/analytics layer, financial calculations or policies, reusable non-project decision subjects, a frontend, live connectors, and external actions are not implemented. M8 is not a company-wide finance engine. The exact current behavior, schema paths, and tests are in [`docs/BACKEND_IMPLEMENTATION.md`](docs/BACKEND_IMPLEMENTATION.md).
+
+## M9 product and architecture assessment
+
+Start with these documentation-only assessment deliverables:
+
+1. [Product vision](docs/product/PRODUCT_VISION.md)
+2. [Target domain architecture](docs/architecture/TARGET_DOMAIN_ARCHITECTURE.md)
+3. [Current-versus-target gap analysis and seven final answers](docs/architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md)
+4. [Financial intelligence architecture](docs/architecture/FINANCIAL_INTELLIGENCE_ARCHITECTURE.md)
+5. [Product roadmap proposal](docs/roadmap/PRODUCT_ROADMAP.md)
+
+M9 does not change existing backend business logic or authorize a future implementation milestone. See the gap analysis and roadmap for explicit owner gates and candidate next steps.
+
+## Earlier project-feasibility hypothesis (historical)
+
+The [`BRD.md`](docs/BRD.md), [`MVP_SCOPE.md`](docs/MVP_SCOPE.md), workflows, screens, acceptance criteria, competitive review, and project-decision proposal record a previous, project-feasibility-focused hypothesis. They are retained as historical input and must not be treated as the current product direction or as proof that those features are shipped. The prior founder discovery authorization is specific to that earlier hypothesis; M9 does not expand it.
+
+The original 24 Part 2 requirements were not supplied. [`REQUIREMENTS_TRACEABILITY.md`](docs/REQUIREMENTS_TRACEABILITY.md) remains **BLOCKED**; no substitute list is used.
+
+## Developer and implementation references
 
 - [Backend implementation and local developer guide](docs/BACKEND_IMPLEMENTATION.md)
 - [PostgreSQL role initialization](scripts/README.md)
 - Safe placeholder configuration: [`.env.example`](.env.example)
+- [Current architecture overview](docs/ARCHITECTURE.md)
+- [Domain model proposal](docs/DOMAIN_MODEL.md)
+- [Database design and implemented schema subset](docs/DATABASE_DESIGN.md)
+- [AI governance boundaries](docs/AI_GOVERNANCE.md)
+- [Deployment architecture](docs/DEPLOYMENT_ARCHITECTURE.md)
 
-The integration tests require real PostgreSQL and separate runtime, migration, and test-admin connections. SQLite is not a supported test substitute for RLS. See the backend guide for setup and commands.
-
-## Product requirements — start here
-
-1. [Business Requirements Document](docs/BRD.md)
-2. [MVP Scope](docs/MVP_SCOPE.md)
-3. [User Workflows](docs/USER_WORKFLOWS.md)
-4. [Screen Inventory](docs/SCREEN_INVENTORY.md)
-5. [MVP Acceptance Criteria](docs/MVP_ACCEPTANCE_CRITERIA.md)
-6. [Roadmap and Approval Gates](docs/ROADMAP.md)
-
-The BRD traceability map covers only its own BR/NFR IDs. It does not resolve the blocked original-24 exercise.
-
-## Domain and technical proposals
-
-These documents describe proposed designs. They do not freeze the technology or authorize additional implementation beyond the current task:
-
-- [Initial Technical Assessment](docs/INITIAL_TECHNICAL_ASSESSMENT.md)
-- [System Architecture](docs/ARCHITECTURE.md)
-- [Domain Model](docs/DOMAIN_MODEL.md)
-- [Database Design](docs/DATABASE_DESIGN.md)
-- [MVP Entity Catalog](docs/MVP_ENTITY_CATALOG.md)
-- [Decision Model and Formula Candidates](docs/MVP_DECISION_MODEL.md)
-- [Technical Baseline Proposal](docs/TECHNICAL_BASELINE_PROPOSAL.md)
-- [Architecture Decision Records](docs/adr/)
-
-## Security, deployment, AI, and dependencies
-
-- [Identity and Authorization](docs/IDENTITY_AND_AUTHORIZATION.md)
-- [Deployment Architecture](docs/DEPLOYMENT_ARCHITECTURE.md)
-- [AI Governance](docs/AI_GOVERNANCE.md)
-- [Open-Source Inventory](docs/OPEN_SOURCE_INVENTORY.md)
-
-## Product evidence and governance
-
-- [Competitive Validation](docs/PHASE_1_COMPETITIVE_VALIDATION.md)
-- [Discovery Protocol](docs/PHASE_1_DISCOVERY_PROTOCOL.md)
-- [Founder Decision Memo](docs/FOUNDER_DECISION_MEMO.md)
-- [Final Review Corrections and Open Gates](docs/FINAL_REVIEW_CORRECTIONS.md)
-- [Requirements Traceability — blocked pending exact input](docs/REQUIREMENTS_TRACEABILITY.md)
+The integration tests use PostgreSQL roles and forced RLS; SQLite is not a substitute for those security tests. See the backend guide and CI workflow for exact commands and current coverage.
 
 ## Delivery boundary
 
-The backend does not implement product/business calculations, resource or finance engines, AI/LLM/RAG or semantic engines, workflow automation, external ERP integrations, a large frontend, microservices, Kubernetes, or unrelated product features. It does not reconstruct the original 24 requirements or decide finance policy. Treat it as a limited implementation baseline; evaluate production deployment and future technical choices independently.
+The M9 change is documentation-only. It does not add or modify existing M2–M8 business logic, APIs, models, tables, migrations, calculations, UI, AI runtime, integrations, or deployment infrastructure. Product, finance-policy, data-handling, and owner-approval gates remain separate.

@@ -1,6 +1,6 @@
 # BusinessFlow AI — MVP Screen Inventory and Navigation
 
-- **Status:** Provisional UI requirements; no frontend implementation authorization.
+- **Status:** Historical UI requirements for the former project-feasibility hypothesis, superseded as current product direction by the M9 assessment in [`product/PRODUCT_VISION.md`](product/PRODUCT_VISION.md). They do not describe a shipped frontend or authorize one.
 - **Cross-references:** Requirements and permissions in [`BRD.md`](BRD.md); end-to-end use in [`USER_WORKFLOWS.md`](USER_WORKFLOWS.md); pass/fail behavior in [`MVP_ACCEPTANCE_CRITERIA.md`](MVP_ACCEPTANCE_CRITERIA.md).
 - **UX rule:** Owner/manager-first, decision-centered navigation. Use tables, clear status labels, and comparison views. No AI-chat-first home screen; chat is not required for MVP.
 

@@ -1,6 +1,6 @@
 # BusinessFlow AI — Provisional MVP Acceptance Criteria
 
-- **Status:** Testable requirements for a future MVP; no implementation authorization.
+- **Status:** Historical testable requirements for the former project-feasibility MVP, superseded as current product scope by the M9 assessment in [`product/PRODUCT_VISION.md`](product/PRODUCT_VISION.md). These criteria do not describe the whole M2–M8 implementation and do not authorize future work.
 - **Source:** [`BRD.md`](BRD.md). Workflows are in [`USER_WORKFLOWS.md`](USER_WORKFLOWS.md); screen behavior is in [`SCREEN_INVENTORY.md`](SCREEN_INVENTORY.md); priorities are in [`MVP_SCOPE.md`](MVP_SCOPE.md).
 - **Test data:** Use synthetic/de-identified fixtures. Production formulas remain blocked until the Finance owner approves definitions. Test-only policy fixtures validate arithmetic but do not set a company-wide threshold.
 

@@ -1,13 +1,13 @@
 # BusinessFlow AI — Final Independent Review Corrections
 
-- **Status:** Historical documentation-review record. The provisional MVP requirements have since been reviewed for documentation delivery; technical baseline, accounting policies and implementation remain unapproved, unimplemented and unverified.
+- **Status:** Historical documentation-review record for the former project-feasibility hypothesis. Its implementation-status statements describe that review point, not current repository state: bounded M2–M8 backend slices have since been delivered under separate authorizations. The full proposed technical baseline and finance/accounting policies remain unapproved; M9 records a separate company-wide product hypothesis and authorizes no new implementation.
 - **Review date:** 2026-11-21 UTC.
 - **Traceability:** The 24-item section remains **BLOCKED — awaiting the exact original Part 2 requirements**; see `REQUIREMENTS_TRACEABILITY.md`. No substitute list is provided.
 
 ## 1. What is resolved by documentation
 
 - Specific, date-stamped version recommendations and alternatives are in `TECHNICAL_BASELINE_PROPOSAL.md`; all remain unapproved and no package was installed.
-- A logical entity/ownership/key/tenant-isolation catalog is in `MVP_ENTITY_CATALOG.md`; it is not DDL. The current BRD/MVP_SCOPE Must/Should/Out boundary supersedes broader candidate entity labels for release priority.
+- A logical entity/ownership/key/tenant-isolation catalog is in `MVP_ENTITY_CATALOG.md`; it is not DDL. At the time of that review, the BRD/MVP_SCOPE Must/Should/Out boundary superseded broader candidate entity labels for release priority; those priorities are now historical and the M9 roadmap proposal supersedes them.
 - Required/optional inputs, formula candidates and finance-owner approvals, explicit abstention states, scenario versioning, and a reversible internal follow-up action are in `MVP_DECISION_MODEL.md`.
 - `OPEN_SOURCE_INVENTORY.md` now distinguishes default-branch SHA snapshots from verified release pins, records observed root and package license scope, adds six candidates, and keeps WrenAI/Cube benchmark-gated.
 - Relevant architecture, identity, deployment, roadmap and ADR documents link to the proposals and preserve confirmed product direction.

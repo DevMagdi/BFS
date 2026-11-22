@@ -1,6 +1,6 @@
 # BusinessFlow AI — MVP User and System Workflows
 
-- **Status:** Provisional workflow specification; no implementation authorization.
+- **Status:** Historical project-feasibility workflow proposal, superseded as current product direction by the M9 assessment in [`product/PRODUCT_VISION.md`](product/PRODUCT_VISION.md). It is not a description of shipped workflows or authorization for future implementation.
 - **Requirements:** See [`BRD.md`](BRD.md) for BR/NFR IDs and policies. This document describes the user's and system's end-to-end behavior; it does not duplicate the full requirement text.
 - **Navigation:** `Company Setup → Users & Roles → Data Hub → Import Review → Business Context / Finance Policy → New Decision → Decision Workspace → Decision Brief → Decision & Approval → (optional) Internal Follow-up → Outcomes`.
 - **Data boundary:** Initial ingestion is user-uploaded CSV/XLSX only. There are no live connectors, external writes, or AI-generated facts in this workflow.

@@ -1,6 +1,6 @@
 # Founder Decision Memo — Phase 1 Product Validation
 
-- **Decision state:** **AUTHORIZED — bounded discovery only.** Founder selected this option on 2026-11-21 (UTC); no implementation was authorized.
+- **Decision state:** **HISTORICAL — AUTHORIZED bounded discovery only** for the earlier project-acceptance hypothesis. Founder selected this option on 2026-11-21 (UTC); no implementation was authorized by this memo. M9 does not extend the authorization to broader product discovery or implementation.
 - **Prepared:** 2026-11-21 (UTC).
 - **Related evidence:** [`PHASE_1_COMPETITIVE_VALIDATION.md`](PHASE_1_COMPETITIVE_VALIDATION.md).
 - **Purpose:** Record the founder’s decision to authorize bounded discovery only for the proposed BusinessFlow project-acceptance workflow and define its limits. This memo is not a market verdict, Product Baseline, or technical approval.

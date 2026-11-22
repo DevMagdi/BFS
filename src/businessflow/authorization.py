@@ -25,6 +25,9 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "audit:read",
             "company_context:read",
             "company_context:write",
+            "decision:read",
+            "decision:write",
+            "decision:approve",
         }
     ),
     "admin": frozenset(
@@ -38,9 +41,12 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "audit:read",
             "company_context:read",
             "company_context:write",
+            "decision:read",
+            "decision:write",
+            "decision:approve",
         }
     ),
-    "member": frozenset({"tenant:read", "company:read", "company_context:read"}),
+    "member": frozenset({"tenant:read", "company:read", "company_context:read", "decision:read"}),
 }
 
 

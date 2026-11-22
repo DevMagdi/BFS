@@ -1,6 +1,6 @@
 # BusinessFlow AI — Milestone Roadmap and Acceptance Gates
 
-- **Status:** Milestones 2–5 backend slices are merged; a bounded M6 capacity-only project-assessment slice is implemented and locally verified below. The broader M6 acceptance/finance workflow, product, finance, original-requirements and owner-approval gates remain open.
+- **Status:** Milestones 2–5 backend slices are merged; bounded M6 capacity assessment and M7 human-controlled capacity-stage decision/approval implementations are locally verified. The broader M6 commercial acceptance/finance workflow, product, finance, original-requirements and owner-approval gates remain open.
 - **Rule:** A milestone advances only after implementation, tests, security review, documentation and acceptance evidence are reviewed. The bounded M6 delivery below does not authorize unrelated or deferred feature scope or close the full M6 product gate.
 
 ## Subsequent implementation authorization — 2026-11-21
@@ -126,6 +126,10 @@ The exact original 24 Part 2 requirements remain blocked, and product/finance po
 - Recommendation never equals approval; approval identifies authenticated human, exact version/option and payload hash.
 - An agent/model cannot approve itself, forge an approver identity, alter a decision after approval, or bypass role/scope checks.
 - Concurrent approvals, replay, stale approvals and cross-tenant attempts are tested.
+
+**Bounded M7 implementation status:** A scoped human decision/approval workflow is implemented over M6 capacity assessments. It records the exact outcomes `proceed_to_financial_evaluation`, `hold`, `request_information`, and `capacity_declined`; appends immutable, hash-bound versions; validates information-response, hold/resume and capacity-decline conditions; and supports owner/admin submission and review with mandatory separation of duties. Members are read-only. Current/stale evidence is checked against exact M6 assessment/intake and M5 metric-run versions, and stale or invalid evidence cannot be newly approved. Forced RLS, composite scope FKs, append-only database guards, audit events, rollback and concurrency tests are included. See [`M7_DECISION_APPROVAL.md`](M7_DECISION_APPROVAL.md) and [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md).
+
+**M7 boundary and acceptance limits:** `capacity_declined` is not commercial rejection; `proceed_to_financial_evaluation` is not a completed financial evaluation. No approved finance model exists, so business/commercial feasibility remains `incomplete`. The implementation has no finance/pricing/margin, commercial acceptance/rejection, recommendation, resource assignment, automation, AI/LLM, UI or external action. Local PostgreSQL evidence uses 16.2; PostgreSQL 18 CI, merge and post-merge checks must be reported separately when confirmed.
 
 ## Milestone 8 — Controlled action execution
 

@@ -110,7 +110,12 @@ def _protect_seeded_demo_workspace(
 ) -> None:
     if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
         return
-    access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    try:
+        access = require_company_context_access(session, user, tenant_id, "company_context:write")
+    except ApiError:
+        # Preserve the endpoint's normal authorization and request-validation response. The
+        # guard only adds the seeded-workspace restriction when this caller can otherwise write.
+        return
     # Use the same Company-row lock as explicit demo seeding. A direct write that races with
     # seeding must either finish before the emptiness check or observe the committed seed.
     session.scalar(

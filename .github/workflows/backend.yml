@@ -113,4 +113,43 @@ jobs:
           alembic check
 
       - name: Run PostgreSQL integration tests
-        run: pytest -q
+        shell: bash
+        run: |
+          set +e
+          pytest -q --tb=short --junitxml=/tmp/pytest-results.xml 2>&1 | tee /tmp/pytest-output.log
+          pytest_status=${PIPESTATUS[0]}
+          if [ "$pytest_status" -ne 0 ]; then
+            python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          failures = []
+          report_path = "/tmp/pytest-results.xml"
+          if os.path.exists(report_path):
+              for case in ET.parse(report_path).iter("testcase"):
+                  failure = case.find("failure")
+                  if failure is None:
+                      failure = case.find("error")
+                  if failure is None:
+                      continue
+                  detail = [line.strip() for line in (failure.text or "").splitlines() if line.strip()]
+                  message = detail[-2:] or [failure.get("message", "No failure details")]
+                  test_name = ".".join(
+                      part for part in (case.get("classname"), case.get("name")) if part
+                  )
+                  failures.append(f"{test_name}: {' | '.join(message)}")
+          if not failures:
+              with open("/tmp/pytest-output.log", encoding="utf-8") as output:
+                  failures = [line.strip() for line in output if "ERROR" in line or "FAILED" in line]
+          if not failures:
+              failures = ["Pytest failed; see the test step output for details."]
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("### PostgreSQL integration test failures\n\n")
+              summary.write("\n".join(f"- `{failure}`" for failure in failures) + "\n")
+          for failure in failures:
+              escaped = failure.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title=PostgreSQL integration test failure::{escaped[:1000]}")
+          PY
+          fi
+          exit "$pytest_status"

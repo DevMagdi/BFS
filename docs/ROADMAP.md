@@ -1,11 +1,11 @@
 # BusinessFlow AI — Milestone Roadmap and Acceptance Gates
 
-- **Status:** The Milestone 2 backend foundation is merged; a bounded Milestone 3 company-context implementation has been delivered and verified as described below. This roadmap does not declare the broader product, finance or original-requirements gates complete.
-- **Rule:** A milestone advances only after implementation, tests, security review, documentation and acceptance evidence are reviewed. Do not treat the M3 backend slice as authorization to begin later feature scope.
+- **Status:** Milestones 2–4 backend slices are merged; bounded Milestone 5 metrics implementation and live-PostgreSQL verification are recorded below. This roadmap does not declare the broader product, finance, original-requirements or M5 owner-approval gates complete.
+- **Rule:** A milestone advances only after implementation, tests, security review, documentation and acceptance evidence are reviewed. Do not treat the M3/M4/M5 backend slices as authorization to begin unrelated or deferred feature scope.
 
 ## Subsequent implementation authorization — 2026-11-21
 
-Subsequent explicit delivery tasks authorized the Milestone 2 backend foundation and the bounded Milestone 3 company-context slice, documented in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md). These supersede the earlier no-implementation direction below only for those code scopes. They do not approve the proposed technical baseline as a general product decision, complete the full sequential Milestone 0/1 gates, accept product/finance behavior, or authorize features outside the implementation guide. The historical review and gate statements below remain accurate for the documentation review at the time they were written; use the backend guide for current code status and verified commands.
+Subsequent explicit delivery tasks authorized the Milestone 2 backend foundation, bounded Milestone 3 company-context slice, Milestone 4 staged imports, and the bounded Milestone 5 metrics implementation documented in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md). These supersede the earlier no-implementation direction below only for those code scopes. They do not approve the proposed technical baseline as a general product decision, complete the full sequential Milestone 0/1 gates, approve any financial metric or recommendation policy, accept product/finance behavior, or authorize features outside the backend guide. The historical review and gate statements below remain accurate for the documentation review at the time they were written; use the backend guide for current code status and verified commands.
 
 ## Pre-Milestone 0 — Initial technical assessment (this review)
 
@@ -90,12 +90,17 @@ The exact original 24 Part 2 requirements remain blocked, and product/finance po
 
 ## Milestone 5 — Metrics and analytical foundation
 
-**Scope:** Versioned metric catalog, deterministic calculations, reproducible runs and evidence/lineage for the core case. Cash/invoice/receipt observations are conditional/Should Have, not a required release component. Benchmark DuckDB/Polars and semantic engines only after a separate owner-approved evaluation decision; none is a baseline dependency.
+**Status:** A bounded, non-financial metrics backend implementation is added and verified on live PostgreSQL. This is implementation evidence, not product-owner approval of a decision metric or closure of every M5 evaluation gate.
+
+**Delivered scope:** Versioned catalog `businessflow.metrics.v1` and calculation `businessflow.capacity-weekly.v1`; deterministic, exact-decimal weekly capacity, committed/proposed assignment summaries, employee-level recorded-overload comparisons, and recorded skill-inventory counts; immutable input/result snapshots and SHA-256 hashes; replay from saved inputs; and M4 import-row lineage where retained. The API labels the catalog `implementation_draft` and its use `observational_only_no_recommendation`. See [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md).
+
+**Not delivered / decision boundary:** No cash, invoice, receipt, cost, revenue, margin or other financial metric; no project-skill requirement/match; no timesheet, actual-work or utilization measure; no capacity optimizer, scenario, recommendation, or acceptance decision. Missing or unknown capacity remains null, assignment completeness is not attested, and recorded commitment comparisons are not proof of free capacity. M5 metrics do not resolve or replace the owner-approval gates in [`MVP_DECISION_MODEL.md`](MVP_DECISION_MODEL.md).
 
 **Acceptance gates:**
+- The implementation records versioned formulas, bounded input snapshots, source lineage, exact-decimal values, replayable results and quality/limitation states. The current backend implementation evidence is reported in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md).
 - Finance/product owners approve versioned definitions and exact-decimal golden examples before any financial decision metric is treated as accepted. Missing owner policy means no decision recommendation.
-- Calculations record input snapshot, formula/policy version, original currency and approved FX source where applicable, quality limits and lineage.
-- Analytics benchmarks measure throughput, memory, concurrency, latency, failure behavior, tenant isolation and operating cost on representative inputs.
+- Calculations record input snapshot, formula/policy version, original currency and approved FX source where applicable, quality limits and lineage; currency/FX fields apply only if a future, separately approved financial metric needs them.
+- Analytics benchmarks measure throughput, memory, concurrency, latency, failure behavior, tenant isolation and operating cost on representative inputs; this remains open.
 - Only if the owner separately authorizes semantic-engine evaluation: WrenAI tests intent clarification/read-only question-to-query correctness; Cube tests semantic model/join and security-context correctness. Apply financial gold values, tenant/permission controls, safety and operational cost where applicable. Test Arabic/English only if those are owner-approved product languages.
 - No candidate is adopted without an exact release/commit, selected package/path and license scope, security/advisory and dependency/SBOM review, upstream tests, and BusinessFlow-specific tests. Do not make an engine canonical truth; BusinessFlow owns metrics, decisions, permissions, approvals and outcomes. If neither semantic candidate passes, keep the internal deterministic service.
 

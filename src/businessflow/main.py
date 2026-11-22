@@ -14,6 +14,7 @@ from businessflow.api.auth_routes import router as auth_router
 from businessflow.api.company_context_routes import router as company_context_router
 from businessflow.api.data_import_routes import router as data_import_router
 from businessflow.api.health_routes import router as health_router
+from businessflow.api.metrics_routes import router as metrics_router
 from businessflow.api.tenant_routes import router as tenant_router
 from businessflow.config import Settings, get_settings
 from businessflow.database import create_database_engine, make_session_factory
@@ -113,6 +114,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(tenant_router, prefix="/api/v1")
     application.include_router(company_context_router, prefix="/api/v1")
     application.include_router(data_import_router, prefix="/api/v1")
+    application.include_router(metrics_router, prefix="/api/v1")
     return application
 
 

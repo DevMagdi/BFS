@@ -76,7 +76,7 @@ The exact original 24 Part 2 requirements remain blocked, and product/finance po
 
 ## Milestone 4 — Data integration and data quality
 
-**Status:** A bounded staged CSV/XLSX import implementation is present on the active branch. Ruff, mypy, parser/catalog unit tests, app/OpenAPI import, the full PostgreSQL integration suite, clean migrations, and live Alembic drift checks passed locally against PostgreSQL 16.2. Verification against the project PostgreSQL 18 CI target remains pending.
+**Status:** A bounded staged CSV/XLSX import implementation is merged on `main` in PR #4. Ruff, mypy, parser/catalog unit tests, app/OpenAPI import, the full PostgreSQL integration suite, clean migrations, and live Alembic drift checks passed locally against PostgreSQL 16.2. The configured PostgreSQL 18 CI passed on both the PR and post-merge `main` run.
 
 **Scope:** Tenant/company-scoped staging, field mapping/ignored-column decisions, preview, row validation, duplicate handling, explicit confirmation, traceable promotion and quality reports for employees, skills, employee skills, weekly capacity, projects and resource assignments. This slice does not add reusable source registries, templates, or a scheduled background worker.
 
@@ -86,7 +86,7 @@ The exact original 24 Part 2 requirements remain blocked, and product/finance po
 - Invalid/contradictory/stale data is surfaced, not silently repaired; imports are idempotent and tenant-isolated.
 - Malicious files/content, size limits, formula injection and secrets/PII logging are tested.
 
-**Local evidence and outstanding checks:** All 14 parser/catalog unit tests and all 49 tests pass with separate PostgreSQL runtime, migration, and admin roles on a live PostgreSQL 16.2 instance. Clean migrations, the populated upgrade path, import API/RLS/grant tests, purge coverage, atomic rollback, concurrent idempotency/revalidation, and `alembic check` pass; Ruff format/lint and mypy pass. The repository's CI target is PostgreSQL 18 and its result is pending, so do not infer that version's CI status from this local run.
+**Verification evidence:** All 14 parser/catalog unit tests and all 49 tests pass with separate PostgreSQL runtime, migration, and admin roles on a live PostgreSQL 16.2 instance. Clean migrations, the populated upgrade path, import API/RLS/grant tests, purge coverage, atomic rollback, concurrent idempotency/revalidation, and `alembic check` pass; Ruff format/lint and mypy pass. The PostgreSQL 18 PR and post-merge workflows also passed the complete integration-test and quality-gate job.
 
 ## Milestone 5 — Metrics and analytical foundation
 

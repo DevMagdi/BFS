@@ -3,6 +3,7 @@
 - **Status:** M9 target architecture and code assessment. No financial rule, formula, accounting policy, FX policy, rounding rule, threshold, or new data model is approved by this document.
 - **Critical distinction:** M8 is an implemented **project-scoped observation and policy-gated assessment slice**, not company-wide Financial Intelligence. The target is optional, finance-governed intelligence across the selected Company as a whole; it is not implemented.
 - **Related evidence:** [`../BACKEND_IMPLEMENTATION.md`](../BACKEND_IMPLEMENTATION.md), [`CURRENT_VS_TARGET_GAP_ANALYSIS.md`](CURRENT_VS_TARGET_GAP_ANALYSIS.md), and migration [`../../migrations/versions/0007_financial_feasibility.py`](../../migrations/versions/0007_financial_feasibility.py).
+- **Post-M9 scope note:** Migration `0008_monthly_position_review` adds only an exact-template, synthetic-only finance CSV inside the internal M10 demo. It is not a general Company finance source contract or policy-governed Financial Intelligence implementation; see [`../M10_SYNTHETIC_DEMO.md`](../M10_SYNTHETIC_DEMO.md).
 
 ## 1. M8 behavior verified in code
 

@@ -18,8 +18,8 @@ def _config_for_database(url: str) -> Config:
     return config
 
 
-def test_m8_migration_upgrade_downgrade_and_reupgrade():
-    database_name = f"businessflow_m8_migration_test_{uuid4().hex[:12]}"
+def test_m10_migration_upgrade_downgrade_and_reupgrade():
+    database_name = f"businessflow_m10_migration_test_{uuid4().hex[:12]}"
     admin_base_url = make_url(os.environ["TEST_ADMIN_DATABASE_URL"])
     admin_url = admin_base_url.set(database="postgres")
     admin_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT", hide_parameters=True)
@@ -50,7 +50,7 @@ def test_m8_migration_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0007_financial_feasibility"
+                "0008_monthly_position_review"
             )
             assert (
                 connection.scalar(text("SELECT to_regclass('public.financial_assessments')"))
@@ -61,6 +61,86 @@ def test_m8_migration_upgrade_downgrade_and_reupgrade():
                     text("SELECT to_regclass('public.project_financial_input_versions')")
                 )
                 == "project_financial_input_versions"
+            )
+            for table_name in (
+                "position_demo_seeds",
+                "position_financial_imports",
+                "position_review_briefs",
+                "position_review_operational_imports",
+                "position_review_dispositions",
+            ):
+                assert (
+                    connection.scalar(
+                        text(
+                            "SELECT relrowsecurity AND relforcerowsecurity FROM pg_class "
+                            "WHERE oid = to_regclass(:table_name)"
+                        ),
+                        {"table_name": f"public.{table_name}"},
+                    )
+                    is True
+                )
+                assert (
+                    connection.scalar(
+                        text("SELECT has_table_privilege('bf_runtime', :table_name, 'SELECT')"),
+                        {"table_name": f"public.{table_name}"},
+                    )
+                    is True
+                )
+                assert (
+                    connection.scalar(
+                        text("SELECT has_table_privilege('bf_runtime', :table_name, 'INSERT')"),
+                        {"table_name": f"public.{table_name}"},
+                    )
+                    is True
+                )
+                assert (
+                    connection.scalar(
+                        text("SELECT has_table_privilege('bf_runtime', :table_name, 'DELETE')"),
+                        {"table_name": f"public.{table_name}"},
+                    )
+                    is False
+                )
+                assert (
+                    connection.scalar(
+                        text("SELECT has_table_privilege('bf_runtime', :table_name, 'TRUNCATE')"),
+                        {"table_name": f"public.{table_name}"},
+                    )
+                    is False
+                )
+                if table_name != "position_financial_imports":
+                    assert (
+                        connection.scalar(
+                            text("SELECT has_table_privilege('bf_runtime', :table_name, 'UPDATE')"),
+                            {"table_name": f"public.{table_name}"},
+                        )
+                        is False
+                    )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT has_column_privilege('bf_runtime', "
+                        "'position_financial_imports', 'observations', 'UPDATE')"
+                    )
+                )
+                is False
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT has_column_privilege('bf_runtime', "
+                        "'position_financial_imports', 'status', 'UPDATE')"
+                    )
+                )
+                is True
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal "
+                        "AND tgname = 'trg_position_review_briefs_source_set_guard'"
+                    )
+                )
+                == 1
             )
 
         command.downgrade(_config_for_database(migration_url), "0006_decision_workflow")
@@ -82,7 +162,7 @@ def test_m8_migration_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0007_financial_feasibility"
+                "0008_monthly_position_review"
             )
             assert (
                 connection.scalar(

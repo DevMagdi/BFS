@@ -65,7 +65,9 @@ from businessflow.data_imports.validation import (
     validate_staged_import,
 )
 from businessflow.errors import ApiError, CommitAndRaise
-from businessflow.models import UserAccount
+from businessflow.models import Company, UserAccount
+from businessflow.position_reviews.demo import OPERATIONAL_DATASETS
+from businessflow.position_reviews.models import PositionDemoSeed
 from businessflow.services.company_context_access import require_company_context_access
 from businessflow.services.company_projects import create_project, create_resource_assignment
 from businessflow.services.company_workforce import (
@@ -150,6 +152,40 @@ def _prior_import_for_idempotency(
     return prior
 
 
+def _m10_demo_seed_for_company(
+    session: Session, tenant_id: UUID, company_id: UUID
+) -> PositionDemoSeed | None:
+    return session.scalar(
+        select(PositionDemoSeed).where(
+            PositionDemoSeed.tenant_id == tenant_id,
+            PositionDemoSeed.company_id == company_id,
+        )
+    )
+
+
+def _lock_company_for_demo_seed_race(session: Session, tenant_id: UUID, company_id: UUID) -> None:
+    session.scalar(
+        select(Company.id)
+        .where(Company.id == company_id, Company.tenant_id == tenant_id)
+        .with_for_update()
+    )
+
+
+def _reject_non_synthetic_m10_import(seed: PositionDemoSeed, file_hash: str) -> None:
+    allowed_hashes = {
+        seed.current_template_hashes.get(dataset_type) for dataset_type in OPERATIONAL_DATASETS
+    }
+    if file_hash not in allowed_hashes:
+        raise ApiError(
+            422,
+            "synthetic_operational_template_required",
+            (
+                "This M10 workspace accepts only the four exact built-in synthetic "
+                "operational CSV templates; no customer or confidential data is accepted."
+            ),
+        )
+
+
 def stage_import(
     session: Session,
     user: UserAccount,
@@ -163,6 +199,12 @@ def stage_import(
     access = require_company_context_access(
         session, user, tenant_id, "company_context:write", request_id=request_id
     )
+    demo_seed = _m10_demo_seed_for_company(session, tenant_id, access.company.id)
+    if demo_seed is None:
+        # Serialize first imports against explicit demo seeding so no arbitrary M4 source can
+        # slip into a Company between its empty-workspace check and immutable seed creation.
+        _lock_company_for_demo_seed_race(session, tenant_id, access.company.id)
+        demo_seed = _m10_demo_seed_for_company(session, tenant_id, access.company.id)
     if not IDEMPOTENCY_PATTERN.fullmatch(idempotency_key):
         raise ApiError(
             422,
@@ -175,6 +217,8 @@ def stage_import(
     except ImportFileError as exc:
         raise ApiError(exc.status_code, exc.code, exc.message) from None
     file_hash = hashlib.sha256(content).hexdigest()
+    if demo_seed is not None:
+        _reject_non_synthetic_m10_import(demo_seed, file_hash)
     key_hash = hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
     prior = _prior_import_for_idempotency(
         session, tenant_id, access.company.id, key_hash, user.id, file_hash
@@ -625,6 +669,22 @@ def set_import_mapping(
             "The mapping cannot be changed after confirmation or application.",
         )
     headers = _mapping_shape(import_record, request)
+    demo_seed = _m10_demo_seed_for_company(session, tenant_id, import_record.company_id)
+    if demo_seed is not None and (
+        request.dataset_type not in OPERATIONAL_DATASETS
+        or import_record.file_hash != demo_seed.current_template_hashes.get(request.dataset_type)
+        or request.worksheet_name != "CSV"
+        or request.field_mapping != {header: header for header in headers}
+        or request.ignored_columns
+    ):
+        raise ApiError(
+            422,
+            "synthetic_operational_mapping_required",
+            (
+                "M10 accepts the exact built-in operational template only with every "
+                "column mapped to its same-named field and no ignored columns."
+            ),
+        )
     # Store only a validated one-to-one map, plus explicit decisions to ignore source columns.
     import_record.dataset_type = request.dataset_type
     import_record.selected_worksheet = request.worksheet_name

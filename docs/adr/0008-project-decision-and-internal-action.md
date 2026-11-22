@@ -1,6 +1,6 @@
 # ADR 0008: Make project acceptance abstention-first and defer external actions
 
-- **Status:** Proposed domain/action recommendation; finance and owner approval required. The current provisional core scope is governed by [`../MVP_SCOPE.md`](../MVP_SCOPE.md); hire/outsource options and the internal task are conditional/Should Have, not core release requirements.
+- **Status:** This ADR proposes a broader project-acceptance/action contract and remains subject to finance and owner approval. A separate bounded M6 capacity-only backend slice is implemented; it does not implement or approve this proposed recommendation/action workflow. The current provisional core scope is governed by [`../MVP_SCOPE.md`](../MVP_SCOPE.md); hire/outsource options and the internal task are conditional/Should Have, not core release requirements.
 - **Date:** 2026-11-21
 - **Detailed contract:** `../MVP_DECISION_MODEL.md` and `../MVP_ENTITY_CATALOG.md`
 
@@ -23,7 +23,7 @@ An abstention-first decision protects the product from fluent but unsupported fi
 
 ## Consequences and approval gates
 
-- Finance owner must approve capacity, cost, revenue recognition, contribution/margin, FX, collection exposure, data quality and recommendation thresholds before M5/M6 acceptance.
+- Finance owner must approve capacity, cost, revenue recognition, contribution/margin, FX, collection exposure, data quality and recommendation thresholds before any broader project-acceptance recommendation behavior or product acceptance. This gate does not describe the bounded M5 observational metrics or M6 human capacity-only comparison; neither produces a project recommendation or commercial decision.
 - Product owner must confirm the MVP input set and whether a follow-up task is useful.
 - Human approval must bind an authenticated person to the exact payload, decision/scenario versions and policy.
 - The internal task is not implemented, and this ADR does not authorize any code or Milestone 0 work.

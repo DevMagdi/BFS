@@ -11,6 +11,7 @@ from businessflow.company_context import models as company_context_models  # noq
 from businessflow.data_imports import models as data_import_models  # noqa: F401
 from businessflow.database import Base
 from businessflow.metrics import models as metrics_models  # noqa: F401
+from businessflow.project_assessments import models as project_assessment_models  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

@@ -1,7 +1,7 @@
 # BusinessFlow AI — Self-Hosted-First Deployment Architecture
 
-- **Status:** Deployment architecture proposal for owner review; no deployment code, containers or infrastructure have been added.
-- **Owner-confirmed direction:** Self-hosted/on-prem first, with architecture portability so cloud hosting can be supported later without major domain redesign.
+- **Status:** Production deployment and operating procedures remain a proposal. The repository contains a Dockerfile and Docker Compose development/test baseline for the API and PostgreSQL; these are not production deployment approval. No AI inference runtime is implemented.
+- **Owner-confirmed direction:** Self-hosted/on-prem first, with architecture portability so cloud hosting can be supported later without major domain redesign. For any separately approved AI feature, customer-controlled local/on-prem inference is a target architectural requirement, not a current capability.
 - **Open:** Reference platform/package, network and air-gap requirements, tenant-per-installation topology, customer/operator responsibilities, storage/secrets/backup services, and production sizing/support.
 
 ## 1. Objectives and non-goals
@@ -19,6 +19,7 @@ flowchart TB
     WEB[BusinessFlow web UI - introduced after backend foundations]
     APP[BusinessFlow modular monolith API]
     WORKER[Optional background worker - same application package]
+    AI[Optional local/on-prem AI inference - future target only]
     DB[(PostgreSQL - canonical and transactional data)]
     FILES[Configured file/object storage adapter]
     SECRETS[Customer-controlled secret source]
@@ -30,6 +31,7 @@ flowchart TB
     EDGE --> WEB
     WEB -->|same-origin or configured trusted origin; no DB access| APP
     APP -->|private network| DB
+    APP -. future, permission-scoped evidence only .-> AI
     WORKER -->|private network; tenant-scoped jobs| DB
     APP --> FILES
     WORKER --> FILES
@@ -50,6 +52,7 @@ The diagram is logical. It does not mandate separate hosts/processes for web/API
 - **File/object storage:** A narrow adapter for source files and large payloads; storage encryption, permissions, retention, backup and purge behavior are operator-configured and tested. Do not assume local filesystem/object-store semantics are interchangeable without tests.
 - **Secrets:** A defined secret-provider boundary for DB, OIDC, SMTP and connector credentials. Store references/metadata in the application database, not raw secrets. Do not print secrets or authentication artifacts to logs.
 - **Identity:** First-party authentication plus OIDC/enterprise SSO as defined in [`IDENTITY_AND_AUTHORIZATION.md`](IDENTITY_AND_AUTHORIZATION.md). The customer-operated environment may need outbound access to an IdP, mail relay, update channel or approved connectors; whether any deployment must be air-gapped remains open.
+- **AI inference (future target, not implemented):** Any AI capability approved later must support customer-controlled local/on-prem inference. The application must authorize and retrieve only evidence the requesting user may access before sending any context to inference. An external model service is never a required dependency. No model, provider, or inference runtime is selected.
 - **Integrations:** Outbound connectors are disabled by default and enabled with least-privilege credentials, approved network destinations, tenant scope, idempotency and verification.
 
 ### 3.2 Packaging and reference environment
@@ -117,4 +120,4 @@ No deployment, backup, restore or cloud portability test has been run for Busine
 5. What are retention, residency, deletion, backup expiry, export and recovery requirements by data class and jurisdiction?
 6. What minimum hardware, service-level target, upgrade cadence and supported-version policy are required?
 
-This document is an assessment design only. No deployment package, container, infrastructure, identity dependency or product code has been introduced.
+This document remains a production deployment proposal. A development Dockerfile/Compose baseline and M2–M8 backend already exist, but no production operating profile or local/on-prem AI inference runtime has been implemented or approved. No specific AI model, provider, or runtime is selected.

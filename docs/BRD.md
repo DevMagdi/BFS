@@ -1,11 +1,12 @@
-# BusinessFlow AI — Provisional MVP Business Requirements Document
+# BusinessFlow — Historical Project-Feasibility MVP Requirements
 
-- **Status:** Complete provisional business requirements baseline, reviewed for documentation delivery. It is not a customer-validated Product Baseline, accounting policy, technical approval, or implementation authorization.
-- **Decision basis:** Founder direction to define a narrow provisional MVP. Customer interviews continue separately; they do not block this requirements draft.
-- **Product positioning hypothesis:** **New-Project Feasibility Decision Support for Project-Based Services Companies.**
-- **Initial segment hypothesis:** Software & IT Services companies.
-- **Core question:** **“Should we accept this new project, and under what conditions?”**
-- **Relationship to prior work:** Uses `DOMAIN_MODEL.md`, `MVP_ENTITY_CATALOG.md`, `MVP_DECISION_MODEL.md`, `INITIAL_TECHNICAL_ASSESSMENT.md`, `TECHNICAL_BASELINE_PROPOSAL.md`, `AI_GOVERNANCE.md`, `PHASE_1_COMPETITIVE_VALIDATION.md`, and `ROADMAP.md`. Existing technical recommendations remain unapproved.
+- **Status:** Historical provisional requirements for a prior project-feasibility hypothesis. Superseded as the current product direction by the M9 assessment in [`product/PRODUCT_VISION.md`](product/PRODUCT_VISION.md). This is not the current BRD, a customer-validated Product Baseline, or an implementation authorization.
+- **Important scope note:** The Must/Should/Conditional requirements and project-based segment below record the earlier hypothesis only. They must not be read as the current platform scope or as evidence that those features are implemented. Current actual behavior is in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md); the current strategic roadmap proposal is [`roadmap/PRODUCT_ROADMAP.md`](roadmap/PRODUCT_ROADMAP.md).
+- **Historical decision basis:** Founder direction to define a narrow project-acceptance MVP. The related discovery authorization remains specific to that hypothesis; M9 does not extend it.
+- **Historical positioning hypothesis:** **New-Project Feasibility Decision Support for Project-Based Services Companies.**
+- **Historical segment hypothesis:** Software & IT Services companies.
+- **Historical core question:** **“Should we accept this new project, and under what conditions?”**
+- **Relationship to prior work:** This document was drafted from `DOMAIN_MODEL.md`, `MVP_ENTITY_CATALOG.md`, `MVP_DECISION_MODEL.md`, `INITIAL_TECHNICAL_ASSESSMENT.md`, `TECHNICAL_BASELINE_PROPOSAL.md`, `AI_GOVERNANCE.md`, `PHASE_1_COMPETITIVE_VALIDATION.md`, and the former project-specific `ROADMAP.md`. Existing technical recommendations remain unapproved.
 
 ## 1. Product definition
 
@@ -101,6 +102,7 @@ Priority labels: **Must** = required for the core decision; **Should** = useful 
 - **BR-002 — Company decision context [Must].** The Company shall identify its organizational/job-role and skill vocabulary, weekly capacity convention, and approved effective dates for context. A change shall be versioned or time-stamped; no multi-company consolidation is supported.
 - **BR-003 — Membership and minimum roles [Must].** The application shall scope user access to an active Tenant membership and the minimum roles in §6. Job roles shall not grant application permissions. Cost-rate visibility shall be separately restricted from capacity visibility.
 - **BR-004 — Import templates and uploads [Must].** A user shall download a versioned workbook template and upload CSV/XLSX sheets for resources, skills, availability/absence, project allocations/commitments, approved timesheets, effective cost rates, direct expenses, contracts/payment milestones, and invoices/receipts where used. The proposed project is entered in the app. Optional sheets may be omitted; required sheets depend on the requested analysis. The provisional per-file upload limit is 25 MiB (A-13); file size/type limits must be confirmed before implementation.
+
 ### Initial import template contract (provisional)
 
 The template workbook and equivalent CSVs are versioned; the exact column dictionary is a release artifact, not an inferred mapping. The selected Company, source, import actor, file hash, template/mapping version and batch as-of time are import metadata. Each dataset carries a stable source record ID (or a documented composite key), effective/work date or period, explicit status, and Company-scope validation. Use ISO dates/currency codes, decimal hours/amounts, explicit units, and stable resource/project/skill references. Include only the minimum employee display data needed to resolve records; do not require compensation values in capacity files.

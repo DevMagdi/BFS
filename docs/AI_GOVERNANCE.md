@@ -3,6 +3,19 @@
 - **Status:** Product/security proposal for owner review; no model provider, SDK, vector store or AI runtime is selected or implemented.
 - **Product constraint:** AI may help users ask questions, map data and understand results; BusinessFlow-owned canonical facts, financial calculations, authorization, approval and execution remain deterministic and server-controlled.
 
+## Foundational principle: Evidence Before Answers — No evidence, no confident answer
+
+Every current or future BusinessFlow AI response must be designed to be:
+
+1. **Evidence-grounded:** linked to relevant company data and source records.
+2. **Traceable and verifiable:** supporting evidence and calculations can be inspected.
+3. **Transparent:** assumptions, limitations, uncertainty, and missing information are explicit.
+4. **Permission-aware:** retrieval and answers respect the requesting user’s authorization boundaries.
+5. **Honest about insufficient data:** abstain from confident conclusions when evidence is incomplete or unreliable.
+6. **Reproducible:** important assessments and decisions preserve the relevant input, calculation, policy, and evidence versions.
+
+This is an approved target product requirement, not an implemented AI feature. The implemented M2–M8 slices provide only bounded source links, authorization, deterministic calculations, and versioned evidence in specific workflows; no AI runtime or permission-aware AI retrieval exists.
+
 ## 1. Allowed and prohibited responsibilities
 
 | AI may assist with (proposal) | AI must not control or claim |
@@ -31,7 +44,7 @@ Imported documents, spreadsheet cells, user prompts, retrieved content and conne
 
 The self-hosted/on-prem-first direction makes data-flow control a product requirement. Before any external model provider is used, classify the data that could leave the customer environment and explicitly decide provider, region, retention/training terms, customer consent, redaction, encryption, deletion and outage behavior. Do not transmit compensation, credentials, full source files or personal data unless a documented use case and authorization explicitly permit it.
 
-A local model, external API, vector database or retrieval service is not presumed. Each adds different quality, privacy, security, cost and operating trade-offs and needs a separate decision and dependency/license/security review. The core should work for structured deterministic analysis without an LLM.
+Local/on-prem inference is a target architectural requirement for any future, separately approved AI capability so a customer can keep sensitive data within its controlled environment; this is not implemented. No specific LLM, inference runtime, provider, vector database, or retrieval service is selected. Any external model API is optional, never a prerequisite, and requires separate data-flow, privacy, security, cost, dependency/license, and owner review. The core must work for structured deterministic analysis without an LLM.
 
 ## 4. Evaluation and monitoring gates
 
@@ -50,13 +63,13 @@ Track errors, unsupported claims, refusal/abstention quality, user corrections a
 ## 5. Decisions before model integration
 
 - Select supported AI use cases and define what may be sent to a model by data classification.
-- Choose external, customer-hosted or no model inference for each deployment mode; determine the cloud/on-prem/air-gap implications.
+- If an AI use case is separately approved, select a local/on-prem inference runtime that meets the target requirement; separately decide whether any external model is optional and permitted. Determine cloud/on-prem/air-gap implications without making an external provider a prerequisite.
 - Approve providers, regions, contracts, retention/training settings, credentials, deletion and outage/fallback policy.
 - Define prompt/template and model versioning, audit metadata, human review and customer disclosure requirements.
 - Determine multilingual evaluation scope and acceptance thresholds with design partners; no language or locale is inferred from the owner's approximate location.
 
-## 6. Project-acceptance decision and abstention contract
+## 6. Company-wide decision-support boundary
 
-The proposed minimum inputs, candidate calculation framework, finance-owner approvals, scenario versioning and `insufficient_reliable_data` output are specified in [`MVP_DECISION_MODEL.md`](MVP_DECISION_MODEL.md). AI cannot fill a missing cost rate, effort estimate, FX rate, collection probability, threshold, or accounting rule; it cannot change a deterministic output or choose an option when the calculation service abstains. If used to explain a result, it receives only authorized, minimized evidence and must preserve units, currency, period, formula version, assumptions and limitations.
+For any selected company domain, AI may not fill missing values, create financial or operational calculations, invent a threshold/policy, resolve disputed facts, change a deterministic result, or select/approve an option when the service abstains. Any future explanation receives only authorized, minimized evidence and must preserve the approved measure, unit, currency, period, source, assumptions, version, and limitations.
 
-These remain review gates, not implementation decisions. No AI dependency, provider, vector store, agent framework or model endpoint has been added.
+The earlier project-specific inputs and candidate formulas in [`MVP_DECISION_MODEL.md`](MVP_DECISION_MODEL.md) are historical proposals, not a universal platform contract. Company-wide domain selection and any financial policy remain review gates, not implementation decisions. No AI dependency, provider, vector store, agent framework or model endpoint has been added.

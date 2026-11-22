@@ -1,7 +1,7 @@
 # Phase 1 Discovery Protocol
 
 - **Status:** Founder authorized and set interview parameters on 2026-11-21 (UTC): 9–12 interviews; exploratory only with no numeric pass/fail threshold; founder recruits and conducts; anonymized notes only. Outreach has not started.
-- **Decision boundary:** Discovery only. This document does not approve product scope, Product Baseline, implementation, customer-system/data access, trial accounts, subscriptions, spend, or technical changes.
+- **Decision boundary:** Discovery only for the earlier project-acceptance hypothesis. M9 does not extend this authorization or approve outreach for the broader company-wide product direction. This document does not approve product scope, Product Baseline, implementation, customer-system/data access, trial accounts, subscriptions, spend, or technical changes.
 - **Related records:** [`PHASE_1_COMPETITIVE_VALIDATION.md`](PHASE_1_COMPETITIVE_VALIDATION.md), [`FOUNDER_DECISION_MEMO.md`](FOUNDER_DECISION_MEMO.md), [`ROADMAP.md`](ROADMAP.md).
 
 ## Objective

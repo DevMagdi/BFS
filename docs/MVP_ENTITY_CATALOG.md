@@ -1,8 +1,9 @@
-# BusinessFlow AI — MVP Entity and Key Catalog
+# BusinessFlow — Historical Logical Entity Catalog Proposal
 
-- **Status:** Logical MVP proposal; no migrations, ORM models, or production database exist.
-- **Relationship rule:** `Tenant` and `Company` remain distinct with exactly one Company per Tenant in the MVP. This is a confirmed product direction; the relational implementation remains untested.
-- **Scope:** Logical entity candidates for identity/authorization, imports and project decision-making. Current business-release priorities are set by [`BRD.md`](BRD.md) and [`MVP_SCOPE.md`](MVP_SCOPE.md), not by catalog “MVP” tags. Cash/invoice/receipt evidence, internal tasks/actions and outcome capture are optional/Should Have unless required by an explicit core acceptance criterion.
+- **Status:** Historical logical schema proposal from the earlier project-feasibility hypothesis. It is not the current product direction, a migration plan, or an inventory of shipped tables; many entities, relationships, and policies below are not implemented.
+- **Actual implementation:** The repository has migrations `0001_backend_foundation` through `0007_financial_feasibility`, covering bounded M2–M8 slices. The actual schema and behavior are documented in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md) and assessed in [`architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md`](architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md).
+- **Tenant/company rule:** `Tenant` and `Company` are distinct, with exactly one company per tenant enforced in migration `0001_backend_foundation` by a unique company-per-tenant constraint and a deferred composite primary-company reference. This is implemented, not merely a proposal. It does not imply multi-company or consolidation support.
+- **Historical scope:** The entity candidates and “MVP” labels below describe the former project-decision hypothesis. Their Must/Should/Out priorities in [`BRD.md`](BRD.md) and [`MVP_SCOPE.md`](MVP_SCOPE.md) are historical, not current product priorities. See the M9 [`product vision`](product/PRODUCT_VISION.md) and [`product roadmap`](roadmap/PRODUCT_ROADMAP.md).
 
 ## 1. Ownership and isolation conventions
 
@@ -12,8 +13,8 @@
 - **TC (Tenant + Company-owned):** carries `tenant_id NOT NULL` and `company_id NOT NULL`; composite FK `(tenant_id, company_id)` references Company. RLS first limits Tenant; application authorization checks Company/department/sensitive scope.
 - **PK/FK convention:** UUID primary keys unless a stable global permission code or stated composite key is more appropriate. UUIDs do not grant access. Parent rows expose composite unique keys such as `(tenant_id,id)` and `(tenant_id,company_id,id)` for same-owner foreign keys.
 - **Source records:** external IDs are unique only within `(tenant_id,data_source_id,external_id)`. Raw records are immutable; correcting a mapping creates a new mapping/run version, not an overwrite of original input.
-- **Identity boundary:** the proposed Keycloak identity service stores local passwords, MFA factors and recovery secrets. BusinessFlow stores external subject references and hashed application-session tokens, not passwords, raw bearer tokens, MFA secrets, or reset tokens.
-- All choices below are proposed schema candidates. “MVP” in a status cell means considered in the logical model, not a release priority or technical approval. The `BRD.md`/`MVP_SCOPE.md` Must/Should/Out boundary governs current requirement priority. PostgreSQL/RLS implementation remains a technical proposal.
+- **Identity boundary:** this historical proposal suggested a Keycloak identity service, but no Keycloak integration is implemented or selected. Current M2 uses local password authentication, application sessions, and hashed refresh-token storage; MFA, password recovery, and external SSO are not implemented. See [`IDENTITY_AND_AUTHORIZATION.md`](IDENTITY_AND_AUTHORIZATION.md) and [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md).
+- Unless a row is explicitly identified as part of the actual M2–M8 subset, the entities, relationships, and rules below are candidates only. “MVP” labels reflect the earlier hypothesis, not current product priority or technical approval. The current direction and gates are in [`product/PRODUCT_VISION.md`](product/PRODUCT_VISION.md) and [`roadmap/PRODUCT_ROADMAP.md`](roadmap/PRODUCT_ROADMAP.md); implemented PostgreSQL/RLS behavior is documented in the backend guide.
 
 ## 2. Identity, tenancy and authorization entities
 
@@ -109,10 +110,10 @@
 | `audit_event` | T / MVP | `id`; actor and optional target references | Tenant-owned; append-only to runtime role, actor type/ID, action/target/time/request ID/outcome, redacted metadata; unique event ID; DB admins remain capable of alteration, so do not claim tamper-proof storage. |
 | `business_event` | TC / Deferred unless required for import state | `id`; Company/source references | Same Tenant/Company; typed operational fact, distinct from audit; provenance required. |
 
-## 8. Deferred from the first slice
+## 8. Historical proposal: deferred from its first slice
 
-Unless the product owner explicitly expands the MVP, defer: business-unit hierarchies; payroll, hiring execution, employee-management workflows; contractor as a capacity resource; budgets/goals/goal-KPI; generalized KPI catalog beyond project decision metrics; broad risk-management register; full industry-pack/plugin system; multi-company selection/consolidation; general purpose service principals; vector search; arbitrary ERP schema mirroring; outgoing accounting/payment/bank operations; external project creation; and high-impact actions.
+The following exclusions belonged to the former project-feasibility hypothesis and are not current roadmap priorities: business-unit hierarchies; payroll, hiring execution, employee-management workflows; contractor as a capacity resource; budgets/goals/goal-KPI; generalized KPI catalog beyond project decision metrics; broad risk-management register; full industry-pack/plugin system; multi-company selection/consolidation; general purpose service principals; vector search; arbitrary ERP schema mirroring; outgoing accounting/payment/bank operations; external project creation; and high-impact actions. Any future inclusion requires a fresh product and owner decision under the M9 roadmap.
 
-## 9. Schema implementation gate
+## 9. Future schema-design gate
 
-This catalog is not a migration plan. Before migrations, convert these constraints into reviewed PostgreSQL DDL/SQLAlchemy models, define data retention and deletion behavior, and pass real PostgreSQL tests for the 1:1 Tenant/Company invariant, same-tenant FKs, RLS roles/policies, pooling, background jobs, idempotency, immutable versions and all state transitions. No application code or migrations were created for this review.
+This catalog is not a migration plan. The bounded M2–M8 implementation already exists and is documented in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md); the table catalog above does not describe the complete current schema. Before adding any future domain schema, select a concrete use case, approve a typed data contract and ownership, define access/retention/correction rules, and convert only the necessary constraints into reviewed PostgreSQL migrations and ORM models. Test tenant/company references, forced RLS, runtime grants, pooling, idempotency, immutable versions, and domain-specific state transitions against real PostgreSQL. M9 made no application-code, API, model, or migration changes.

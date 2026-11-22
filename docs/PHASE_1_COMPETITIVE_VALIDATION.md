@@ -1,6 +1,6 @@
 # BusinessFlow AI — Phase 1 Competitive Validation
 
-- **Status:** Desk-based competitive validation; evidence package for founder review. No product verdict, ICP, positioning, or Product Baseline has been approved.
+- **Status:** Historical desk-based competitor review of the earlier project-acceptance hypothesis; evidence package for founder review. It is not competitive validation of the M9 company-wide product direction. No product verdict, ICP, positioning, or Product Baseline has been approved.
 - **Research date:** 2026-11-21 (UTC).
 - **Decision hypothesis examined:** “Should we accept this proposed project?” for the still-hypothetical Software & IT Services segment, with capacity, direct margin, scenario, cash-timing, and management-action inputs.
 - **Scope:** Three direct workflow alternatives only—Kantata, Projectworks, and Microsoft Dynamics 365 Project Operations. Oracle, SAP, Palantir, and Cayra are treated as adjacent/category checks, not ranked as direct alternatives.

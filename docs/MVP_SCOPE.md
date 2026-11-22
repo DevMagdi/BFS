@@ -1,8 +1,8 @@
-# BusinessFlow AI — Provisional MVP Scope
+# BusinessFlow — Historical Project-Feasibility MVP Scope
 
-- **Status:** Provisional scope and priorities, reviewed for documentation delivery; no validated Product Baseline or implementation authorization.
-- **Source of truth:** [`BRD.md`](BRD.md) defines detailed requirements and formulas. [`USER_WORKFLOWS.md`](USER_WORKFLOWS.md), [`SCREEN_INVENTORY.md`](SCREEN_INVENTORY.md), and [`MVP_ACCEPTANCE_CRITERIA.md`](MVP_ACCEPTANCE_CRITERIA.md) define operation and acceptance. This page is the short scope boundary.
-- **Use case:** New-Project Feasibility Decision Support for project-based services; initial segment hypothesis is Software & IT Services.
+- **Status:** Historical, superseded as current product direction by the M9 assessment in [`product/PRODUCT_VISION.md`](product/PRODUCT_VISION.md). This page records priorities for the former project-feasibility hypothesis; it is not a current MVP commitment, validated Product Baseline, or implementation authorization.
+- **Historical source set:** [`BRD.md`](BRD.md), [`USER_WORKFLOWS.md`](USER_WORKFLOWS.md), [`SCREEN_INVENTORY.md`](SCREEN_INVENTORY.md), and [`MVP_ACCEPTANCE_CRITERIA.md`](MVP_ACCEPTANCE_CRITERIA.md) describe that earlier candidate workflow. Their Must/Should/Out labels are not current product priorities. The current roadmap proposal is [`roadmap/PRODUCT_ROADMAP.md`](roadmap/PRODUCT_ROADMAP.md).
+- **Historical use case:** New-Project Feasibility Decision Support for project-based services; initial segment hypothesis was Software & IT Services.
 
 ## MVP product boundary
 

@@ -10,6 +10,7 @@ from businessflow import models  # noqa: F401 - registers model metadata
 from businessflow.company_context import models as company_context_models  # noqa: F401
 from businessflow.data_imports import models as data_import_models  # noqa: F401
 from businessflow.database import Base
+from businessflow.financial_assessments import models as financial_assessment_models  # noqa: F401
 from businessflow.metrics import models as metrics_models  # noqa: F401
 from businessflow.project_assessments import models as project_assessment_models  # noqa: F401
 from businessflow.project_decisions import models as project_decision_models  # noqa: F401

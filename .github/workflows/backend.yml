@@ -105,7 +105,10 @@ jobs:
           import os
           import psycopg
 
-          with psycopg.connect(os.environ["TEST_ADMIN_DATABASE_URL"]) as connection:
+          database_url = os.environ["TEST_ADMIN_DATABASE_URL"].replace(
+              "postgresql+psycopg://", "postgresql://", 1
+          )
+          with psycopg.connect(database_url) as connection:
               version, version_num = connection.execute(
                   "SELECT version(), current_setting('server_version_num')::int"
               ).fetchone()

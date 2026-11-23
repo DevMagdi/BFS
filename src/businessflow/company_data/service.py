@@ -767,38 +767,14 @@ def list_lineage(
     return CompanyDataLineagePage(items=items, total=total, limit=limit, offset=offset)
 
 
-def m10_company_data_reference(
-    session: Session,
-    tenant_id: UUID,
-    company_id: UUID,
+def _company_data_evidence_payload(
+    ingestion: CompanyDataIngestion,
+    source: CompanyDataSource,
+    contract: CompanyDataContract,
     import_record: DataImport,
     *,
-    freshness_evaluated_at: datetime | None = None,
-    require_current_freshness: bool = True,
-) -> dict[str, object] | None:
-    """Return a verified M10 reference when an M4 import was explicitly registered in M12."""
-    row = session.execute(
-        select(CompanyDataIngestion, CompanyDataSource, CompanyDataContract)
-        .join(
-            CompanyDataSource,
-            (CompanyDataSource.id == CompanyDataIngestion.source_id)
-            & (CompanyDataSource.tenant_id == CompanyDataIngestion.tenant_id)
-            & (CompanyDataSource.company_id == CompanyDataIngestion.company_id),
-        )
-        .join(
-            CompanyDataContract,
-            (CompanyDataContract.contract_key == CompanyDataIngestion.contract_key)
-            & (CompanyDataContract.version == CompanyDataIngestion.contract_version),
-        )
-        .where(
-            CompanyDataIngestion.tenant_id == tenant_id,
-            CompanyDataIngestion.company_id == company_id,
-            CompanyDataIngestion.import_id == import_record.id,
-        )
-    ).one_or_none()
-    if row is None:
-        return None
-    ingestion, source, contract = row
+    evaluated_at: datetime,
+) -> dict[str, object]:
     _verify_ingestion_snapshot(ingestion)
     if (
         source.dataset_type != import_record.dataset_type
@@ -818,18 +794,134 @@ def m10_company_data_reference(
             "The registered company-data binding does not match the selected M4 import.",
         )
 
-    warning_allowed = ingestion.quality_status == "warning" and m10_warning_codes_are_compatible(
-        import_record.dataset_type, ingestion.quality_findings
+    return {
+        "source_id": str(source.id),
+        "source_key": source.source_key,
+        "dataset_type": source.dataset_type,
+        "ingestion_id": str(ingestion.id),
+        "import_id": str(ingestion.import_id),
+        "contract_key": ingestion.contract_key,
+        "contract_version": ingestion.contract_version,
+        "contract_hash": ingestion.contract_hash,
+        "snapshot_hash": ingestion.snapshot_hash,
+        "ingestion_status": ingestion.ingestion_status,
+        "quality_status": ingestion.quality_status,
+        "freshness_status": _current_freshness(ingestion, now=evaluated_at),
+        "current_freshness_status": _current_freshness(ingestion),
+        "recorded_freshness_status": ingestion.freshness_status,
+        "source_as_of_at": _iso(ingestion.source_as_of_at),
+        "freshness_max_age_hours": ingestion.freshness_max_age_hours_snapshot,
+        "freshness_evaluated_at": _iso(evaluated_at),
+        "ingestion_freshness_evaluated_at": _iso(ingestion.freshness_evaluated_at),
+        "file_hash": ingestion.file_hash,
+        "validation_hash": ingestion.validation_hash,
+        "mapping_version": ingestion.mapping_version,
+        "quality_findings": ingestion.quality_findings,
+    }
+
+
+def company_data_evidence_reference(
+    session: Session,
+    tenant_id: UUID,
+    company_id: UUID,
+    import_record: DataImport,
+    *,
+    evaluated_at: datetime | None = None,
+) -> dict[str, object] | None:
+    """Return verified M12 evidence bound to one M4 import at a pinned freshness time."""
+    evidence = company_data_evidence_references(
+        session,
+        tenant_id,
+        company_id,
+        {import_record.id: import_record},
+        evaluated_at=evaluated_at,
     )
+    return evidence.get(import_record.id)
+
+
+def company_data_evidence_references(
+    session: Session,
+    tenant_id: UUID,
+    company_id: UUID,
+    import_records: dict[UUID, DataImport],
+    *,
+    evaluated_at: datetime | None = None,
+) -> dict[UUID, dict[str, object]]:
+    """Batch-verify M12 evidence for selected, tenant/company-scoped M4 imports."""
+    if not import_records:
+        return {}
+    if any(
+        record.tenant_id != tenant_id or record.company_id != company_id
+        for record in import_records.values()
+    ):
+        raise ApiError(
+            409,
+            "company_data_binding_integrity_error",
+            "The selected M4 imports do not match the authorized Company scope.",
+        )
+    evaluated_at = evaluated_at or datetime.now(UTC)
+    rows = session.execute(
+        select(CompanyDataIngestion, CompanyDataSource, CompanyDataContract)
+        .join(
+            CompanyDataSource,
+            (CompanyDataSource.id == CompanyDataIngestion.source_id)
+            & (CompanyDataSource.tenant_id == CompanyDataIngestion.tenant_id)
+            & (CompanyDataSource.company_id == CompanyDataIngestion.company_id),
+        )
+        .join(
+            CompanyDataContract,
+            (CompanyDataContract.contract_key == CompanyDataIngestion.contract_key)
+            & (CompanyDataContract.version == CompanyDataIngestion.contract_version),
+        )
+        .where(
+            CompanyDataIngestion.tenant_id == tenant_id,
+            CompanyDataIngestion.company_id == company_id,
+            CompanyDataIngestion.import_id.in_(list(import_records)),
+        )
+    ).all()
+    return {
+        ingestion.import_id: _company_data_evidence_payload(
+            ingestion,
+            source,
+            contract,
+            import_records[ingestion.import_id],
+            evaluated_at=evaluated_at,
+        )
+        for ingestion, source, contract in rows
+    }
+
+
+def m10_company_data_reference(
+    session: Session,
+    tenant_id: UUID,
+    company_id: UUID,
+    import_record: DataImport,
+    *,
+    freshness_evaluated_at: datetime | None = None,
+    require_current_freshness: bool = True,
+) -> dict[str, object] | None:
+    """Return a verified M10 reference when an M4 import was explicitly registered in M12."""
     freshness_evaluated_at = freshness_evaluated_at or datetime.now(UTC)
-    evaluated_freshness = _current_freshness(ingestion, now=freshness_evaluated_at)
-    live_freshness = _current_freshness(ingestion)
+    evidence = company_data_evidence_reference(
+        session,
+        tenant_id,
+        company_id,
+        import_record,
+        evaluated_at=freshness_evaluated_at,
+    )
+    if evidence is None:
+        return None
+    warning_allowed = evidence["quality_status"] == "warning" and m10_warning_codes_are_compatible(
+        cast(str, import_record.dataset_type),
+        cast(list[dict[str, object]], evidence["quality_findings"]),
+    )
+    live_freshness = evidence["current_freshness_status"]
     if (
-        evaluated_freshness != "fresh"
+        evidence["freshness_status"] != "fresh"
         or (require_current_freshness and live_freshness != "fresh")
-        or ingestion.quality_status not in {"passed", "warning"}
-        or (ingestion.quality_status == "warning" and not warning_allowed)
-        or ingestion.ingestion_status == "blocked"
+        or evidence["quality_status"] not in {"passed", "warning"}
+        or (evidence["quality_status"] == "warning" and not warning_allowed)
+        or evidence["ingestion_status"] == "blocked"
     ):
         raise ApiError(
             409,
@@ -840,19 +932,19 @@ def m10_company_data_reference(
             ),
         )
     return {
-        "source_id": str(source.id),
-        "source_key": source.source_key,
-        "ingestion_id": str(ingestion.id),
-        "contract_key": ingestion.contract_key,
-        "contract_version": ingestion.contract_version,
-        "contract_hash": ingestion.contract_hash,
-        "snapshot_hash": ingestion.snapshot_hash,
-        "quality_status": ingestion.quality_status,
-        "freshness_status": evaluated_freshness,
-        "ingestion_freshness_status": ingestion.freshness_status,
-        "source_as_of_at": _iso(ingestion.source_as_of_at),
-        "freshness_max_age_hours": ingestion.freshness_max_age_hours_snapshot,
-        "freshness_evaluated_at": _iso(freshness_evaluated_at),
-        "ingestion_freshness_evaluated_at": _iso(ingestion.freshness_evaluated_at),
-        "quality_findings": ingestion.quality_findings,
+        "source_id": evidence["source_id"],
+        "source_key": evidence["source_key"],
+        "ingestion_id": evidence["ingestion_id"],
+        "contract_key": evidence["contract_key"],
+        "contract_version": evidence["contract_version"],
+        "contract_hash": evidence["contract_hash"],
+        "snapshot_hash": evidence["snapshot_hash"],
+        "quality_status": evidence["quality_status"],
+        "freshness_status": evidence["freshness_status"],
+        "ingestion_freshness_status": evidence["recorded_freshness_status"],
+        "source_as_of_at": evidence["source_as_of_at"],
+        "freshness_max_age_hours": evidence["freshness_max_age_hours"],
+        "freshness_evaluated_at": evidence["freshness_evaluated_at"],
+        "ingestion_freshness_evaluated_at": evidence["ingestion_freshness_evaluated_at"],
+        "quality_findings": evidence["quality_findings"],
     }

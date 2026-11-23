@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import traceback
 from datetime import UTC, datetime
 from threading import Barrier
 from uuid import UUID, uuid4
@@ -455,9 +456,7 @@ def test_finance_source_endpoints_require_finance_permission_and_isolate_tenants
     assert not_a_member.status_code == 404
 
 
-def test_concurrent_identical_finance_source_retries_are_idempotent(
-    client, app, admin_engine, caplog
-):
+def test_concurrent_identical_finance_source_retries_are_idempotent(client, app, admin_engine):
     owner = register_user(client, f"m14-race-{uuid4().hex}@example.com")
     headers = auth_headers(owner)
     tenant = create_tenant(
@@ -480,7 +479,7 @@ def test_concurrent_identical_finance_source_retries_are_idempotent(
     try:
 
         async def submit_identical_requests():
-            transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+            transport = httpx.ASGITransport(app=app, raise_app_exceptions=True)
             async with httpx.AsyncClient(
                 transport=transport, base_url="http://testserver"
             ) as async_client:
@@ -489,12 +488,15 @@ def test_concurrent_identical_finance_source_retries_are_idempotent(
                 async def submit_one_request():
                     await request_barrier.wait()
                     data, files = _upload_parts(source_as_of_at=source_as_of_at)
-                    return await async_client.post(
-                        f"{_base(tenant['id'])}/intakes",
-                        data=data,
-                        files=files,
-                        headers={**headers, "Idempotency-Key": idempotency_key},
-                    )
+                    try:
+                        return await async_client.post(
+                            f"{_base(tenant['id'])}/intakes",
+                            data=data,
+                            files=files,
+                            headers={**headers, "Idempotency-Key": idempotency_key},
+                        )
+                    except Exception as exc:
+                        return exc
 
                 return await asyncio.gather(submit_one_request(), submit_one_request())
 
@@ -503,12 +505,21 @@ def test_concurrent_identical_finance_source_retries_are_idempotent(
         event.remove(app.state.engine, "before_cursor_execute", synchronize_at_idempotency_lock)
         lock_barrier.abort()
 
+    exceptions = [response for response in responses if isinstance(response, Exception)]
+    if exceptions:
+        formatted = "\n".join(
+            "".join(traceback.format_exception(exception)) for exception in exceptions
+        )
+        raise AssertionError(
+            f"Concurrent retries raised unhandled exceptions; "
+            f"lock barrier passes={barrier_passes!r}; exceptions:\n{formatted}"
+        )
     response_statuses = [response.status_code for response in responses]
     if response_statuses != [201, 201]:
         raise AssertionError(
             f"Concurrent retries returned {response_statuses!r}; "
             f"responses={[response.text for response in responses]!r}; "
-            f"lock barrier passes={barrier_passes!r}; logs={caplog.text!r}"
+            f"lock barrier passes={barrier_passes!r}"
         )
     payloads = [response.json() for response in responses]
     assert len({payload["id"] for payload in payloads}) == 1

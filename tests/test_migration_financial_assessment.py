@@ -50,7 +50,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0009_company_data_intelligence"
+                "0010_metric_insight_runs"
             )
             assert (
                 connection.scalar(text("SELECT to_regclass('public.financial_assessments')"))
@@ -272,7 +272,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0009_company_data_intelligence"
+                "0010_metric_insight_runs"
             )
             assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 6
             assert (

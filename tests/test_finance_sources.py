@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
-from uuid import uuid4
+from threading import Barrier
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import event, text
 
+from businessflow.api.finance_source_limits import finance_source_request_body_limit
 from businessflow.config import Settings
 from businessflow.main import create_app
 from businessflow.metrics.snapshot import content_hash
@@ -76,6 +82,78 @@ def _upload(
         files={"file": ("finance-export.csv", content, "text/csv")},
         headers={**headers, "Idempotency-Key": idempotency_key},
     )
+
+
+def _oversized_multipart(boundary: bytes, request_limit: int, chunk_size: int) -> bytes:
+    prefix = (
+        b"--"
+        + boundary
+        + b"\r\n"
+        + b'Content-Disposition: form-data; name="metadata_json"\r\n\r\n{}\r\n'
+        + b"--"
+        + boundary
+        + b"\r\n"
+        + b'Content-Disposition: form-data; name="file"; filename="large.csv"\r\n'
+        + b"Content-Type: text/csv\r\n\r\n"
+    )
+    return prefix + (b"x" * (request_limit + 4 * chunk_size)) + b"\r\n--" + boundary + b"--\r\n"
+
+
+def _raw_asgi_post(
+    app,
+    path: str,
+    headers: list[tuple[bytes, bytes]],
+    body: bytes,
+    chunk_size: int = 32 * 1024,
+):
+    async def invoke():
+        chunks = [body[index : index + chunk_size] for index in range(0, len(body), chunk_size)]
+        received_bytes = 0
+        next_chunk = 0
+        sent = []
+
+        async def receive():
+            nonlocal next_chunk, received_bytes
+            if next_chunk >= len(chunks):
+                return {"type": "http.disconnect"}
+            chunk = chunks[next_chunk]
+            next_chunk += 1
+            received_bytes += len(chunk)
+            return {
+                "type": "http.request",
+                "body": chunk,
+                "more_body": next_chunk < len(chunks),
+            }
+
+        async def send(message):
+            sent.append(message.copy())
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode("ascii"),
+            "query_string": b"",
+            "root_path": "",
+            "headers": headers,
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "state": {},
+            "extensions": {},
+        }
+        await app(scope, receive, send)
+        status = next(
+            message["status"] for message in sent if message["type"] == "http.response.start"
+        )
+        response_body = b"".join(
+            message.get("body", b"") for message in sent if message["type"] == "http.response.body"
+        )
+        return status, json.loads(response_body), received_bytes
+
+    return asyncio.run(invoke())
 
 
 def test_finance_source_api_contract_intake_mapping_and_idempotent_readback(client, settings):
@@ -359,3 +437,181 @@ def test_finance_source_endpoints_require_finance_permission_and_isolate_tenants
         headers=auth_headers(other_owner),
     )
     assert not_a_member.status_code == 404
+
+
+def test_concurrent_identical_finance_source_retries_are_idempotent(client, app, admin_engine):
+    owner = register_user(client, f"m14-race-{uuid4().hex}@example.com")
+    headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="M14 Concurrent Retry Tenant",
+        company_name="M14 Concurrent Retry Company",
+        key=f"m14-race-tenant-{uuid4().hex}",
+    )
+    idempotency_key = f"m14-concurrent-{uuid4().hex}"
+    source_as_of_at = datetime.now(UTC).isoformat()
+    lock_barrier = Barrier(2)
+
+    def synchronize_at_idempotency_lock(_conn, _cursor, statement, _parameters, _context, _many):
+        if "pg_advisory_xact_lock" in statement:
+            lock_barrier.wait(timeout=15)
+
+    event.listen(app.state.engine, "before_cursor_execute", synchronize_at_idempotency_lock)
+    try:
+
+        def submit_identical_request():
+            request_client = TestClient(app, raise_server_exceptions=False)
+            try:
+                return _upload(
+                    request_client,
+                    tenant["id"],
+                    headers,
+                    idempotency_key,
+                    source_as_of_at=source_as_of_at,
+                )
+            finally:
+                request_client.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(submit_identical_request) for _ in range(2)]
+            responses = [future.result(timeout=30) for future in futures]
+    finally:
+        event.remove(app.state.engine, "before_cursor_execute", synchronize_at_idempotency_lock)
+        lock_barrier.abort()
+
+    assert [response.status_code for response in responses] == [201, 201]
+    payloads = [response.json() for response in responses]
+    assert len({payload["id"] for payload in payloads}) == 1
+    assert len({payload["input_hash"] for payload in payloads}) == 1
+    assert len({payload["result_hash"] for payload in payloads}) == 1
+    assert sorted(payload["replayed"] for payload in payloads) == [False, True]
+    first_result = {key: value for key, value in payloads[0].items() if key != "replayed"}
+    replayed_result = {key: value for key, value in payloads[1].items() if key != "replayed"}
+    assert first_result == replayed_result
+
+    idempotency_key_hash = hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
+    tenant_uuid = UUID(tenant["id"])
+    intake_id = UUID(payloads[0]["id"])
+    with admin_engine.connect() as connection:
+        intakes = (
+            connection.execute(
+                text(
+                    "SELECT id, request_fingerprint, result_hash "
+                    "FROM finance_source_intakes "
+                    "WHERE tenant_id = :tenant_id AND idempotency_key_hash = :key_hash"
+                ),
+                {"tenant_id": tenant_uuid, "key_hash": idempotency_key_hash},
+            )
+            .mappings()
+            .all()
+        )
+        evidence_count = connection.scalar(
+            text(
+                "SELECT count(*) FROM finance_source_row_evidence "
+                "WHERE tenant_id = :tenant_id AND intake_id = :intake_id"
+            ),
+            {"tenant_id": tenant_uuid, "intake_id": intake_id},
+        )
+        mapping_count = connection.scalar(
+            text(
+                "SELECT count(*) FROM finance_source_mappings "
+                "WHERE tenant_id = :tenant_id AND source_key = :source_key"
+            ),
+            {"tenant_id": tenant_uuid, "source_key": "manual-ledger-export"},
+        )
+
+    assert len(intakes) == 1
+    assert intakes[0]["id"] == intake_id
+    assert intakes[0]["request_fingerprint"]
+    assert intakes[0]["result_hash"] == payloads[0]["result_hash"]
+    assert evidence_count == 2
+    assert mapping_count == 1
+
+
+def test_finance_source_http_upload_limit_allows_upload_and_rejects_oversized_before_parse(
+    settings, monkeypatch
+):
+    constrained_settings = settings.model_copy(update={"import_max_file_bytes": 1024})
+    app = create_app(constrained_settings)
+    request_limit = finance_source_request_body_limit(1024)
+
+    with TestClient(app, raise_server_exceptions=False) as limited_client:
+        owner = register_user(limited_client, f"m14-size-{uuid4().hex}@example.com")
+        headers = auth_headers(owner)
+        tenant = create_tenant(
+            limited_client,
+            owner,
+            name="M14 Upload Limit Tenant",
+            company_name="M14 Upload Limit Company",
+            key=f"m14-size-tenant-{uuid4().hex}",
+        )
+        allowed = _upload(
+            limited_client,
+            tenant["id"],
+            headers,
+            f"m14-size-allowed-{uuid4().hex}",
+        )
+        assert allowed.status_code == 201, allowed.text
+
+        from starlette.formparsers import MultiPartParser
+
+        async def multipart_parse_must_not_run(_parser):
+            raise AssertionError("oversized multipart request reached the multipart parser")
+
+        monkeypatch.setattr(MultiPartParser, "parse", multipart_parse_must_not_run)
+        oversized = limited_client.post(
+            f"{_base(tenant['id'])}/intakes",
+            data={"metadata_json": "{}"},
+            files={"file": ("large.csv", b"x" * (request_limit + 1), "text/csv")},
+            headers={**headers, "Idempotency-Key": f"m14-size-large-{uuid4().hex}"},
+        )
+        assert oversized.status_code == 413, oversized.text
+        assert oversized.json()["error"]["code"] == "request_body_too_large"
+        assert oversized.headers["X-Request-ID"] == oversized.json()["error"]["request_id"]
+
+        unrelated = limited_client.post(
+            "/api/v1/auth/register",
+            content=b"{}" + b" " * (request_limit + 1),
+            headers={"Content-Type": "application/json"},
+        )
+        assert unrelated.status_code == 422
+        assert unrelated.json()["error"]["code"] == "invalid_request"
+
+
+def test_finance_source_http_upload_limit_counts_actual_body_without_reliable_content_length(
+    settings,
+):
+    constrained_settings = settings.model_copy(update={"import_max_file_bytes": 1024})
+    app = create_app(constrained_settings)
+    request_limit = finance_source_request_body_limit(1024)
+    chunk_size = 32 * 1024
+    boundary = b"m14-upload-size-boundary"
+    body = _oversized_multipart(boundary, request_limit, chunk_size)
+    tenant_id = str(uuid4())
+    path = f"{_base(tenant_id)}/intakes"
+
+    try:
+        for declared_length in (None, b"1", b"not-a-length", b"999999999999999999999"):
+            headers = [
+                (b"host", b"testserver"),
+                (b"content-type", b"multipart/form-data; boundary=" + boundary),
+                (b"idempotency-key", b"m14-missing-length-0001"),
+            ]
+            if declared_length is not None:
+                headers.append((b"content-length", declared_length))
+
+            status, payload, received_bytes = _raw_asgi_post(app, path, headers, body, chunk_size)
+            assert status == 413
+            assert payload["error"]["code"] == "request_body_too_large"
+            if (
+                declared_length is not None
+                and declared_length.isdigit()
+                and int(declared_length) > request_limit
+            ):
+                assert received_bytes == 0
+            else:
+                assert received_bytes > request_limit
+                assert received_bytes < len(body)
+    finally:
+        app.state.engine.dispose()

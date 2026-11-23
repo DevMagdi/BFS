@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from businessflow.api.dependencies import get_current_user, get_session, get_settings
+from businessflow.api.finance_source_limits import FINANCE_SOURCE_MAX_METADATA_BYTES
 from businessflow.config import Settings
 from businessflow.errors import ApiError
 from businessflow.finance_sources.schemas import (
@@ -42,7 +43,7 @@ router = APIRouter(
 PageLimit = Annotated[int, Query(ge=1, le=100)]
 PageOffset = Annotated[int, Query(ge=0, le=100_000)]
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128)]
-MetadataJson = Annotated[str, Form(min_length=2, max_length=1_048_576)]
+MetadataJson = Annotated[str, Form(min_length=2, max_length=FINANCE_SOURCE_MAX_METADATA_BYTES)]
 
 
 @router.get("/contracts", response_model=FinanceSourceContractPage)

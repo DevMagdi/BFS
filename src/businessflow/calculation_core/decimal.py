@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from decimal import (
     ROUND_05UP,
     ROUND_CEILING,
@@ -14,8 +15,10 @@ from decimal import (
     Decimal,
     DecimalException,
     DivisionByZero,
+    Inexact,
     InvalidOperation,
     Overflow,
+    Rounded,
     localcontext,
 )
 from typing import Final, Literal
@@ -171,6 +174,32 @@ def _new_decimal_context(precision: int, mode: RoundingMode = "half_even") -> Co
         flags=[],
         traps=[InvalidOperation, DivisionByZero, Overflow],
     )
+
+
+def exact_decimal_sum(values: Iterable[Decimal]) -> Decimal:
+    """Sum a bounded caller-owned sequence exactly under M11's isolated precision rules.
+
+    This is a mechanical arithmetic primitive only: it does not classify inputs, supply a
+    missing value, choose a period, or assign financial meaning to the result.
+    """
+    count = 0
+    try:
+        with localcontext(_new_decimal_context(precision=256)) as context:
+            total = Decimal(0)
+            for value in values:
+                if not isinstance(value, Decimal) or not value.is_finite():
+                    raise ValueError("exact decimal sum requires finite Decimal values")
+                if count >= 10_000:
+                    raise ValueError("exact decimal sum exceeds the 10,000-input limit")
+                total += value
+                count += 1
+            if count == 0:
+                raise ValueError("exact decimal sum requires at least one value")
+            if context.flags[Inexact] or context.flags[Rounded]:
+                raise ValueError("exact decimal sum exceeded the supported precision")
+    except DecimalException as exc:
+        raise ValueError("exact decimal sum exceeded the supported precision") from exc
+    return total
 
 
 def quantize_decimal(value: Decimal, *, scale: int, mode: RoundingMode) -> Decimal:

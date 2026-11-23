@@ -233,6 +233,39 @@ class FormulaDefinition(ContractModel):
         return self
 
 
+class MechanicalSumFormulaDefinition(ContractModel):
+    """A generic exact-sum primitive, with no accounting interpretation or policy claim.
+
+    Domain callers must provide their own versioned evidence/grouping contract. This type is
+    intentionally limited to adding at most 10,000 observed values with one identical currency
+    (including all-uncurrency values), no assumptions, no conversion and no rounding.
+    """
+
+    schema_version: Literal[1] = 1
+    formula_id: Identifier
+    formula_version: VersionText
+    operation: Literal["exact_sum"] = "exact_sum"
+    input_keys: tuple[Identifier, ...] = Field(min_length=1, max_length=10_000)
+    output_key: Identifier
+    output_label: NonEmptyText
+    rounding_policy: RoundingPolicy
+    interpretation: Literal["mechanical_exact_sum_only_not_accounting_policy"] = (
+        "mechanical_exact_sum_only_not_accounting_policy"
+    )
+
+    @model_validator(mode="after")
+    def validate_mechanical_sum_contract(self) -> MechanicalSumFormulaDefinition:
+        if len(self.input_keys) != len(set(self.input_keys)):
+            raise ValueError("mechanical exact-sum input keys must be unique")
+        if (
+            self.rounding_policy.target != "none"
+            or self.rounding_policy.mode != "half_even"
+            or self.rounding_policy.scale is not None
+        ):
+            raise ValueError("mechanical exact sums require the canonical no-rounding policy")
+        return self
+
+
 class CalculationOutput(ContractModel):
     schema_version: Literal[1] = 1
     key: Identifier
@@ -292,7 +325,7 @@ class CalculationTrace(ContractModel):
     engine_version: VersionText
     tenant_id: UUID
     company_id: UUID
-    formula: FormulaDefinition
+    formula: FormulaDefinition | MechanicalSumFormulaDefinition
     formula_hash: HashText
     formula_contract_hash: HashText
     input_snapshot: CalculationInputSnapshot
@@ -337,16 +370,19 @@ class IndependentExpectedResult(ContractModel):
         return value
 
 
-def formula_payload(formula: FormulaDefinition) -> dict[str, object]:
+FormulaContract = FormulaDefinition | MechanicalSumFormulaDefinition
+
+
+def formula_payload(formula: FormulaContract) -> dict[str, object]:
     return formula.model_dump(mode="json")
 
 
-def formula_hash(formula: FormulaDefinition) -> str:
+def formula_hash(formula: FormulaContract) -> str:
     """Hash the exact versioned formula contract, including any approval record."""
     return content_hash(formula_payload(formula))
 
 
-def formula_contract_hash(formula: FormulaDefinition) -> str:
+def formula_contract_hash(formula: FormulaContract) -> str:
     """Hash formula semantics and policy identity, excluding mutable approval metadata."""
     payload = formula_payload(formula)
     binding = payload.get("policy_binding")

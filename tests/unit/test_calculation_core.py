@@ -13,6 +13,7 @@ from businessflow.calculation_core import (
     FormulaDefinition,
     FormulaPolicyBinding,
     IndependentExpectedResult,
+    MechanicalSumFormulaDefinition,
     NumericAssumption,
     NumericObservation,
     RoundingPolicy,
@@ -20,6 +21,7 @@ from businessflow.calculation_core import (
     calculate_formula,
     currency_exponent,
     decimal_text,
+    exact_decimal_sum,
     formula_contract_hash,
     parse_decimal_text,
     reconcile_values,
@@ -170,6 +172,17 @@ def _formula(
         rounding_policy=RoundingPolicy(target=target, mode=mode, scale=scale),
     )
     return _with_test_approval(formula) if with_approval else formula
+
+
+def _mechanical_sum_formula(keys: tuple[str, ...]) -> MechanicalSumFormulaDefinition:
+    return MechanicalSumFormulaDefinition(
+        formula_id="test.mechanical.exact-sum",
+        formula_version="1.0.0",
+        input_keys=keys,
+        output_key="exact_sum",
+        output_label="Exact sum; no accounting interpretation",
+        rounding_policy=RoundingPolicy(target="none", mode="half_even"),
+    )
 
 
 def _two_values(
@@ -692,3 +705,68 @@ def test_replay_checks_hashes_and_detects_trace_tampering() -> None:
     assert replay_mismatch.passed is False
     assert replay_mismatch.recorded_trace_integrity_valid is True
     assert "replay_trace_hash_mismatch" in replay_mismatch.reason_codes
+
+
+def test_mechanical_exact_sum_is_policy_neutral_bounded_and_golden() -> None:
+    formula = _mechanical_sum_formula(("amount-a", "amount-b", "amount-c"))
+    snapshot = _snapshot(
+        (
+            _observation("amount-a", "1.25", currency_code="USD"),
+            _observation("amount-b", "-0.25", currency_code="USD"),
+            _observation("amount-c", "0.005", currency_code="USD"),
+        )
+    )
+
+    trace = calculate_formula(formula, snapshot)
+
+    assert trace.state == "calculated"
+    assert trace.output is not None
+    assert trace.output.value == "1.005"
+    assert trace.output.currency_code == "USD"
+    assert trace.rounding.target == "none"
+    assert trace.rounding.quantization_performed is False
+    assert verify_replay(formula, snapshot, trace).passed
+
+    expected = IndependentExpectedResult(
+        value="1.005",
+        currency_code="USD",
+        source=_source("golden:independent-expected", source_hash="e" * 64),
+    )
+    report = verify_independent_expected_result(
+        trace,
+        expected,
+        absolute_tolerance="0",
+        relative_tolerance="0",
+    )
+    assert report.state == "passed"
+    assert report.variance == "0"
+
+
+def test_mechanical_exact_sum_abstains_on_missing_and_rejects_currency_mixing() -> None:
+    formula = _mechanical_sum_formula(("amount-a", "amount-b"))
+    missing = calculate_formula(
+        formula,
+        _snapshot((_observation("amount-a", "1", currency_code="USD"),)),
+    )
+    assert missing.state == "abstained"
+    assert missing.output is None
+    assert {item.input_key for item in missing.missing_evidence} == {"amount-b"}
+
+    with pytest.raises(CalculationDomainError, match="identical currencies"):
+        calculate_formula(
+            formula,
+            _snapshot(
+                (
+                    _observation("amount-a", "1", currency_code="USD"),
+                    _observation("amount-b", "2", currency_code="EUR"),
+                )
+            ),
+        )
+
+
+def test_exact_decimal_sum_rejects_precision_and_input_limit_overflow() -> None:
+    assert exact_decimal_sum((Decimal("0.0005"), Decimal("0.0005"))) == Decimal("0.0010")
+    with pytest.raises(ValueError, match="supported precision"):
+        exact_decimal_sum((Decimal("1" * 257),))
+    with pytest.raises(ValueError, match="10,000-input limit"):
+        exact_decimal_sum(Decimal(1) for _ in range(10_001))

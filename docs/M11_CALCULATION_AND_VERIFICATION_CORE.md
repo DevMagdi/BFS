@@ -4,17 +4,19 @@
 
 M11 adds a small, pure-Python Decimal calculation and verification package at
 `src/businessflow/calculation_core/`. It is not an API, policy catalog, database
-feature, forecast model, or approval service. No financial formula is registered,
-activated, or connected to M8. The only executable formulas are generic binary
-arithmetic operations supplied explicitly by a caller; the tests use synthetic
-vectors, not business rules.
+feature, forecast model, or approval service. No M11 financial/accounting formula
+is approved or registered. The core exposes generic binary arithmetic and a
+separate no-rounding `MechanicalSumFormulaDefinition`; both are caller-supplied
+primitives, not accounting rules. The M15 adapter described below consumes only
+the generic exact-sum primitive after applying its own M14 evidence/commitment
+gates; it does not turn that primitive into accounting truth.
 
-No migration, model, M10 implementation, API route, or runtime dependency was
-changed. The core does not read or write a database. Tenant/company identifiers
-are embedded in input snapshots and source references are rejected if their scope
-does not match. Any future persistence must use BFS's existing tenant access,
-RLS/forced-RLS policies, and database role/privilege model; this slice does not
-replace those controls.
+The M11 core itself adds no migration, model, API route, or runtime dependency.
+It does not read or write a database. Tenant/company identifiers are embedded
+in input snapshots and source references are rejected if their scope does not
+match. M15 is a later, separate persistence/API adapter that follows BFS's
+existing tenant access, RLS/forced-RLS policies, and database role/privilege
+model; this pure package does not replace those controls.
 
 ## Architecture and contracts
 
@@ -23,19 +25,21 @@ The core imports BFS's existing canonical `content_hash` implementation from
 
 | Module | Responsibility |
 | --- | --- |
-| `calculation_core/decimal.py` | Bounded plain-decimal parsing, ISO 4217 exponent lookup, explicit quantization and rendering. |
-| `calculation_core/contracts.py` | Frozen, strict, extra-forbidden version-1 source, observation, assumption, snapshot, formula, policy-binding, output and trace contracts. |
-| `calculation_core/engine.py` | One deterministic binary operation (`add`, `subtract`, `multiply`, or `divide`), output rounding and abstention trace construction. |
+| `calculation_core/decimal.py` | Bounded plain-decimal parsing, exact bounded Decimal sum, ISO 4217 exponent lookup, explicit quantization and rendering. |
+| `calculation_core/contracts.py` | Frozen, strict, extra-forbidden version-1 source, observation, assumption, snapshot, binary-formula, mechanical-sum, policy-binding, output and trace contracts. |
+| `calculation_core/engine.py` | Deterministic binary operations (`add`, `subtract`, `multiply`, or `divide`) and a no-rounding exact-sum primitive; output rounding and abstention trace construction. |
 | `calculation_core/verification.py` | Exact Decimal reconciliation, independent expected-result checking and replay/hash checking. |
 | `calculation_core/__init__.py` | Public exports. |
 
 Contract rules:
 
-- Input values are strings matching a plain base-10 grammar, with at most 64
-  characters. Numeric JSON/Python floats, `Decimal` objects passed as input,
-  exponent notation, NaN/infinity, surrounding whitespace, leading-zero forms,
-  and unbounded values are rejected. There is no conversion through `float`.
-  Original input text is retained in the snapshot.
+- Versioned observation/assumption input values are strings matching a plain
+  base-10 grammar, with at most 64 characters. Numeric JSON/Python floats,
+  `Decimal` objects passed through those input models, exponent notation,
+  NaN/infinity, surrounding whitespace, leading-zero forms, and unbounded values
+  are rejected. There is no conversion through `float`; original input text is
+  retained in the snapshot. The separate internal `exact_decimal_sum` helper
+  accepts finite `Decimal` objects and never accepts binary floats.
 - An observation must include a source reference: tenant and company, source ID,
   source/file hash, record locator, and optional record hash, dataset type and
   mapping version. Each source is scope-checked against the snapshot. The core
@@ -44,20 +48,24 @@ Contract rules:
   an explicit version, rationale, user attribution and timezone-aware
   timestamp; an external source reference is optional because the attestation
   itself may be the evidence.
-- Formula definitions carry a formula ID/version, operation, named input keys
-  and kinds, output key/label, and an explicit rounding policy. Input, assumption,
-  output, formula, source, snapshot and trace schemas are versioned. Inputs and
-  assumptions are sorted by key before snapshot hashing and trace construction,
-  so list order alone cannot change the result.
-- Calculation requires a formula explicitly bound to an approved policy. An
-  absent binding or pending binding yields an `abstained` trace with no output.
-  An approved binding must identify the approver, timestamp and approval
+- Binary formula definitions carry a formula ID/version, operation, named
+  input keys and kinds, output key/label, and an explicit rounding policy. The
+  separate `MechanicalSumFormulaDefinition` names one to 10,000 unique observed
+  inputs, permits no assumptions, requires the canonical no-rounding policy,
+  and carries no accounting interpretation. Input, assumption, output, formula,
+  source, snapshot and trace schemas are versioned. Inputs and assumptions are
+  sorted by key before snapshot hashing and trace construction, so list order
+  alone cannot change the result.
+- Binary `FormulaDefinition` calculations require an explicit approved-policy
+  binding. An absent or pending binding yields an `abstained` trace with no
+  output. An approved binding must identify the approver, timestamp and approval
   reference and bind to the exact formula contract hash. The binding is a
   caller-supplied assertion and does **not** prove that the named approver is
   authorized or that the policy is in force. Production callers must authorize
-  the binding through an authorized policy catalog before supplying it. No such
-  catalog is added here, and M8 continues to report `no_approved_policy` with an
-  empty formula catalog.
+  the binding through an authorized policy catalog before supplying it. The
+  exact-sum primitive is a separate mechanical operation without an accounting
+  policy claim; its domain caller must supply its own evidence/gating contract.
+  M8 continues to report `no_approved_policy` with an empty formula catalog.
 - A required observation/assumption that is absent, a wrong input kind, or an
   absent/pending policy approval yields an `abstained` trace with reason codes
   and **no output**. Invalid contracts, unsupported currency arithmetic,
@@ -72,7 +80,7 @@ Contract rules:
 ## Decimal, rounding and currency behavior
 
 - Calculation operands are base-10 `Decimal` values created only from validated
-  text. Each formula executes one operation using a fresh Decimal context with
+  text. Binary formulas execute one operation using a fresh Decimal context with
   explicit precision, rounding, exponent bounds and traps, independent of the
   caller's ambient settings. With the 64-character input bound, add/subtract/
   multiply remain exact. The 256-digit context also leaves guard precision for
@@ -80,6 +88,12 @@ Contract rules:
   Division records whether its intermediate was inexact; an inexact division
   without a final rounding target raises `CalculationPrecisionError` rather
   than presenting an unqualified result.
+- The exact-sum helper adds at most 10,000 finite `Decimal` values in an isolated
+  256-digit context. It rejects both `Inexact` and `Rounded` signals, empty or
+  oversized input, and output beyond 512 fixed-point characters. The mechanical
+  formula adapter requires one identical currency for all inputs (including
+  all-currency-free observations); it never converts FX or quantizes to minor
+  units. Any numeric precision failure is explicit rather than silently rounded.
 - `RoundingPolicy` must name a target (`none`, `fixed_scale`, or
   `currency_minor_unit`) and a mode (`half_even`, `half_up`, `half_down`,
   `down`, `up`, `floor`, `ceiling`, or `05up`). `fixed_scale` requires a scale
@@ -113,8 +127,8 @@ Contract rules:
   source-plus-assumption calculation.
 - Numeric/invariant tests: maximum bounded multiplication, input-order
   independence, exact terminating division, explicit inexact-division behavior,
-  currency exponent and rounding vectors, currency mismatch rejection and
-  policy-gate behavior.
+  exact-sum golden values and precision/input-count limits, currency exponent and
+  rounding vectors, currency mismatch rejection and policy-gate behavior.
 - Missing/invalid-evidence tests: floats, invalid decimal syntax/currencies,
   missing input, wrong input kind, missing/pending approval and cross-tenant
   source references.
@@ -136,6 +150,15 @@ Contract rules:
 
 These are software verification checks, not evidence that a business formula is
 correct or financially accurate.
+
+## Downstream M15 prototype
+
+The M15 adapter in [`../M15_DETERMINISTIC_FINANCIAL_CALCULATIONS.md`](../M15_DETERMINISTIC_FINANCIAL_CALCULATIONS.md)
+uses only `MechanicalSumFormulaDefinition` after validating its M14 intake,
+row-bound HMAC commitments, group completeness, quality, and freshness. M15 is a
+separate, default-disabled, production-blocked API/persistence slice. Its one
+mechanical subtotal does not approve a financial formula or alter M8's
+`no_approved_policy` behavior.
 
 ## Targeted OpenFPA audit
 

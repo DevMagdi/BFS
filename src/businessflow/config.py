@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     finance_source_intake_enabled: bool = Field(
         default=False, validation_alias="FINANCE_SOURCE_INTAKE_ENABLED"
     )
+    financial_calculations_enabled: bool = Field(
+        default=False, validation_alias="FINANCIAL_CALCULATIONS_ENABLED"
+    )
     import_max_file_bytes: int = Field(
         default=25 * 1024 * 1024,
         ge=1024,

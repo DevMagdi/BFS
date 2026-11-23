@@ -321,6 +321,14 @@ class FinanceSourceRowEvidence(Base):
             name="ck_finance_source_row_evidence_hashes",
         ),
         CheckConstraint(
+            "(amount_commitment_hash IS NULL AND amount_commitment_key_version IS NULL) OR "
+            "(amount_commitment_hash IS NOT NULL AND "
+            "amount_commitment_hash ~ '^[0-9a-f]{64}$' AND "
+            "amount_commitment_key_version IS NOT NULL AND "
+            "amount_commitment_key_version = 'app-secret.v1')",
+            name="ck_finance_source_row_evidence_amount_commitment",
+        ),
+        CheckConstraint(
             "reconciliation_group_hash IS NULL OR reconciliation_group_hash ~ '^[0-9a-f]{64}$'",
             name="ck_finance_source_row_evidence_group_hash",
         ),
@@ -339,6 +347,8 @@ class FinanceSourceRowEvidence(Base):
     intake_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     source_row_number: Mapped[int] = mapped_column(Integer, nullable=False)
     source_row_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    amount_commitment_hash: Mapped[str | None] = mapped_column(String(64))
+    amount_commitment_key_version: Mapped[str | None] = mapped_column(String(32))
     source_record_identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     reconciliation_group_hash: Mapped[str | None] = mapped_column(String(64))
     row_status: Mapped[str] = mapped_column(String(16), nullable=False)

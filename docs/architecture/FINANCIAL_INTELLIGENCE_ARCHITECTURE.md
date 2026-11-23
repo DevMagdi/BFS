@@ -3,7 +3,7 @@
 - **Status:** M9 target architecture and code assessment. No financial rule, formula, accounting policy, FX policy, rounding rule, threshold, or new data model is approved by this document.
 - **Critical distinction:** M8 is an implemented **project-scoped observation and policy-gated assessment slice**, not company-wide Financial Intelligence. The target is optional, finance-governed intelligence across the selected Company as a whole; it is not implemented.
 - **Related evidence:** [`../BACKEND_IMPLEMENTATION.md`](../BACKEND_IMPLEMENTATION.md), [`CURRENT_VS_TARGET_GAP_ANALYSIS.md`](CURRENT_VS_TARGET_GAP_ANALYSIS.md), and migration [`../../migrations/versions/0007_financial_feasibility.py`](../../migrations/versions/0007_financial_feasibility.py).
-- **Post-M9 scope note:** Migration `0008_monthly_position_review` adds only an exact-template, synthetic-only finance CSV inside the internal M10 demo. It is not a general Company finance source contract or policy-governed Financial Intelligence implementation; see [`../M10_SYNTHETIC_DEMO.md`](../M10_SYNTHETIC_DEMO.md).
+- **Post-M9 scope note:** Migration `0008_monthly_position_review` adds only an exact-template, synthetic-only finance CSV inside the internal M10 demo. Migration `0011_finance_source_intake` later adds M14's separate manual CSV contract, profile, mapping, and caller-supplied control comparison. Neither is a general Company finance source system or policy-governed Financial Intelligence implementation; M14's finance-owner/source/access/correction/retention/independent-control gates remain unresolved. See [`../M10_SYNTHETIC_DEMO.md`](../M10_SYNTHETIC_DEMO.md) and [`../M14_FINANCE_SOURCE_CONTRACTS.md`](../M14_FINANCE_SOURCE_CONTRACTS.md).
 
 ## 1. M8 behavior verified in code
 
@@ -62,7 +62,7 @@ flowchart LR
     AUTH -. governs .-> BRIEF
 ```
 
-Only the M8 project-scoped observation/assessment portion of this flow is in code. M4 staging does not currently accept financial datasets. The target flow does not require a separate data platform; first prove a bounded domain slice with the current PostgreSQL/modular-monolith design.
+M8 implements the project-scoped sourced-observation/always-incomplete assessment portion. M14 separately implements a manual finance-specific CSV intake with explicit mapping, profiling, row-quality evidence, freshness labels, and caller-supplied control comparison. M14 does not use or alter M4/M12 contracts, create canonical finance facts, authenticate source authority, or establish an accounting conclusion; its source, correction, retention, and independent-control governance remains unapproved. The target flow does not require a separate data platform; the M14 slice stays within the current PostgreSQL/modular-monolith design.
 
 ### Evidence Before Answers — No evidence, no confident answer
 
@@ -94,25 +94,22 @@ Financial rules must be constrained, versioned, reviewed application logic or a 
 - Any future approval must bind the authenticated reviewer to the exact result and evidence hashes; a change in relevant input or policy invalidates freshness. The reviewer must satisfy the company’s approved separation-of-duties policy.
 - Do not expose sensitive values through audit metadata, error messages, model prompts, or unauthorized readiness summaries. Preserve M8’s behavior of recording identifiers/hashes rather than source amounts in audit details.
 
-## 5. Boundaries for an initial company-level financial slice
+## 5. Bounded M14 implementation and remaining gates
 
-A narrowly scoped first company-level finance implementation could begin with one owner-selected source/fact contract and a read-only observation/inventory surface. It should:
+M14 implements a narrower engineering slice than the finance fact model described above: one manual finance-specific CSV contract, exact header mappings and rationale-backed ignored columns, column profiling, row hashes/status/issues, caller-supplied source-as-of/freshness fields, and Decimal comparisons to caller-supplied control amounts/tolerances. It persists immutable Company-scoped evidence, but not raw row values, canonical finance facts, a ledger, or accounting classifications. It reuses M11's arithmetic primitive rather than adding a formula catalog; it does not alter M4/M12 or M8.
 
-1. specify exactly which source records are in scope and who owns their meaning;
-2. reuse M4's staging/mapping/validation/confirmation controls where suitable, without claiming M4 already supports finance;
-3. persist only the approved typed source fields with company scope, provenance, status, date/period, currency, and correction history;
-4. show quality and freshness without calculating an unapproved metric; and
-5. pass PostgreSQL scope, RLS, grants, history, replay, privacy, and reconciliation tests.
+M14 deliberately does not select a finance owner or authoritative source/access path and does not define a correction or legal retention policy. Its duplicate key (`source_record_id` within one intake) and control-overlap checks are narrow engineering conventions, not an owner-approved domain policy. A caller-supplied control reference does not prove independence. These open gates prohibit treating the implementation as production/customer-accounting-data approval. See [`../M14_FINANCE_SOURCE_CONTRACTS.md`](../M14_FINANCE_SOURCE_CONTRACTS.md).
 
-It must not invent or silently apply a formula, sum across currencies, round, normalize currencies, assert accounting treatment, fill a blank with zero, predict collections, rank outcomes, or issue a financial verdict. If even a read-only summary requires an accounting assumption, keep it blocked until that assumption is explicitly approved.
+If a later owner-approved company-level finance fact model is needed, it must first name the accountable owner and source; define typed fields, period/date/currency meaning, source identity, correction/version semantics and retention; set quality/freshness/conflict/missing-data behavior; and pass PostgreSQL scope, RLS, grant, history, privacy and reconciliation tests. It must not invent or silently apply a formula, sum across currencies, round, normalize currencies, assert accounting treatment, fill a blank with zero, predict collections, rank outcomes, or issue a financial verdict. A missing approval keeps the relevant behavior blocked; M15 is not part of this work.
 
 ## 6. Explicit non-goals until separately approved
 
-No general ledger or accounting close; chart of accounts; statutory or tax accounting; universal revenue recognition; profitability/contribution/margin, cash-flow/liquidity, budget variance, forecast, FX conversion, payment probability, credit risk, or cross-company consolidation; generic finance import connector catalog; arbitrary accounting SQL; LLM financial arithmetic; autonomous recommendation/approval/action; or finance administration UI is included by M9. No company-specific finance policy can be inferred from M8's schema or tests.
+No general ledger or accounting close; chart of accounts; statutory or tax accounting; universal revenue recognition; profitability/contribution/margin, cash-flow/liquidity, budget variance, forecast, FX conversion, payment probability, credit risk, or cross-company consolidation; generic finance import connector catalog; arbitrary accounting SQL; LLM financial arithmetic; autonomous recommendation/approval/action; or finance administration UI is implemented by M8 or M14. No company-specific finance policy can be inferred from M8/M14 schemas, controls, or tests.
 
 ## 7. Repository pointers
 
 - M8 input contract and policy gate: [`../../src/businessflow/financial_assessments/schemas.py`](../../src/businessflow/financial_assessments/schemas.py), [`catalog.py`](../../src/businessflow/financial_assessments/catalog.py), [`calculation.py`](../../src/businessflow/financial_assessments/calculation.py), and [`service.py`](../../src/businessflow/financial_assessments/service.py).
 - M8 persistence/RLS/guards: [`../../migrations/versions/0007_financial_feasibility.py`](../../migrations/versions/0007_financial_feasibility.py) and [`../../src/businessflow/financial_assessments/models.py`](../../src/businessflow/financial_assessments/models.py).
 - Current project-scoped route: [`../../src/businessflow/api/financial_assessment_routes.py`](../../src/businessflow/api/financial_assessment_routes.py).
-- Current verified boundary tests: [`../../tests/test_financial_assessments.py`](../../tests/test_financial_assessments.py) and [`../../tests/test_migration_financial_assessment.py`](../../tests/test_migration_financial_assessment.py).
+- Current M8 verified boundary tests: [`../../tests/test_financial_assessments.py`](../../tests/test_financial_assessments.py) and [`../../tests/test_migration_financial_assessment.py`](../../tests/test_migration_financial_assessment.py).
+- M14 contract, routes, mapping, reconciliation and limitations: [`../M14_FINANCE_SOURCE_CONTRACTS.md`](../M14_FINANCE_SOURCE_CONTRACTS.md); implementation under [`../../src/businessflow/finance_sources/`](../../src/businessflow/finance_sources/) and [`../../src/businessflow/api/finance_source_routes.py`](../../src/businessflow/api/finance_source_routes.py); unit/API/RLS tests in [`../../tests/unit/test_finance_sources.py`](../../tests/unit/test_finance_sources.py), [`../../tests/test_finance_sources.py`](../../tests/test_finance_sources.py), and [`../../tests/test_finance_sources_rls.py`](../../tests/test_finance_sources_rls.py).

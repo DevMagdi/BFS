@@ -19,7 +19,7 @@ def _config_for_database(url: str) -> Config:
 
 
 def test_migration_head_upgrade_downgrade_and_reupgrade():
-    database_name = f"businessflow_m12_migration_test_{uuid4().hex[:12]}"
+    database_name = f"businessflow_m14_migration_test_{uuid4().hex[:12]}"
     admin_base_url = make_url(os.environ["TEST_ADMIN_DATABASE_URL"])
     admin_url = admin_base_url.set(database="postgres")
     admin_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT", hide_parameters=True)
@@ -50,7 +50,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0010_metric_insight_runs"
+                "0011_finance_source_intake"
             )
             assert (
                 connection.scalar(text("SELECT to_regclass('public.financial_assessments')"))
@@ -231,6 +231,68 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
                 == 1
             )
 
+            assert connection.scalar(text("SELECT count(*) FROM finance_source_contracts")) == 1
+            finance_contract = connection.execute(
+                text("SELECT contract_key, version, definition_hash FROM finance_source_contracts")
+            ).one()
+            assert finance_contract.contract_key == "businessflow.finance.source-observations"
+            assert finance_contract.version == "1.0.0"
+            assert len(finance_contract.definition_hash) == 64
+            finance_tables = (
+                "finance_source_mappings",
+                "finance_source_intakes",
+                "finance_source_row_evidence",
+            )
+            for table_name in finance_tables:
+                assert (
+                    connection.scalar(
+                        text(
+                            "SELECT relrowsecurity AND relforcerowsecurity FROM pg_class "
+                            "WHERE oid = to_regclass(:table_name)"
+                        ),
+                        {"table_name": f"public.{table_name}"},
+                    )
+                    is True
+                )
+                assert connection.scalar(
+                    text("SELECT has_table_privilege('bf_runtime', :table_name, 'SELECT')"),
+                    {"table_name": f"public.{table_name}"},
+                )
+                assert connection.scalar(
+                    text("SELECT has_table_privilege('bf_runtime', :table_name, 'INSERT')"),
+                    {"table_name": f"public.{table_name}"},
+                )
+                for privilege in ("UPDATE", "DELETE", "TRUNCATE"):
+                    assert not connection.scalar(
+                        text("SELECT has_table_privilege('bf_runtime', :table_name, :privilege)"),
+                        {"table_name": f"public.{table_name}", "privilege": privilege},
+                    )
+            assert connection.scalar(
+                text(
+                    "SELECT has_table_privilege('bf_runtime', 'finance_source_contracts', 'SELECT')"
+                )
+            )
+            for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE"):
+                assert not connection.scalar(
+                    text(
+                        "SELECT has_table_privilege("
+                        "'bf_runtime', 'finance_source_contracts', :privilege)"
+                    ),
+                    {"privilege": privilege},
+                )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgname IN "
+                        "('trg_finance_source_contracts_append_only', "
+                        "'trg_finance_source_mappings_append_only', "
+                        "'trg_finance_source_intakes_append_only', "
+                        "'trg_finance_source_row_evidence_append_only')"
+                    )
+                )
+                == 4
+            )
+
         command.downgrade(_config_for_database(migration_url), "0006_decision_workflow")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
@@ -250,6 +312,10 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
                 "company_data_contracts",
                 "company_data_sources",
                 "company_data_ingestions",
+                "finance_source_contracts",
+                "finance_source_mappings",
+                "finance_source_intakes",
+                "finance_source_row_evidence",
             ):
                 assert (
                     connection.scalar(
@@ -272,7 +338,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0010_metric_insight_runs"
+                "0011_finance_source_intake"
             )
             assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 6
             assert (

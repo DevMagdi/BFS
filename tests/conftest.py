@@ -67,7 +67,7 @@ def migrated_clean_test_database() -> None:
         command.upgrade(config, "head")
         with migration_engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            assert revision == "0010_metric_insight_runs"
+            assert revision == "0011_finance_source_intake"
     finally:
         migration_engine.dispose()
         admin_engine.dispose()
@@ -85,6 +85,7 @@ def settings() -> Settings:
         login_failure_limit=5,
         login_ip_failure_limit=20,
         login_lockout_minutes=15,
+        finance_source_intake_enabled=True,
         db_pool_size=5,
         db_max_overflow=5,
     )

@@ -16,6 +16,11 @@ from businessflow.api.auth_routes import router as auth_router
 from businessflow.api.company_context_routes import router as company_context_router
 from businessflow.api.company_data_routes import router as company_data_router
 from businessflow.api.data_import_routes import router as data_import_router
+from businessflow.api.finance_source_routes import router as finance_source_router
+from businessflow.api.finance_source_upload_limit import (
+    FinanceSourceRequestBodyTooLarge,
+    FinanceSourceUploadSizeLimitMiddleware,
+)
 from businessflow.api.financial_assessment_routes import router as financial_assessment_router
 from businessflow.api.health_routes import router as health_router
 from businessflow.api.metrics_routes import router as metrics_router
@@ -65,6 +70,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         debug=False,
         lifespan=lifespan,
     )
+    # Add first so the request-context middleware below wraps its early 413 responses.
+    application.add_middleware(
+        FinanceSourceUploadSizeLimitMiddleware,
+        max_file_bytes=active_settings.import_max_file_bytes,
+    )
     engine = create_database_engine(
         active_settings.database_url,
         pool_size=active_settings.db_pool_size,
@@ -101,6 +111,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Do not echo body values: validation failures may contain passwords or bearer tokens.
         return _error_response(request, 422, "invalid_request", "Request validation failed.")
 
+    @application.exception_handler(FinanceSourceRequestBodyTooLarge)
+    async def handle_finance_source_body_limit(
+        request: Request, _exc: FinanceSourceRequestBodyTooLarge
+    ) -> JSONResponse:
+        return _error_response(
+            request,
+            413,
+            "request_body_too_large",
+            "The finance source intake request exceeds the configured size limit.",
+        )
+
     @application.exception_handler(StarletteHTTPException)
     async def handle_http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         if exc.status_code == 404:
@@ -134,6 +155,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(project_assessment_router, prefix="/api/v1")
     application.include_router(project_decision_router, prefix="/api/v1")
     application.include_router(financial_assessment_router, prefix="/api/v1")
+    application.include_router(finance_source_router, prefix="/api/v1")
     application.include_router(position_review_router, prefix="/api/v1")
     application.mount(
         "/",

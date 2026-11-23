@@ -464,17 +464,13 @@ def test_concurrent_identical_finance_source_retries_are_idempotent(
     try:
 
         def submit_identical_request():
-            request_client = TestClient(app, raise_server_exceptions=False)
-            try:
-                return _upload(
-                    request_client,
-                    tenant["id"],
-                    headers,
-                    idempotency_key,
-                    source_as_of_at=source_as_of_at,
-                )
-            finally:
-                request_client.close()
+            return _upload(
+                client,
+                tenant["id"],
+                headers,
+                idempotency_key,
+                source_as_of_at=source_as_of_at,
+            )
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [pool.submit(submit_identical_request) for _ in range(2)]

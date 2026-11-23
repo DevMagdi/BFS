@@ -439,7 +439,9 @@ def test_finance_source_endpoints_require_finance_permission_and_isolate_tenants
     assert not_a_member.status_code == 404
 
 
-def test_concurrent_identical_finance_source_retries_are_idempotent(client, app, admin_engine):
+def test_concurrent_identical_finance_source_retries_are_idempotent(
+    client, app, admin_engine, caplog
+):
     owner = register_user(client, f"m14-race-{uuid4().hex}@example.com")
     headers = auth_headers(owner)
     tenant = create_tenant(
@@ -452,10 +454,11 @@ def test_concurrent_identical_finance_source_retries_are_idempotent(client, app,
     idempotency_key = f"m14-concurrent-{uuid4().hex}"
     source_as_of_at = datetime.now(UTC).isoformat()
     lock_barrier = Barrier(2)
+    barrier_passes = []
 
     def synchronize_at_idempotency_lock(_conn, _cursor, statement, _parameters, _context, _many):
-        if "pg_advisory_xact_lock" in statement:
-            lock_barrier.wait(timeout=15)
+        if "pg_advisory_xact_lock" in statement.lower():
+            barrier_passes.append(lock_barrier.wait(timeout=15))
 
     event.listen(app.state.engine, "before_cursor_execute", synchronize_at_idempotency_lock)
     try:
@@ -480,7 +483,10 @@ def test_concurrent_identical_finance_source_retries_are_idempotent(client, app,
         event.remove(app.state.engine, "before_cursor_execute", synchronize_at_idempotency_lock)
         lock_barrier.abort()
 
-    assert [response.status_code for response in responses] == [201, 201]
+    assert [response.status_code for response in responses] == [201, 201], (
+        f"responses={[response.text for response in responses]!r}; "
+        f"lock barrier passes={barrier_passes!r}; logs={caplog.text!r}"
+    )
     payloads = [response.json() for response in responses]
     assert len({payload["id"] for payload in payloads}) == 1
     assert len({payload["input_hash"] for payload in payloads}) == 1

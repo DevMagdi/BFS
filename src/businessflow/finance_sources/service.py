@@ -39,6 +39,10 @@ from businessflow.data_imports.parsers import (
     read_limited_upload,
 )
 from businessflow.errors import ApiError
+from businessflow.finance_sources.commitments import (
+    AMOUNT_COMMITMENT_KEY_VERSION,
+    finance_amount_commitment,
+)
 from businessflow.finance_sources.contracts import (
     FINANCE_SOURCE_CONTRACT_DEFINITION,
     FINANCE_SOURCE_CONTRACT_HASH,
@@ -511,6 +515,43 @@ def _validate_rows(
     return results
 
 
+def _row_amount_commitment(
+    row: _ValidatedRow,
+    *,
+    secret: bytes,
+    tenant_id: UUID,
+    company_id: UUID,
+    intake_id: UUID,
+    source_key: str,
+    file_hash: str,
+    contract_key: str,
+    contract_version: str,
+    contract_hash: str,
+    mapping_version: int,
+    mapping_hash: str,
+) -> str | None:
+    if row.row_status != "valid" or row.amount is None or row.reconciliation_group_hash is None:
+        return None
+    return finance_amount_commitment(
+        secret=secret,
+        tenant_id=tenant_id,
+        company_id=company_id,
+        intake_id=intake_id,
+        source_key=source_key,
+        file_hash=file_hash,
+        source_row_number=row.row_number,
+        source_row_hash=row.source_row_hash,
+        source_record_identity_hash=row.source_record_identity_hash,
+        reconciliation_group_hash=row.reconciliation_group_hash,
+        contract_key=contract_key,
+        contract_version=contract_version,
+        contract_hash=contract_hash,
+        mapping_version=mapping_version,
+        mapping_hash=mapping_hash,
+        canonical_amount_text=decimal_text(row.amount),
+    )
+
+
 def _profile_columns(
     sheet: ParsedSheet,
     metadata: FinanceSourceIntakeMetadata,
@@ -561,6 +602,8 @@ def _control_group_key(control: FinanceReconciliationControl) -> GroupKey:
 def _canonical_datetime(value: datetime | None) -> str | None:
     if value is None:
         return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("finance source timestamps must include a timezone")
     return value.astimezone(UTC).isoformat(timespec="microseconds")
 
 
@@ -936,6 +979,9 @@ def create_finance_source_intake(
     settings: Settings,
 ) -> FinanceSourceIntakeResponse:
     ensure_finance_source_intake_enabled(settings)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("finance source capture time must include a timezone")
+    now = now.astimezone(UTC)
     access = require_company_context_access(
         session, user, tenant_id, "finance:write", request_id=request_id
     )
@@ -1250,21 +1296,41 @@ def create_finance_source_intake(
     session.add(intake)
     session.flush()
 
-    session.add_all(
-        FinanceSourceRowEvidence(
-            id=uuid4(),
+    row_evidence: list[FinanceSourceRowEvidence] = []
+    for row in validated_rows:
+        amount_commitment = _row_amount_commitment(
+            row,
+            secret=settings.app_secret_key.get_secret_value().encode("utf-8"),
             tenant_id=tenant_id,
             company_id=access.company.id,
             intake_id=intake_id,
-            source_row_number=row.row_number,
-            source_row_hash=row.source_row_hash,
-            source_record_identity_hash=row.source_record_identity_hash,
-            reconciliation_group_hash=row.reconciliation_group_hash,
-            row_status=row.row_status,
-            issues=row.issues,
+            source_key=metadata.source_key,
+            file_hash=file_hash,
+            contract_key=contract.contract_key,
+            contract_version=contract.version,
+            contract_hash=contract.definition_hash,
+            mapping_version=mapping.mapping_version,
+            mapping_hash=mapping.mapping_hash,
         )
-        for row in validated_rows
-    )
+        row_evidence.append(
+            FinanceSourceRowEvidence(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                company_id=access.company.id,
+                intake_id=intake_id,
+                source_row_number=row.row_number,
+                source_row_hash=row.source_row_hash,
+                amount_commitment_hash=amount_commitment,
+                amount_commitment_key_version=(
+                    AMOUNT_COMMITMENT_KEY_VERSION if amount_commitment is not None else None
+                ),
+                source_record_identity_hash=row.source_record_identity_hash,
+                reconciliation_group_hash=row.reconciliation_group_hash,
+                row_status=row.row_status,
+                issues=row.issues,
+            )
+        )
+    session.add_all(row_evidence)
     record_event(
         session,
         "finance_source.intake_recorded",

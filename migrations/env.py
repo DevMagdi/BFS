@@ -13,6 +13,7 @@ from businessflow.data_imports import models as data_import_models  # noqa: F401
 from businessflow.database import Base
 from businessflow.finance_sources import models as finance_source_models  # noqa: F401
 from businessflow.financial_assessments import models as financial_assessment_models  # noqa: F401
+from businessflow.financial_calculations import models as financial_calculation_models  # noqa: F401
 from businessflow.metrics import models as metrics_models  # noqa: F401
 from businessflow.position_reviews import models as position_review_models  # noqa: F401
 from businessflow.project_assessments import models as project_assessment_models  # noqa: F401

@@ -10,7 +10,7 @@ from businessflow.calculation_core.contracts import (
     CalculationTrace,
     ContractModel,
     CurrencyCode,
-    FormulaDefinition,
+    FormulaContract,
     HashText,
     IndependentExpectedResult,
     OutputDecimalText,
@@ -252,7 +252,7 @@ def _trace_integrity_valid(trace: CalculationTrace) -> bool:
 
 
 def verify_replay(
-    formula: FormulaDefinition,
+    formula: FormulaContract,
     snapshot: CalculationInputSnapshot,
     recorded_trace: CalculationTrace,
 ) -> ReplayVerificationReport:

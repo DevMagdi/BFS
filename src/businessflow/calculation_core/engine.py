@@ -7,7 +7,9 @@ from businessflow.calculation_core.contracts import (
     CalculationInputSnapshot,
     CalculationOutput,
     CalculationTrace,
+    FormulaContract,
     FormulaDefinition,
+    MechanicalSumFormulaDefinition,
     MissingEvidence,
     NumericAssumption,
     NumericObservation,
@@ -21,6 +23,7 @@ from businessflow.calculation_core.decimal import (
     _new_decimal_context,
     currency_exponent,
     decimal_text,
+    exact_decimal_sum,
     fixed_scale_text,
     parse_decimal_text,
     quantize_decimal,
@@ -146,7 +149,7 @@ def _evaluate_operation(
     return result, division_inexact
 
 
-def _rounding_trace_without_result(formula: FormulaDefinition) -> RoundingTrace:
+def _rounding_trace_without_result(formula: FormulaContract) -> RoundingTrace:
     policy = formula.rounding_policy
     return RoundingTrace(
         target=policy.target,
@@ -224,7 +227,7 @@ def _rounded_output(
 
 def _make_trace(
     *,
-    formula: FormulaDefinition,
+    formula: FormulaContract,
     snapshot: CalculationInputSnapshot,
     state: Literal["calculated", "abstained"],
     missing_evidence: tuple[MissingEvidence, ...],
@@ -251,12 +254,88 @@ def _make_trace(
     return placeholder.model_copy(update={"trace_hash": content_hash(payload)})
 
 
+def _calculate_mechanical_sum(
+    formula: MechanicalSumFormulaDefinition,
+    canonical_snapshot: CalculationInputSnapshot,
+) -> CalculationTrace:
+    if canonical_snapshot.assumptions:
+        raise CalculationDomainError("mechanical exact sums accept observed inputs only")
+    expected_keys = set(formula.input_keys)
+    if any(item.key not in expected_keys for item in canonical_snapshot.observations):
+        raise CalculationDomainError("mechanical exact sums reject unreferenced observations")
+
+    records: list[NumericObservation] = []
+    missing: list[MissingEvidence] = []
+    for key in formula.input_keys:
+        record, reason = _find_input(canonical_snapshot, key, "observation")
+        if isinstance(record, NumericObservation):
+            records.append(record)
+        if reason is not None and reason not in missing:
+            missing.append(reason)
+    if missing:
+        return _make_trace(
+            formula=formula,
+            snapshot=canonical_snapshot,
+            state="abstained",
+            missing_evidence=tuple(missing),
+            rounding=_rounding_trace_without_result(formula),
+            output=None,
+        )
+    if len(records) != len(formula.input_keys):
+        raise CalculationError("resolved mechanical sum inputs are unexpectedly unavailable")
+
+    currencies = {item.currency_code for item in records}
+    if len(currencies) != 1:
+        raise CalculationDomainError(
+            "mechanical exact sums require identical currencies; FX is not performed"
+        )
+    try:
+        value = exact_decimal_sum(parse_decimal_text(item.value) for item in records)
+        output_value = decimal_text(value)
+    except ValueError as exc:
+        raise CalculationPrecisionError(
+            "mechanical exact sum exceeded supported Decimal precision or output length"
+        ) from exc
+    currency_code = records[0].currency_code
+    rounding = RoundingTrace(
+        target="none",
+        mode="half_even",
+        requested_scale=None,
+        currency_exponent=None,
+        calculation_precision=CALCULATION_PRECISION,
+        rounding_precision=ROUNDING_PRECISION,
+        division_inexact=False,
+        quantization_performed=False,
+        value_changed_by_rounding=False,
+        unrounded_value=output_value,
+        rounded_value=output_value,
+    )
+    output = CalculationOutput(
+        schema_version=1,
+        key=formula.output_key,
+        label=formula.output_label,
+        value=output_value,
+        currency_code=currency_code,
+    )
+    return _make_trace(
+        formula=formula,
+        snapshot=canonical_snapshot,
+        state="calculated",
+        missing_evidence=(),
+        rounding=rounding,
+        output=output,
+    )
+
+
 def calculate_formula(
-    formula: FormulaDefinition,
+    formula: FormulaContract,
     snapshot: CalculationInputSnapshot,
 ) -> CalculationTrace:
-    """Execute one explicit, versioned binary Decimal formula or abstain without output."""
-    formula = FormulaDefinition.model_validate(formula.model_dump(mode="python"))
+    """Execute a policy-gated binary formula or a no-rounding exact sum primitive."""
+    if isinstance(formula, MechanicalSumFormulaDefinition):
+        formula = MechanicalSumFormulaDefinition.model_validate(formula.model_dump(mode="python"))
+    else:
+        formula = FormulaDefinition.model_validate(formula.model_dump(mode="python"))
     snapshot = CalculationInputSnapshot.model_validate(snapshot.model_dump(mode="python"))
     canonical_snapshot = snapshot.model_copy(
         update={
@@ -264,6 +343,8 @@ def calculate_formula(
             "assumptions": tuple(sorted(snapshot.assumptions, key=lambda item: item.key)),
         }
     )
+    if isinstance(formula, MechanicalSumFormulaDefinition):
+        return _calculate_mechanical_sum(formula, canonical_snapshot)
     operands: tuple[tuple[str, InputKind], ...] = (
         (formula.left_input_key, formula.left_input_kind),
         (formula.right_input_key, formula.right_input_kind),

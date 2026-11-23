@@ -25,6 +25,7 @@ from businessflow.finance_sources.contracts import (
 from businessflow.finance_sources.schemas import FinanceSourceIntakeMetadata
 from businessflow.finance_sources.service import (
     _build_reconciliation_results,
+    _canonical_datetime,
     _canonical_mapping,
     _mapping_hash,
     _profile_columns,
@@ -46,6 +47,13 @@ FIELD_MAPPING = {
     "amount": "amount",
     "currency": "currency",
 }
+
+
+def test_finance_source_datetime_canonicalization_requires_timezone() -> None:
+    aware = datetime.fromisoformat("2026-11-21T14:00:00+02:00")
+    assert _canonical_datetime(aware) == "2026-11-21T12:00:00.000000+00:00"
+    with pytest.raises(ValueError, match="must include a timezone"):
+        _canonical_datetime(datetime(2026, 11, 21, 12, 0))
 
 
 def test_finance_source_activation_defaults_closed_and_fails_closed_on_bad_config(monkeypatch):

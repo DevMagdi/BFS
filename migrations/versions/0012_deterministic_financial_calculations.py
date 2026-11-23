@@ -1,6 +1,6 @@
 """Add keyed M14 amount commitments and bounded M15 calculation run evidence.
 
-Revision ID: 0012_deterministic_financial_calculations
+Revision ID: 0012_financial_calculations
 Revises: 0011_finance_source_intake
 Create Date: 2026-11-21
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "0012_deterministic_financial_calculations"
+revision = "0012_financial_calculations"
 down_revision = "0011_finance_source_intake"
 branch_labels = None
 depends_on = None

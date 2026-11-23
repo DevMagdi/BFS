@@ -602,6 +602,8 @@ def _control_group_key(control: FinanceReconciliationControl) -> GroupKey:
 def _canonical_datetime(value: datetime | None) -> str | None:
     if value is None:
         return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("finance source timestamps must include a timezone")
     return value.astimezone(UTC).isoformat(timespec="microseconds")
 
 
@@ -977,6 +979,9 @@ def create_finance_source_intake(
     settings: Settings,
 ) -> FinanceSourceIntakeResponse:
     ensure_finance_source_intake_enabled(settings)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("finance source capture time must include a timezone")
+    now = now.astimezone(UTC)
     access = require_company_context_access(
         session, user, tenant_id, "finance:write", request_id=request_id
     )

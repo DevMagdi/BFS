@@ -14,7 +14,7 @@ Only `businessflow.finance.source-group-subtotal` version `1.0.0` is executable,
 
 ## M14 evidence and keyed amount commitments
 
-M14 intentionally does not retain raw finance source rows or amount text. Migration `0012_deterministic_financial_calculations` adds a nullable `amount_commitment_hash` and `amount_commitment_key_version` to `finance_source_row_evidence`. For each valid M14 row with an amount and reconciliation group, M14 stores an HMAC-SHA-256 commitment using the server's `APP_SECRET_KEY` and key label `app-secret.v1`. The HMAC binds canonical fixed-point Decimal text to tenant, Company, intake, source key, uploaded-file hash, row number and row hashes, group hash, and exact contract/mapping identities and hashes. Invalid or ungrouped rows receive no commitment.
+M14 intentionally does not retain raw finance source rows or amount text. Migration `0012_financial_calculations` adds a nullable `amount_commitment_hash` and `amount_commitment_key_version` to `finance_source_row_evidence`. For each valid M14 row with an amount and reconciliation group, M14 stores an HMAC-SHA-256 commitment using the server's `APP_SECRET_KEY` and key label `app-secret.v1`. The HMAC binds canonical fixed-point Decimal text to tenant, Company, intake, source key, uploaded-file hash, row number and row hashes, group hash, and exact contract/mapping identities and hashes. Invalid or ungrouped rows receive no commitment.
 
 The commitment lets M15 reject a caller-submitted amount that does not match the amount M14 validated, without persisting that amount a second time. Intakes recorded before migration `0012` retain null commitment fields; because M14 does not retain raw amounts, those rows cannot be backfilled and are ineligible for M15 calculation. The HMAC does **not** authenticate the original file/source, establish source authority, prove control independence, or approve accounting semantics. It is not encryption. The prototype has no key-ring or rotation workflow: changing `APP_SECRET_KEY` makes older commitments unverifiable unless the original key remains available. Key custody, rotation, backup, retention, and any production use remain open security/governance decisions.
 
@@ -30,12 +30,12 @@ The M15 trace binds the formula/catalog and engine versions, M14 intake and mapp
 
 ## Persistence and immutability
 
-Migration `0012_deterministic_financial_calculations` adds:
+Migration `0012_financial_calculations` adds:
 
 - row-bound M14 HMAC commitment columns and a check that commitment hash/key-version are both null or valid as a pair; and
 - Company-scoped `financial_calculation_runs`, with same-tenant/company foreign keys to the intake, mapping, contract, and requesting membership, hash/version/state constraints, forced company-context RLS, runtime `SELECT`/`INSERT` grants only, and an append-only database trigger.
 
-Downgrading revision `0012_deterministic_financial_calculations` is destructive: it drops all M15 run records and both M14 commitment columns. A later re-upgrade cannot restore runs or commitments; retained M14 rows return with null commitments and remain ineligible for M15 because their raw amounts were never stored.
+Downgrading revision `0012_financial_calculations` is destructive: it drops all M15 run records and both M14 commitment columns. A later re-upgrade cannot restore runs or commitments; retained M14 rows return with null commitments and remain ineligible for M15 because their raw amounts were never stored.
 
 The persisted M15 record contains the formula/input/result/trace hashes and a hash-checked, redacted evidence snapshot of M14 references, row numbers/statuses, and hash/version metadata. It deliberately omits raw amount strings and the derived output value. The create response returns the trace for the caller's submitted request, but the database does not store those values in the M15 run row. These SHA-256 values are integrity markers, **not encryption or confidentiality controls**; a low-entropy amount or total may be guessable from an unkeyed hash, and the M14 intake already retains caller-supplied control values/results. Replaying a run therefore requires the caller to resubmit the original `snapshot_id`, group hash, row numbers, and exact amount strings; the API rebuilds and hashes the snapshot from current immutable M14 evidence at the saved capture time. Saved run details expose persisted metadata/evidence, not raw values or output. This prototype has no deletion, retention, or secret-rotation procedure.
 
@@ -59,9 +59,9 @@ The database-free unit suite covers M11 exact Decimal behavior and M15 catalog, 
 ### Local verification — 2026-11-21
 
 - Ruff lint and format checks pass (**151 files**); mypy passes for **105 source files**.
-- The isolated unit suite passes (**103 passed**). `compileall` and `git diff --check` pass.
-- Alembic discovers `0012_deterministic_financial_calculations` as the sole head; offline `upgrade head --sql` renders **2,995 lines**, including the exact commitment-pair/key-version constraint and the M15 RLS/grant/append-only DDL.
-- OpenAPI generation exposes all **four M15 route paths** among 89 paths; the catalog contains five entries (one executable mechanical subtotal and four deferred formula candidates).
-- The targeted API/migration integration tests collect successfully (**7 collected**) with test settings, but were not executed: this sandbox has no configured PostgreSQL test-role URLs and no local PostgreSQL/Docker runtime. PostgreSQL migration, API, tenant-isolation, RLS/grant, and append-only behavior therefore remain unverified locally pending the PostgreSQL 18.7 CI run.
+- The isolated unit suite passes (**105 passed**). `compileall` and `git diff --check` pass.
+- Against an ephemeral, role-separated PostgreSQL **18.6** instance, `alembic upgrade head` and `alembic check` pass with no model drift. The full PostgreSQL-backed test suite passes (**192 passed**), including M15 API, authorization/tenant isolation, RLS/grants/append-only behavior, and migration downgrade/re-upgrade and rejected-role safety.
+- Alembic reports `0012_financial_calculations` as the sole head. OpenAPI generation exposes all **four M15 route paths** among 89 paths; the catalog contains five entries (one executable mechanical subtotal and four deferred formula candidates).
+- The first PR CI run on the previous head, using PostgreSQL 18.7, caught an overlong Alembic revision ID and strict JSON wire parsing of UUID/list fields. Both issues are corrected; the PostgreSQL 18.7 workflow must pass on the updated PR head before merge.
 
 Software tests can establish implementation behavior only. They do not demonstrate accounting correctness, source authority, independent-control governance, owner approval, production readiness, or permission to process customer data. Until those gates are separately decided, M15 remains a conditional prototype with one mechanical formula.

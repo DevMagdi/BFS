@@ -37,6 +37,7 @@ from businessflow.financial_calculations.contracts import (
     FinanceSourceIntakeReference,
     FinancialAmountObservation,
     FinancialCalculationInputSnapshot,
+    FinancialCalculationRequest,
     FinancialReconciliationGroupReference,
 )
 from businessflow.financial_calculations.service import ensure_financial_calculations_enabled
@@ -428,6 +429,18 @@ def test_duplicate_conflicting_period_and_currency_evidence_cannot_be_combined()
     )
     assert incompatible.output is None
     assert "incompatible_period_or_currency_evidence" in incompatible.reason_codes
+
+
+def test_financial_calculation_request_accepts_json_wire_uuid_and_array() -> None:
+    request = FinancialCalculationRequest.model_validate(
+        {
+            "snapshot_id": str(SNAPSHOT_ID),
+            "reconciliation_group_hash": GROUP_HASH,
+            "observations": [{"source_row_number": 2, "amount_text": "1.25"}],
+        }
+    )
+    assert request.snapshot_id == SNAPSHOT_ID
+    assert request.observations[0].source_row_number == 2
 
 
 def test_group_size_boundary_and_input_contract_reject_unbounded_requests() -> None:

@@ -156,10 +156,12 @@ class FinancialAmountRequestRow(ContractModel):
 
 class FinancialCalculationRequest(ContractModel):
     schema_version: Literal[1] = 1
-    snapshot_id: UUID
+    snapshot_id: UUID = Field(strict=False)
     reconciliation_group_hash: HashText
     observations: tuple[FinancialAmountRequestRow, ...] = Field(
-        default_factory=tuple, max_length=MAX_FINANCIAL_CALCULATION_INPUTS
+        default_factory=tuple,
+        max_length=MAX_FINANCIAL_CALCULATION_INPUTS,
+        strict=False,
     )
 
 

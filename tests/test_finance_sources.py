@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from threading import Barrier
 from uuid import UUID, uuid4
 
+import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import event, text
 
@@ -31,11 +31,7 @@ def _base(tenant_id: str) -> str:
     return f"/api/v1/tenants/{tenant_id}/finance-sources"
 
 
-def _upload(
-    client,
-    tenant_id: str,
-    headers: dict[str, str],
-    idempotency_key: str,
+def _upload_parts(
     *,
     amount: str = "10.10",
     source_as_of_at: str | None = None,
@@ -76,10 +72,30 @@ def _upload(
         f"record-001,opaque-group-a,2026-11-01,2026-11-30,{amount},USD{extra_value}\n"
         f"record-002,opaque-group-a,2026-11-01,2026-11-30,0.02,USD{extra_value}\n"
     ).encode()
+    return {"metadata_json": json.dumps(metadata)}, {
+        "file": ("finance-export.csv", content, "text/csv")
+    }
+
+
+def _upload(
+    client,
+    tenant_id: str,
+    headers: dict[str, str],
+    idempotency_key: str,
+    *,
+    amount: str = "10.10",
+    source_as_of_at: str | None = None,
+    ignored_rationale: str | None = None,
+):
+    data, files = _upload_parts(
+        amount=amount,
+        source_as_of_at=source_as_of_at,
+        ignored_rationale=ignored_rationale,
+    )
     return client.post(
         f"{_base(tenant_id)}/intakes",
-        data={"metadata_json": json.dumps(metadata)},
-        files={"file": ("finance-export.csv", content, "text/csv")},
+        data=data,
+        files=files,
         headers={**headers, "Idempotency-Key": idempotency_key},
     )
 
@@ -463,18 +479,26 @@ def test_concurrent_identical_finance_source_retries_are_idempotent(
     event.listen(app.state.engine, "before_cursor_execute", synchronize_at_idempotency_lock)
     try:
 
-        def submit_identical_request():
-            return _upload(
-                client,
-                tenant["id"],
-                headers,
-                idempotency_key,
-                source_as_of_at=source_as_of_at,
-            )
+        async def submit_identical_requests():
+            transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as async_client:
+                request_barrier = asyncio.Barrier(2)
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(submit_identical_request) for _ in range(2)]
-            responses = [future.result(timeout=30) for future in futures]
+                async def submit_one_request():
+                    await request_barrier.wait()
+                    data, files = _upload_parts(source_as_of_at=source_as_of_at)
+                    return await async_client.post(
+                        f"{_base(tenant['id'])}/intakes",
+                        data=data,
+                        files=files,
+                        headers={**headers, "Idempotency-Key": idempotency_key},
+                    )
+
+                return await asyncio.gather(submit_one_request(), submit_one_request())
+
+        responses = asyncio.run(submit_identical_requests())
     finally:
         event.remove(app.state.engine, "before_cursor_execute", synchronize_at_idempotency_lock)
         lock_barrier.abort()

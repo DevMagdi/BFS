@@ -483,10 +483,13 @@ def test_concurrent_identical_finance_source_retries_are_idempotent(
         event.remove(app.state.engine, "before_cursor_execute", synchronize_at_idempotency_lock)
         lock_barrier.abort()
 
-    assert [response.status_code for response in responses] == [201, 201], (
-        f"responses={[response.text for response in responses]!r}; "
-        f"lock barrier passes={barrier_passes!r}; logs={caplog.text!r}"
-    )
+    response_statuses = [response.status_code for response in responses]
+    if response_statuses != [201, 201]:
+        raise AssertionError(
+            f"Concurrent retries returned {response_statuses!r}; "
+            f"responses={[response.text for response in responses]!r}; "
+            f"lock barrier passes={barrier_passes!r}; logs={caplog.text!r}"
+        )
     payloads = [response.json() for response in responses]
     assert len({payload["id"] for payload in payloads}) == 1
     assert len({payload["input_hash"] for payload in payloads}) == 1

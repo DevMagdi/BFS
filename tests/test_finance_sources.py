@@ -465,12 +465,31 @@ def test_concurrent_identical_finance_source_retries_are_idempotent(client, app,
         key=f"m14-race-tenant-{uuid4().hex}",
     )
     idempotency_key = f"m14-concurrent-{uuid4().hex}"
+    idempotency_key_hash = hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
+    tenant_uuid = UUID(tenant["id"])
+    with admin_engine.connect() as connection:
+        company_id = connection.scalar(
+            text("SELECT primary_company_id FROM tenants WHERE id = :tenant_id"),
+            {"tenant_id": tenant_uuid},
+        )
+    assert company_id is not None
+    idempotency_lock_material = b"\0".join(
+        (
+            b"finance-source-idempotency",
+            tenant_uuid.bytes,
+            company_id.bytes,
+            idempotency_key_hash.encode("utf-8"),
+        )
+    )
+    expected_idempotency_lock_key = int.from_bytes(
+        hashlib.sha256(idempotency_lock_material).digest()[:8], "big", signed=True
+    )
     source_as_of_at = datetime.now(UTC).isoformat()
-    advisory_lock_calls = []
+    advisory_lock_keys = []
 
-    def observe_idempotency_lock(_conn, _cursor, statement, _parameters, _context, _many):
+    def observe_idempotency_lock(_conn, _cursor, statement, parameters, _context, _many):
         if "pg_advisory_xact_lock" in statement.lower():
-            advisory_lock_calls.append(statement)
+            advisory_lock_keys.append(parameters["lock_key"])
 
     event.listen(app.state.engine, "before_cursor_execute", observe_idempotency_lock)
     try:
@@ -503,9 +522,9 @@ def test_concurrent_identical_finance_source_retries_are_idempotent(client, app,
         raise AssertionError(
             f"Concurrent retries returned {response_statuses!r}; "
             f"responses={[response.text for response in responses]!r}; "
-            f"advisory-lock calls={len(advisory_lock_calls)}"
+            f"idempotency-lock calls={advisory_lock_keys.count(expected_idempotency_lock_key)}"
         )
-    assert len(advisory_lock_calls) == 2
+    assert advisory_lock_keys.count(expected_idempotency_lock_key) == 2
     payloads = [response.json() for response in responses]
     assert len({payload["id"] for payload in payloads}) == 1
     assert len({payload["input_hash"] for payload in payloads}) == 1
@@ -515,8 +534,6 @@ def test_concurrent_identical_finance_source_retries_are_idempotent(client, app,
     replayed_result = {key: value for key, value in payloads[1].items() if key != "replayed"}
     assert first_result == replayed_result
 
-    idempotency_key_hash = hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
-    tenant_uuid = UUID(tenant["id"])
     intake_id = UUID(payloads[0]["id"])
     with admin_engine.connect() as connection:
         intakes = (

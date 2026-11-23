@@ -192,6 +192,21 @@ class FinanceSourceContractPage(StrictModel):
     items: list[FinanceSourceContractResponse]
 
 
+class FinanceSourceGovernanceStatus(StrictModel):
+    finance_source_identity: Literal["caller_asserted_not_independently_authenticated"]
+    control_source_identity: Literal["caller_asserted_not_independently_authenticated"]
+    control_origin: Literal["caller_supplied"]
+    control_independence: Literal["not_independently_verified"]
+    finance_owner_approval: Literal["not_established"]
+    authoritative_source_access_approval: Literal["not_established"]
+    freshness_policy_approval: Literal["not_established"]
+    correction_policy_approval: Literal["not_established"]
+    retention_policy_approval: Literal["not_established"]
+    accounting_correctness: Literal["not_established"]
+    production_readiness: Literal["not_established"]
+    production_customer_data_authorization: Literal["not_authorized"]
+
+
 class FinanceSourceIntakeResponse(StrictModel):
     id: UUID
     tenant_id: UUID
@@ -213,7 +228,21 @@ class FinanceSourceIntakeResponse(StrictModel):
         "fresh", "stale", "policy_missing", "source_as_of_missing", "future_as_of"
     ]
     quality_status: Literal["passed", "warning", "failed"]
-    reconciliation_status: Literal["passed", "failed", "not_verifiable"]
+    reconciliation_status: Literal["passed", "failed", "not_verifiable"] = Field(
+        description=(
+            "Aggregate arithmetic comparison state only. A passed/failed status does not "
+            "establish source authority, control independence, finance approval, or "
+            "accounting correctness."
+        )
+    )
+    reconciliation_method: Literal["caller_supplied_decimal_arithmetic_only"] = Field(
+        description=(
+            "Compares supplied Decimal values only; it does not authenticate either source, "
+            "verify control independence, establish finance approval, or determine accounting "
+            "correctness."
+        )
+    )
+    governance_status: FinanceSourceGovernanceStatus
     total_rows: int
     valid_rows: int
     invalid_rows: int

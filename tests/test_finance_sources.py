@@ -4,6 +4,10 @@ import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from fastapi.testclient import TestClient
+
+from businessflow.config import Settings
+from businessflow.main import create_app
 from businessflow.metrics.snapshot import content_hash
 from tests.helpers import auth_headers, create_member, create_tenant, register_user
 
@@ -74,7 +78,8 @@ def _upload(
     )
 
 
-def test_finance_source_api_contract_intake_mapping_and_idempotent_readback(client):
+def test_finance_source_api_contract_intake_mapping_and_idempotent_readback(client, settings):
+    assert settings.finance_source_intake_enabled is True
     owner = register_user(client, "m14-api-owner@example.com")
     headers = auth_headers(owner)
     tenant = create_tenant(
@@ -115,6 +120,21 @@ def test_finance_source_api_contract_intake_mapping_and_idempotent_readback(clie
     assert intake["freshness_status"] == "fresh"
     assert intake["quality_status"] == "passed"
     assert intake["reconciliation_status"] == "passed"
+    assert intake["reconciliation_method"] == "caller_supplied_decimal_arithmetic_only"
+    assert intake["governance_status"] == {
+        "finance_source_identity": "caller_asserted_not_independently_authenticated",
+        "control_source_identity": "caller_asserted_not_independently_authenticated",
+        "control_origin": "caller_supplied",
+        "control_independence": "not_independently_verified",
+        "finance_owner_approval": "not_established",
+        "authoritative_source_access_approval": "not_established",
+        "freshness_policy_approval": "not_established",
+        "correction_policy_approval": "not_established",
+        "retention_policy_approval": "not_established",
+        "accounting_correctness": "not_established",
+        "production_readiness": "not_established",
+        "production_customer_data_authorization": "not_authorized",
+    }
     assert intake["total_rows"] == 2
     assert intake["valid_rows"] == 2
     assert intake["invalid_rows"] == 0
@@ -122,9 +142,13 @@ def test_finance_source_api_contract_intake_mapping_and_idempotent_readback(clie
     assert intake["input_hash"] == content_hash(intake["input_snapshot"])
     assert intake["result_hash"] == content_hash(intake["result_snapshot"])
     assert intake["input_snapshot"]["mapping"]["field_mapping"] == FIELD_MAPPING
-    assert intake["result_snapshot"]["reconciliation_groups"][0]["actual_amount"] == "10.12"
-    assert intake["result_snapshot"]["reconciliation_groups"][0]["state"] == "passed"
-    assert "asserted by the caller" in " ".join(intake["result_snapshot"]["limitations"])
+    comparison = intake["result_snapshot"]["reconciliation_groups"][0]
+    assert comparison["actual_amount"] == "10.12"
+    assert comparison["state"] == "passed"
+    assert comparison["comparison_method"] == "caller_supplied_decimal_arithmetic_only"
+    assert comparison["control_origin"] == "caller_supplied"
+    assert intake["result_snapshot"]["governance_status"] == intake["governance_status"]
+    assert "caller-supplied control amounts" in " ".join(intake["result_snapshot"]["limitations"])
 
     replay = _upload(
         client,
@@ -163,6 +187,83 @@ def test_finance_source_api_contract_intake_mapping_and_idempotent_readback(clie
     assert [item["source_row_number"] for item in row_evidence.json()["items"]] == [2, 3]
     assert all(item["row_status"] == "valid" for item in row_evidence.json()["items"])
     assert all(len(item["source_row_hash"]) == 64 for item in row_evidence.json()["items"])
+
+
+def test_finance_source_api_is_default_disabled_for_every_route(client, settings, monkeypatch):
+    monkeypatch.delenv("FINANCE_SOURCE_INTAKE_ENABLED", raising=False)
+    disabled_settings = Settings(
+        _env_file=None,
+        app_secret_key=settings.app_secret_key.get_secret_value(),
+        app_env="test",
+        database_url=settings.database_url,
+    )
+    assert disabled_settings.finance_source_intake_enabled is False
+
+    owner = register_user(client, "m14-default-closed-owner@example.com")
+    owner_headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="M14 Default Closed Tenant",
+        company_name="M14 Default Closed Company",
+        key="m14-default-closed-tenant-0001",
+    )
+    created = _upload(client, tenant["id"], owner_headers, f"m14-enabled-fixture-{uuid4().hex}")
+    assert created.status_code == 201, created.text
+    intake_id = created.json()["id"]
+    base = _base(tenant["id"])
+
+    with TestClient(
+        create_app(disabled_settings), raise_server_exceptions=False
+    ) as disabled_client:
+        responses = [
+            disabled_client.get(f"{base}/contracts", headers=owner_headers),
+            disabled_client.get(f"{base}/intakes", headers=owner_headers),
+            disabled_client.get(f"{base}/intakes/{intake_id}", headers=owner_headers),
+            disabled_client.get(f"{base}/intakes/{intake_id}/rows", headers=owner_headers),
+            _upload(
+                disabled_client,
+                tenant["id"],
+                owner_headers,
+                f"m14-disabled-write-{uuid4().hex}",
+            ),
+        ]
+        assert all(response.status_code == 503 for response in responses)
+        assert all(
+            response.json()["error"]["code"] == "finance_source_intake_disabled"
+            for response in responses
+        )
+        assert disabled_client.get("/api/v1/auth/me", headers=owner_headers).status_code == 200
+
+
+def test_failed_arithmetic_comparison_remains_caller_supplied_and_unapproved(client):
+    owner = register_user(client, "m14-arithmetic-owner@example.com")
+    tenant = create_tenant(
+        client,
+        owner,
+        name="M14 Arithmetic Tenant",
+        company_name="M14 Arithmetic Company",
+        key="m14-arithmetic-tenant-0001",
+    )
+    response = _upload(
+        client,
+        tenant["id"],
+        auth_headers(owner),
+        f"m14-arithmetic-{uuid4().hex}",
+        amount="10.11",
+    )
+    assert response.status_code == 201, response.text
+    intake = response.json()
+    assert intake["reconciliation_status"] == "failed"
+    comparison = intake["result_snapshot"]["reconciliation_groups"][0]
+    assert comparison["state"] == "failed"
+    assert comparison["actual_amount"] == "10.13"
+    assert comparison["comparison_method"] == "caller_supplied_decimal_arithmetic_only"
+    assert comparison["control_origin"] == "caller_supplied"
+    assert intake["governance_status"]["control_independence"] == "not_independently_verified"
+    assert intake["governance_status"]["finance_owner_approval"] == "not_established"
+    assert intake["governance_status"]["accounting_correctness"] == "not_established"
+    assert intake["governance_status"]["production_customer_data_authorization"] == "not_authorized"
 
 
 def test_mapping_versions_reuse_identical_mappings_and_bind_ignore_rationales(client):

@@ -19,6 +19,7 @@ from businessflow.finance_sources.schemas import (
 )
 from businessflow.finance_sources.service import (
     create_finance_source_intake,
+    ensure_finance_source_intake_enabled,
     get_finance_source_contracts,
     get_finance_source_intake,
     list_finance_source_intakes,
@@ -26,7 +27,18 @@ from businessflow.finance_sources.service import (
 )
 from businessflow.models import UserAccount
 
-router = APIRouter(prefix="/tenants/{tenant_id}/finance-sources", tags=["finance source intake"])
+
+def require_finance_source_intake_enabled(
+    settings: Settings = Depends(get_settings),
+) -> None:
+    ensure_finance_source_intake_enabled(settings)
+
+
+router = APIRouter(
+    prefix="/tenants/{tenant_id}/finance-sources",
+    tags=["finance source intake"],
+    dependencies=[Depends(require_finance_source_intake_enabled)],
+)
 PageLimit = Annotated[int, Query(ge=1, le=100)]
 PageOffset = Annotated[int, Query(ge=0, le=100_000)]
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128)]
@@ -38,8 +50,11 @@ def read_finance_source_contracts(
     tenant_id: UUID,
     user: UserAccount = Depends(get_current_user),
     session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> FinanceSourceContractPage:
-    return FinanceSourceContractPage(items=get_finance_source_contracts(session, user, tenant_id))
+    return FinanceSourceContractPage(
+        items=get_finance_source_contracts(session, user, tenant_id, settings=settings)
+    )
 
 
 @router.post(
@@ -48,9 +63,12 @@ def read_finance_source_contracts(
     status_code=201,
     summary="Profile and compare one finance-source CSV",
     description=(
-        "Runs the versioned finance source contract, explicit mapping, profiling, row-quality "
-        "checks, and caller-supplied control comparison in one request. It does not create "
-        "canonical finance facts or establish accounting correctness."
+        "Disabled by default; an authorized deployment operator must explicitly set "
+        "FINANCE_SOURCE_INTAKE_ENABLED=true for a controlled test deployment. Runs the versioned "
+        "finance source contract, explicit mapping, profiling, row-quality checks, and a "
+        "caller-supplied Decimal comparison only. It does not authenticate source identity, "
+        "verify control independence, establish finance-owner approval, or establish accounting "
+        "correctness."
     ),
 )
 def post_finance_source_intake(
@@ -92,8 +110,11 @@ def read_finance_source_intakes(
     offset: PageOffset = 0,
     user: UserAccount = Depends(get_current_user),
     session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> FinanceSourceIntakePage:
-    return list_finance_source_intakes(session, user, tenant_id, limit=limit, offset=offset)
+    return list_finance_source_intakes(
+        session, user, tenant_id, limit=limit, offset=offset, settings=settings
+    )
 
 
 @router.get("/intakes/{intake_id}", response_model=FinanceSourceIntakeResponse)
@@ -102,8 +123,9 @@ def read_finance_source_intake(
     intake_id: UUID,
     user: UserAccount = Depends(get_current_user),
     session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> FinanceSourceIntakeResponse:
-    return get_finance_source_intake(session, user, tenant_id, intake_id)
+    return get_finance_source_intake(session, user, tenant_id, intake_id, settings=settings)
 
 
 @router.get("/intakes/{intake_id}/rows", response_model=FinanceSourceRowEvidencePage)
@@ -114,6 +136,7 @@ def read_finance_source_row_evidence(
     offset: PageOffset = 0,
     user: UserAccount = Depends(get_current_user),
     session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> FinanceSourceRowEvidencePage:
     return list_finance_source_row_evidence(
         session,
@@ -122,4 +145,5 @@ def read_finance_source_row_evidence(
         intake_id,
         limit=limit,
         offset=offset,
+        settings=settings,
     )

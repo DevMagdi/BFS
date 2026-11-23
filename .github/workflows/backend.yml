@@ -17,7 +17,7 @@ jobs:
     # These test-only credentials are scoped to this disposable service/job.
     services:
       postgres:
-        image: postgres:18-alpine
+        image: postgres:18.7-alpine
         env:
           POSTGRES_USER: bf_bootstrap
           POSTGRES_PASSWORD: ci-bootstrap-password
@@ -99,7 +99,7 @@ jobs:
               cursor.execute("GRANT USAGE ON SCHEMA public TO bf_runtime")
           PY
 
-      - name: Verify PostgreSQL 18 service version
+      - name: Verify PostgreSQL 18.7 service version
         id: verify_postgresql
         run: |
           python - <<'PY'
@@ -118,8 +118,8 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"server_version={server_version}\n")
               output.write(f"server_version_num={version_num}\n")
-          if not 180000 <= version_num < 190000:
-              raise SystemExit("CI integration tests must run against PostgreSQL 18")
+          if version_num != 180007:
+              raise SystemExit("CI integration tests must run against PostgreSQL 18.7")
           PY
 
       - name: Check formatting and lint (PostgreSQL ${{ steps.verify_postgresql.outputs.server_version }})

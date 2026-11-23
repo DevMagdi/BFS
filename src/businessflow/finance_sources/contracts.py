@@ -6,6 +6,21 @@ FINANCE_SOURCE_CONTRACT_KEY = "businessflow.finance.source-observations"
 FINANCE_SOURCE_CONTRACT_VERSION = "1.0.0"
 FINANCE_SOURCE_SNAPSHOT_SCHEMA_VERSION = 1
 FINANCE_SOURCE_ENGINE_VERSION = "businessflow.finance-source-intake.v1"
+FINANCE_SOURCE_RECONCILIATION_METHOD = "caller_supplied_decimal_arithmetic_only"
+FINANCE_SOURCE_GOVERNANCE_STATUS: dict[str, str] = {
+    "finance_source_identity": "caller_asserted_not_independently_authenticated",
+    "control_source_identity": "caller_asserted_not_independently_authenticated",
+    "control_origin": "caller_supplied",
+    "control_independence": "not_independently_verified",
+    "finance_owner_approval": "not_established",
+    "authoritative_source_access_approval": "not_established",
+    "freshness_policy_approval": "not_established",
+    "correction_policy_approval": "not_established",
+    "retention_policy_approval": "not_established",
+    "accounting_correctness": "not_established",
+    "production_readiness": "not_established",
+    "production_customer_data_authorization": "not_authorized",
+}
 
 # This is a deliberately semantic-light transport contract. It does not define an account chart,
 # accounting category, recognition rule, fiscal calendar, or canonical finance fact.

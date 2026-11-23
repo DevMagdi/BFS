@@ -45,6 +45,8 @@ from businessflow.finance_sources.contracts import (
     FINANCE_SOURCE_CONTRACT_KEY,
     FINANCE_SOURCE_CONTRACT_VERSION,
     FINANCE_SOURCE_ENGINE_VERSION,
+    FINANCE_SOURCE_GOVERNANCE_STATUS,
+    FINANCE_SOURCE_RECONCILIATION_METHOD,
     FINANCE_SOURCE_SNAPSHOT_SCHEMA_VERSION,
 )
 from businessflow.finance_sources.models import (
@@ -58,6 +60,7 @@ from businessflow.finance_sources.schemas import (
     FinanceField,
     FinanceReconciliationControl,
     FinanceSourceContractResponse,
+    FinanceSourceGovernanceStatus,
     FinanceSourceIntakeMetadata,
     FinanceSourceIntakePage,
     FinanceSourceIntakeResponse,
@@ -75,6 +78,19 @@ RECONCILIATION_PRECISION = 256
 
 GroupKey = tuple[str, date, date, str]
 RowStatus = Literal["valid", "duplicate", "invalid"]
+
+
+def ensure_finance_source_intake_enabled(settings: Settings | None) -> None:
+    """Fail closed unless explicitly enabled for a non-production process."""
+    if (
+        getattr(settings, "finance_source_intake_enabled", None) is not True
+        or getattr(settings, "app_env", None) == "production"
+    ):
+        raise ApiError(
+            503,
+            "finance_source_intake_disabled",
+            "Finance source intake is disabled by deployment configuration.",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,7 +157,10 @@ def get_finance_source_contracts(
     session: Session,
     user: UserAccount,
     tenant_id: UUID,
+    *,
+    settings: Settings,
 ) -> list[FinanceSourceContractResponse]:
+    ensure_finance_source_intake_enabled(settings)
     require_company_context_access(session, user, tenant_id, "finance:read")
     _published_contract(session)
     rows = session.scalars(
@@ -609,6 +628,8 @@ def _build_reconciliation_results(
             not_verifiable_count += 1
         result: dict[str, object] = {
             "control_id": control.control_id,
+            "comparison_method": FINANCE_SOURCE_RECONCILIATION_METHOD,
+            "control_origin": "caller_supplied",
             "group_hash": group_hash,
             "period_start": control.period_start.isoformat(),
             "period_end": control.period_end.isoformat(),
@@ -634,6 +655,8 @@ def _build_reconciliation_results(
         control_results.append(
             {
                 "control_id": None,
+                "comparison_method": "not_performed_no_caller_control",
+                "control_origin": "not_supplied",
                 "group_hash": _group_key_hash(metadata.source_key, group_key),
                 "period_start": group_key[1].isoformat(),
                 "period_end": group_key[2].isoformat(),
@@ -694,6 +717,45 @@ def _input_control(
     source["tenant_id"] = str(tenant_id)
     source["company_id"] = str(company_id)
     return payload
+
+
+def _reconciliation_semantics_match(result_snapshot: dict[str, object]) -> bool:
+    method_present = "reconciliation_method" in result_snapshot
+    governance_present = "governance_status" in result_snapshot
+    if method_present != governance_present:
+        return False
+    groups = result_snapshot.get("reconciliation_groups")
+    if not isinstance(groups, list):
+        return False
+    if not method_present:
+        # Preserve only the complete legacy shape: old snapshots have neither the top-level
+        # disclosures nor per-group method/origin fields.
+        return all(
+            isinstance(group, dict)
+            and "comparison_method" not in group
+            and "control_origin" not in group
+            for group in groups
+        )
+    if (
+        result_snapshot.get("reconciliation_method") != FINANCE_SOURCE_RECONCILIATION_METHOD
+        or result_snapshot.get("governance_status") != FINANCE_SOURCE_GOVERNANCE_STATUS
+    ):
+        return False
+    for group in groups:
+        if not isinstance(group, dict):
+            return False
+        if group.get("control_id") is None:
+            expected_method = "not_performed_no_caller_control"
+            expected_origin = "not_supplied"
+        else:
+            expected_method = FINANCE_SOURCE_RECONCILIATION_METHOD
+            expected_origin = "caller_supplied"
+        if (
+            group.get("comparison_method") != expected_method
+            or group.get("control_origin") != expected_origin
+        ):
+            return False
+    return True
 
 
 def _verify_snapshot(row: FinanceSourceIntake) -> None:
@@ -778,6 +840,7 @@ def _verify_snapshot(row: FinanceSourceIntake) -> None:
         and counts.get("valid_rows") == row.valid_rows
         and counts.get("invalid_rows") == row.invalid_rows
         and counts.get("duplicate_rows") == row.duplicate_rows
+        and _reconciliation_semantics_match(row.result_snapshot)
         and row.result_snapshot.get("input_hash") == row.input_hash
         and row.result_snapshot.get("quality_status") == row.quality_status
         and row.result_snapshot.get("freshness_status") == row.freshness_status
@@ -827,6 +890,10 @@ def _intake_response(
         reconciliation_status=cast(
             Literal["passed", "failed", "not_verifiable"], row.reconciliation_status
         ),
+        reconciliation_method=FINANCE_SOURCE_RECONCILIATION_METHOD,
+        governance_status=FinanceSourceGovernanceStatus.model_validate(
+            FINANCE_SOURCE_GOVERNANCE_STATUS
+        ),
         total_rows=row.total_rows,
         valid_rows=row.valid_rows,
         invalid_rows=row.invalid_rows,
@@ -868,6 +935,7 @@ def create_finance_source_intake(
     now: datetime,
     settings: Settings,
 ) -> FinanceSourceIntakeResponse:
+    ensure_finance_source_intake_enabled(settings)
     access = require_company_context_access(
         session, user, tenant_id, "finance:write", request_id=request_id
     )
@@ -1092,6 +1160,8 @@ def create_finance_source_intake(
         "engine_version": FINANCE_SOURCE_ENGINE_VERSION,
         "intake_id": str(intake_id),
         "input_hash": input_hash,
+        "reconciliation_method": FINANCE_SOURCE_RECONCILIATION_METHOD,
+        "governance_status": FINANCE_SOURCE_GOVERNANCE_STATUS,
         "quality_status": quality_status,
         "freshness_status": freshness_status,
         "freshness_evaluated_at": _canonical_datetime(now),
@@ -1110,12 +1180,24 @@ def create_finance_source_intake(
         "reconciliation_groups": reconciliation_results,
         "limitations": [
             (
-                "A passed comparison means only that the supplied exact Decimal values are "
-                "within caller-supplied tolerances."
+                "Passed and failed are arithmetic outcomes of exact Decimal comparisons against "
+                "caller-supplied control amounts and tolerances only."
             ),
             (
-                "Control-source distinctness is asserted by the caller and is not independently "
-                "authenticated."
+                "The finance-source and control-source identities are caller assertions, not "
+                "independently authenticated."
+            ),
+            (
+                "Control independence is not independently verified; no finance-owner approval "
+                "is established."
+            ),
+            (
+                "Accounting correctness and production readiness are not established; "
+                "production/customer data is not authorized."
+            ),
+            (
+                "Correction and retention policies are not established; append-only evidence "
+                "has no approved deletion schedule."
             ),
             (
                 "No currency conversion, rounding, account classification, causal explanation, "
@@ -1235,7 +1317,10 @@ def get_finance_source_intake(
     user: UserAccount,
     tenant_id: UUID,
     intake_id: UUID,
+    *,
+    settings: Settings,
 ) -> FinanceSourceIntakeResponse:
+    ensure_finance_source_intake_enabled(settings)
     access = require_company_context_access(session, user, tenant_id, "finance:read")
     row = _get_intake(
         session,
@@ -1253,7 +1338,9 @@ def list_finance_source_intakes(
     *,
     limit: int,
     offset: int,
+    settings: Settings,
 ) -> FinanceSourceIntakePage:
+    ensure_finance_source_intake_enabled(settings)
     if not 1 <= limit <= MAX_PAGE_SIZE or not 0 <= offset <= MAX_PAGE_OFFSET:
         raise ApiError(422, "invalid_page", "The requested page is outside supported limits.")
     access = require_company_context_access(session, user, tenant_id, "finance:read")
@@ -1287,7 +1374,9 @@ def list_finance_source_row_evidence(
     *,
     limit: int,
     offset: int,
+    settings: Settings,
 ) -> FinanceSourceRowEvidencePage:
+    ensure_finance_source_intake_enabled(settings)
     if not 1 <= limit <= MAX_PAGE_SIZE or not 0 <= offset <= MAX_PAGE_OFFSET:
         raise ApiError(422, "invalid_page", "The requested page is outside supported limits.")
     access = require_company_context_access(session, user, tenant_id, "finance:read")

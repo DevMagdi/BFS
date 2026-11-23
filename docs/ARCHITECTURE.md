@@ -1,6 +1,6 @@
 # BusinessFlow Architecture Overview
 
-- **Status:** Current code facts, the historical M9 target direction, the separately scoped M10 synthetic demo, and the bounded M14 finance-source intake are deliberately separated. M10 remains synthetic-only; M14's unresolved finance-owner/source/correction/retention gates do not authorize production accounting-data processing.
+- **Status:** Current code facts, the historical M9 target direction, the separately scoped M10 synthetic demo, and the bounded M14 finance-source intake are deliberately separated. M10 remains synthetic-only; M14's entire finance-source API is disabled by default, and its unresolved finance-owner/source/access/correction/retention/independent-control gates do not authorize production accounting-data processing.
 - **Product direction:** Company-wide Business Intelligence & Decision Platform; see [`product/PRODUCT_VISION.md`](product/PRODUCT_VISION.md).
 - **Detailed assessment:** [`architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md`](architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md) and [`architecture/TARGET_DOMAIN_ARCHITECTURE.md`](architecture/TARGET_DOMAIN_ARCHITECTURE.md).
 

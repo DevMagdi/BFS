@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from businessflow.config import Settings
 from businessflow.data_imports.parsers import ParsedRow, ParsedSheet
 from businessflow.errors import ApiError
 from businessflow.finance_sources.contracts import (
@@ -18,6 +19,8 @@ from businessflow.finance_sources.contracts import (
     FINANCE_SOURCE_CONTRACT_HASH,
     FINANCE_SOURCE_CONTRACT_KEY,
     FINANCE_SOURCE_CONTRACT_VERSION,
+    FINANCE_SOURCE_GOVERNANCE_STATUS,
+    FINANCE_SOURCE_RECONCILIATION_METHOD,
 )
 from businessflow.finance_sources.schemas import FinanceSourceIntakeMetadata
 from businessflow.finance_sources.service import (
@@ -29,6 +32,7 @@ from businessflow.finance_sources.service import (
     _validate_rows,
     _verify_mapping_record,
     _verify_snapshot,
+    ensure_finance_source_intake_enabled,
 )
 from businessflow.metrics.snapshot import content_hash
 
@@ -42,6 +46,44 @@ FIELD_MAPPING = {
     "amount": "amount",
     "currency": "currency",
 }
+
+
+def test_finance_source_activation_defaults_closed_and_fails_closed_on_bad_config(monkeypatch):
+    monkeypatch.delenv("FINANCE_SOURCE_INTAKE_ENABLED", raising=False)
+    settings_args = {
+        "_env_file": None,
+        "app_secret_key": "test-only-key-" + "x" * 48,
+        "app_env": "test",
+        "database_url": "postgresql+psycopg://bf_runtime:test-password@localhost/businessflow_test",
+    }
+    disabled = Settings(**settings_args)
+    assert disabled.finance_source_intake_enabled is False
+    with pytest.raises(ApiError, match="disabled by deployment configuration"):
+        ensure_finance_source_intake_enabled(disabled)
+    with pytest.raises(ApiError, match="disabled by deployment configuration"):
+        ensure_finance_source_intake_enabled(None)
+
+    monkeypatch.setenv("FINANCE_SOURCE_INTAKE_ENABLED", "true")
+    enabled = Settings(**settings_args)
+    assert enabled.finance_source_intake_enabled is True
+    ensure_finance_source_intake_enabled(enabled)
+
+    monkeypatch.setenv("FINANCE_SOURCE_INTAKE_ENABLED", "not-a-boolean")
+    with pytest.raises(ValidationError):
+        Settings(**settings_args)
+
+
+def test_finance_source_intake_is_disabled_in_production_even_when_flag_is_true():
+    settings = Settings(
+        _env_file=None,
+        app_secret_key="production-only-key-" + "x" * 48,
+        app_env="production",
+        database_url="postgresql+psycopg://bf_runtime:test-password@localhost/businessflow_test",
+        finance_source_intake_enabled=True,
+    )
+    assert settings.finance_source_intake_enabled is True
+    with pytest.raises(ApiError, match="disabled by deployment configuration"):
+        ensure_finance_source_intake_enabled(settings)
 
 
 def _metadata(
@@ -183,6 +225,9 @@ def test_saved_snapshot_hashes_and_columns_are_bound_to_the_evidence():
         "engine_version": "businessflow.finance-source-intake.v1",
         "intake_id": str(intake_id),
         "input_hash": input_hash,
+        "reconciliation_method": FINANCE_SOURCE_RECONCILIATION_METHOD,
+        "governance_status": FINANCE_SOURCE_GOVERNANCE_STATUS,
+        "reconciliation_groups": [],
         "quality_status": "passed",
         "freshness_status": "fresh",
         "freshness_evaluated_at": created_at.isoformat(timespec="microseconds"),
@@ -226,10 +271,44 @@ def test_saved_snapshot_hashes_and_columns_are_bound_to_the_evidence():
     )
     _verify_snapshot(saved)
 
+    with_control = deepcopy(saved)
+    with_control.result_snapshot["reconciliation_groups"] = [
+        {
+            "control_id": "control-001",
+            "state": "passed",
+            "comparison_method": FINANCE_SOURCE_RECONCILIATION_METHOD,
+            "control_origin": "caller_supplied",
+        }
+    ]
+    with_control.result_hash = content_hash(with_control.result_snapshot)
+    _verify_snapshot(with_control)
+
+    stripped_semantics = deepcopy(with_control)
+    stripped_semantics.result_snapshot["reconciliation_groups"][0].pop("comparison_method")
+    stripped_semantics.result_snapshot["reconciliation_groups"][0].pop("control_origin")
+    stripped_semantics.result_hash = content_hash(stripped_semantics.result_snapshot)
+    with pytest.raises(ApiError, match="could not be verified"):
+        _verify_snapshot(stripped_semantics)
+
+    legacy_snapshot = deepcopy(with_control)
+    legacy_snapshot.result_snapshot.pop("reconciliation_method")
+    legacy_snapshot.result_snapshot.pop("governance_status")
+    legacy_snapshot.result_snapshot["reconciliation_groups"] = [
+        {"control_id": "control-001", "state": "passed"}
+    ]
+    legacy_snapshot.result_hash = content_hash(legacy_snapshot.result_snapshot)
+    _verify_snapshot(legacy_snapshot)
+
     tampered = deepcopy(saved)
     tampered.input_snapshot["mapping"]["ignored_columns"][0]["rationale"] = "Tampered rationale."
     tampered.input_hash = content_hash(tampered.input_snapshot)
     tampered.result_snapshot["input_hash"] = tampered.input_hash
+    tampered.result_hash = content_hash(tampered.result_snapshot)
+    with pytest.raises(ApiError, match="could not be verified"):
+        _verify_snapshot(tampered)
+
+    tampered = deepcopy(saved)
+    tampered.result_snapshot["governance_status"]["accounting_correctness"] = "approved"
     tampered.result_hash = content_hash(tampered.result_snapshot)
     with pytest.raises(ApiError, match="could not be verified"):
         _verify_snapshot(tampered)
@@ -275,6 +354,10 @@ def test_metadata_requires_complete_explicit_mapping_controls_and_plain_decimal_
     incomplete = {**data, "field_mapping": {"amount": "amount"}}
     with pytest.raises(ValidationError):
         FinanceSourceIntakeMetadata.model_validate_json(json.dumps(incomplete))
+
+    caller_toggle = {**data, "finance_source_intake_enabled": True}
+    with pytest.raises(ValidationError):
+        FinanceSourceIntakeMetadata.model_validate_json(json.dumps(caller_toggle))
 
     with_whitespace_amount = json.loads(json.dumps(data))
     with_whitespace_amount["controls"][0]["expected_amount"] = " 10.12 "

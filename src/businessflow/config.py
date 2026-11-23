@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     )
     db_pool_size: int = Field(default=5, ge=1, le=50, validation_alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(default=5, ge=0, le=50, validation_alias="DB_MAX_OVERFLOW")
+    finance_source_intake_enabled: bool = Field(
+        default=False, validation_alias="FINANCE_SOURCE_INTAKE_ENABLED"
+    )
     import_max_file_bytes: int = Field(
         default=25 * 1024 * 1024,
         ge=1024,

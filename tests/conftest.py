@@ -85,6 +85,7 @@ def settings() -> Settings:
         login_failure_limit=5,
         login_ip_failure_limit=20,
         login_lockout_minutes=15,
+        finance_source_intake_enabled=True,
         db_pool_size=5,
         db_max_overflow=5,
     )

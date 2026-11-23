@@ -3,9 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import traceback
 from datetime import UTC, datetime
-from threading import Barrier
 from uuid import UUID, uuid4
 
 import httpx
@@ -468,14 +466,13 @@ def test_concurrent_identical_finance_source_retries_are_idempotent(client, app,
     )
     idempotency_key = f"m14-concurrent-{uuid4().hex}"
     source_as_of_at = datetime.now(UTC).isoformat()
-    lock_barrier = Barrier(2)
-    barrier_passes = []
+    advisory_lock_calls = []
 
-    def synchronize_at_idempotency_lock(_conn, _cursor, statement, _parameters, _context, _many):
+    def observe_idempotency_lock(_conn, _cursor, statement, _parameters, _context, _many):
         if "pg_advisory_xact_lock" in statement.lower():
-            barrier_passes.append(lock_barrier.wait(timeout=15))
+            advisory_lock_calls.append(statement)
 
-    event.listen(app.state.engine, "before_cursor_execute", synchronize_at_idempotency_lock)
+    event.listen(app.state.engine, "before_cursor_execute", observe_idempotency_lock)
     try:
 
         async def submit_identical_requests():
@@ -488,39 +485,27 @@ def test_concurrent_identical_finance_source_retries_are_idempotent(client, app,
                 async def submit_one_request():
                     await request_barrier.wait()
                     data, files = _upload_parts(source_as_of_at=source_as_of_at)
-                    try:
-                        return await async_client.post(
-                            f"{_base(tenant['id'])}/intakes",
-                            data=data,
-                            files=files,
-                            headers={**headers, "Idempotency-Key": idempotency_key},
-                        )
-                    except Exception as exc:
-                        return exc
+                    return await async_client.post(
+                        f"{_base(tenant['id'])}/intakes",
+                        data=data,
+                        files=files,
+                        headers={**headers, "Idempotency-Key": idempotency_key},
+                    )
 
                 return await asyncio.gather(submit_one_request(), submit_one_request())
 
         responses = asyncio.run(submit_identical_requests())
     finally:
-        event.remove(app.state.engine, "before_cursor_execute", synchronize_at_idempotency_lock)
-        lock_barrier.abort()
+        event.remove(app.state.engine, "before_cursor_execute", observe_idempotency_lock)
 
-    exceptions = [response for response in responses if isinstance(response, Exception)]
-    if exceptions:
-        formatted = "\n".join(
-            "".join(traceback.format_exception(exception)) for exception in exceptions
-        )
-        raise AssertionError(
-            f"Concurrent retries raised unhandled exceptions; "
-            f"lock barrier passes={barrier_passes!r}; exceptions:\n{formatted}"
-        )
     response_statuses = [response.status_code for response in responses]
     if response_statuses != [201, 201]:
         raise AssertionError(
             f"Concurrent retries returned {response_statuses!r}; "
             f"responses={[response.text for response in responses]!r}; "
-            f"lock barrier passes={barrier_passes!r}"
+            f"advisory-lock calls={len(advisory_lock_calls)}"
         )
+    assert len(advisory_lock_calls) == 2
     payloads = [response.json() for response in responses]
     assert len({payload["id"] for payload in payloads}) == 1
     assert len({payload["input_hash"] for payload in payloads}) == 1

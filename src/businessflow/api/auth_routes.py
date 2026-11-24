@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import JSONResponse
+from jwt import InvalidTokenError
 from sqlalchemy.orm import Session
 
 from businessflow.api.dependencies import get_current_user, get_session, get_settings
@@ -9,19 +10,13 @@ from businessflow.config import Settings
 from businessflow.models import UserAccount
 from businessflow.schemas import (
     LoginRequest,
+    LogoutRequest,
     RefreshRequest,
-    RegisterRequest,
     TokenResponse,
     UserResponse,
 )
-from businessflow.services.authentication import (
-    AuthFailure,
-    IssuedTokens,
-    login,
-    logout,
-    refresh,
-    register,
-)
+from businessflow.security.tokens import decode_access_token
+from businessflow.services.authentication import AuthFailure, IssuedTokens, login, logout, refresh
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -49,24 +44,6 @@ def _failure_response(request: Request, failure: AuthFailure) -> JSONResponse:
     if failure.retry_after is not None:
         response.headers["Retry-After"] = str(failure.retry_after)
     return response
-
-
-@router.post(
-    "/register",
-    response_model=TokenResponse,
-    status_code=201,
-    responses={409: {"description": "Registration conflict"}},
-)
-def register_user(
-    body: RegisterRequest,
-    request: Request,
-    session: Session = Depends(get_session),
-    settings: Settings = Depends(get_settings),
-) -> TokenResponse | Response:
-    result = register(session, body, settings, request.state.request_id)
-    if isinstance(result, AuthFailure):
-        return _failure_response(request, result)
-    return _token_response(result)
 
 
 @router.post(
@@ -102,14 +79,53 @@ def refresh_tokens(
     return _token_response(result)
 
 
-@router.post("/logout", status_code=204)
+@router.post(
+    "/logout",
+    status_code=204,
+    openapi_extra={"security": [{"BearerAuth": []}, {}]},
+)
 def logout_session(
     request: Request,
-    user: UserAccount = Depends(get_current_user),
-    session: Session = Depends(get_session),
+    body: LogoutRequest | None = None,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    # Flush/commit logout before the 204 is sent so a database failure cannot be reported
+    # as successful revocation while the refresh chain remains active.
+    session: Session = Depends(get_session, scope="function"),
+    settings: Settings = Depends(get_settings),
 ) -> Response:
-    claims = request.state.access_claims
-    logout(session, user, claims.session_id, request.state.request_id)
+    if body is not None and body.refresh_token is not None:
+        result = logout(
+            session,
+            request.state.request_id,
+            raw_refresh_token=body.refresh_token,
+        )
+    else:
+        if authorization is None:
+            return _failure_response(
+                request,
+                AuthFailure(401, "authentication_required", "Authentication is required."),
+            )
+        scheme, separator, access_token = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not separator or not access_token.strip():
+            return _failure_response(
+                request,
+                AuthFailure(401, "invalid_token", "Access token is invalid or expired."),
+            )
+        try:
+            claims = decode_access_token(access_token.strip(), settings)
+        except InvalidTokenError:
+            return _failure_response(
+                request,
+                AuthFailure(401, "invalid_token", "Access token is invalid or expired."),
+            )
+        result = logout(
+            session,
+            request.state.request_id,
+            user_id=claims.user_id,
+            session_id=claims.session_id,
+        )
+    if isinstance(result, AuthFailure):
+        return _failure_response(request, result)
     return Response(status_code=204)
 
 

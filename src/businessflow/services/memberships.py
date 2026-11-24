@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from typing import NoReturn
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -55,44 +56,15 @@ def create_membership(
     session: Session,
     access: TenantAccess,
     body: MembershipCreateRequest,
-    request_id: UUID,
-) -> MembershipRow:
+) -> NoReturn:
     access = lock_and_revalidate_access(session, access, "membership:create")
     if access.membership.role == "admin" and body.role != "member":
         raise ApiError(403, "forbidden", "Administrators may add member-role accounts only.")
-    email = str(body.email).strip().lower()
-    target_user = session.scalar(select(UserAccount).where(UserAccount.email == email))
-    if target_user is None or target_user.status != "active":
-        raise ApiError(404, "account_not_found", "An active account with that email was not found.")
-    existing = session.scalar(
-        select(TenantMembership).where(
-            TenantMembership.tenant_id == access.tenant.id,
-            TenantMembership.user_id == target_user.id,
-        )
+    raise ApiError(
+        503,
+        "membership_invitation_unavailable",
+        "New memberships are unavailable until a verified invitation workflow is configured.",
     )
-    if existing is not None:
-        raise ApiError(409, "membership_exists", "That account already has a tenant membership.")
-
-    membership = TenantMembership(
-        id=uuid4(),
-        tenant_id=access.tenant.id,
-        user_id=target_user.id,
-        role=body.role,
-        status="active",
-    )
-    session.add(membership)
-    session.flush()
-    record_event(
-        session,
-        "membership.created",
-        tenant_id=access.tenant.id,
-        actor_user_id=access.user.id,
-        target_type="tenant_membership",
-        target_id=membership.id,
-        request_id=request_id,
-        details={"role": body.role, "user_id": target_user.id},
-    )
-    return MembershipRow(membership=membership, user=target_user)
 
 
 def update_membership(

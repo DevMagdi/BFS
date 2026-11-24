@@ -24,10 +24,3 @@ def verify_password(password: str, encoded_hash: str) -> bool:
         return _password_hasher.verify(encoded_hash, password)
     except (VerifyMismatchError, VerificationError, InvalidHashError):
         return False
-
-
-def password_hash_needs_rehash(encoded_hash: str) -> bool:
-    try:
-        return _password_hasher.check_needs_rehash(encoded_hash)
-    except InvalidHashError:
-        return True

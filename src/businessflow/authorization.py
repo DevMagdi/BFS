@@ -121,7 +121,12 @@ def lock_and_revalidate_access(
     permission: str,
 ) -> TenantAccess:
     """Recheck role/status under the tenant lock before privileged writes."""
-    tenant = session.scalar(select(Tenant).where(Tenant.id == access.tenant.id).with_for_update())
+    tenant = session.scalar(
+        select(Tenant)
+        .where(Tenant.id == access.tenant.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     membership = session.scalar(
         select(TenantMembership)
         .where(
@@ -130,6 +135,7 @@ def lock_and_revalidate_access(
             TenantMembership.user_id == access.user.id,
         )
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if (
         tenant is None

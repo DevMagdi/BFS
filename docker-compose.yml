@@ -60,6 +60,9 @@ services:
         condition: service_healthy
     networks: [backend]
 
+  # WARNING: this destructive suite uses the same db service and persistent postgres-data
+  # volume as the normal stack. A separate businessflow_test database name is not disposable.
+  # Do not run this profile against a developer database or any volume whose data must remain.
   tests:
     build:
       context: .

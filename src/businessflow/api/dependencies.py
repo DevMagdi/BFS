@@ -71,26 +71,40 @@ def get_current_user(
     if user is None or auth_session is None:
         raise ApiError(401, "invalid_token", "Access token is invalid or expired.")
     if user.status != "active" and auth_session.revoked_at is None:
-        now = datetime.now(UTC)
-        auth_session.revoked_at = now
-        auth_session.revoke_reason = "account_disabled"
-        session.execute(
-            update(RefreshToken)
-            .where(RefreshToken.session_id == auth_session.id, RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=now)
+        auth_session = session.scalar(
+            select(AuthSession)
+            .where(AuthSession.id == claims.session_id, AuthSession.user_id == claims.user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
-        set_user_context(session, user.id)
-        record_event(
-            session,
-            "auth.session_revoked",
-            actor_user_id=user.id,
-            target_type="auth_session",
-            target_id=auth_session.id,
-            request_id=request.state.request_id,
-            outcome="revoked",
-            details={"reason": "account_disabled"},
-        )
-        raise CommitAndRaise(ApiError(401, "invalid_token", "Access token is invalid or expired."))
+        if auth_session is None:
+            raise ApiError(401, "invalid_token", "Access token is invalid or expired.")
+        if auth_session.revoked_at is None:
+            now = datetime.now(UTC)
+            auth_session.revoked_at = now
+            auth_session.revoke_reason = "account_disabled"
+            session.execute(
+                update(RefreshToken)
+                .where(
+                    RefreshToken.session_id == auth_session.id,
+                    RefreshToken.revoked_at.is_(None),
+                )
+                .values(revoked_at=now)
+            )
+            set_user_context(session, user.id)
+            record_event(
+                session,
+                "auth.session_revoked",
+                actor_user_id=user.id,
+                target_type="auth_session",
+                target_id=auth_session.id,
+                request_id=request.state.request_id,
+                outcome="revoked",
+                details={"reason": "account_disabled"},
+            )
+            raise CommitAndRaise(
+                ApiError(401, "invalid_token", "Access token is invalid or expired.")
+            )
     if (
         user.status != "active"
         or auth_session.revoked_at is not None

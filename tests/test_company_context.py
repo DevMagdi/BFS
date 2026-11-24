@@ -634,6 +634,13 @@ def test_upgrade_from_milestone_2_schema_preserves_existing_data(admin_engine):
         config = Config(str(ROOT / "alembic.ini"))
         config.set_main_option("sqlalchemy.url", migration_url_string.replace("%", "%%"))
         command.upgrade(config, "0001_backend_foundation")
+        with scratch_admin_engine.connect() as connection:
+            assert (
+                connection.scalar(
+                    text("SELECT has_table_privilege('bf_runtime', 'public.users', 'INSERT')")
+                )
+                is True
+            )
 
         tenant_id, company_id, owner_id = uuid4(), uuid4(), uuid4()
         with scratch_migration_engine.begin() as connection:
@@ -686,16 +693,40 @@ def test_upgrade_from_milestone_2_schema_preserves_existing_data(admin_engine):
                 )
                 == "Legacy Tenant"
             )
+            legacy_user = connection.execute(
+                text("SELECT email, display_name, status FROM users WHERE id = :owner_id"),
+                {"owner_id": owner_id},
+            ).one()
+            assert (
+                legacy_user.email,
+                legacy_user.display_name,
+                legacy_user.status,
+            ) == ("legacy-owner@example.com", "Legacy Owner", "active")
+            legacy_membership = connection.execute(
+                text(
+                    "SELECT user_id, role, status FROM tenant_memberships "
+                    "WHERE tenant_id = :tenant_id"
+                ),
+                {"tenant_id": tenant_id},
+            ).one()
+            assert (
+                legacy_membership.user_id,
+                legacy_membership.role,
+                legacy_membership.status,
+            ) == (
+                owner_id,
+                "owner",
+                "active",
+            )
             assert (
                 connection.scalar(
-                    text("SELECT count(*) FROM tenant_memberships WHERE tenant_id = :tenant_id"),
-                    {"tenant_id": tenant_id},
+                    text("SELECT has_table_privilege('bf_runtime', 'public.users', 'INSERT')")
                 )
-                == 1
+                is False
             )
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0013_direct_cash_forecast"
+                == "0015_limit_runtime_users_update"
             )
             assert (
                 connection.scalar(

@@ -63,6 +63,10 @@ class RefreshRequest(StrictModel):
     refresh_token: Annotated[str, Field(min_length=32, max_length=256, repr=False)]
 
 
+class LogoutRequest(StrictModel):
+    refresh_token: Annotated[str | None, Field(min_length=32, max_length=256, repr=False)] = None
+
+
 class CompanyProfileCreate(StrictModel):
     legal_name: Annotated[str, Field(min_length=1, max_length=200)]
     base_currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")]

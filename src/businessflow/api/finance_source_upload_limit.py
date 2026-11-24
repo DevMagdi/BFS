@@ -1,42 +1,67 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from businessflow.api.finance_source_limits import finance_source_request_body_limit
+from businessflow.api.finance_source_limits import (
+    finance_source_request_body_limit,
+    multipart_upload_request_body_limit,
+)
 
 
-class FinanceSourceRequestBodyTooLarge(HTTPException):
-    def __init__(self) -> None:
-        super().__init__(status_code=413, detail="The finance source intake request is too large.")
+class UploadRequestBodyTooLarge(HTTPException):
+    def __init__(self, message: str) -> None:
+        super().__init__(status_code=413, detail=message)
 
 
-def _is_finance_source_intake(scope: Scope) -> bool:
-    if scope.get("method") != "POST":
-        return False
+@dataclass(frozen=True, slots=True)
+class _UploadBodyLimit:
+    max_bytes: int
+    message: str
 
+
+def _path_candidates(scope: Scope) -> set[str]:
     path = scope.get("path", "")
     paths = {path}
     root_path = scope.get("root_path", "").rstrip("/")
     if root_path and path.startswith(root_path):
         paths.add(path[len(root_path) :] or "/")
+    return paths
 
-    for candidate in paths:
+
+def _upload_body_limit(scope: Scope, max_file_bytes: int) -> _UploadBodyLimit | None:
+    if scope.get("method") != "POST":
+        return None
+
+    for candidate in _path_candidates(scope):
         normalized = candidate[:-1] if candidate.endswith("/") else candidate
         if not normalized.startswith("/") or normalized.startswith("//"):
             continue
         parts = normalized[1:].split("/")
-        if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "tenants"]
-            and parts[3]
-            and parts[4:] == ["finance-sources", "intakes"]
-        ):
-            return True
-    return False
+        tenant_prefix = parts[:3] == ["api", "v1", "tenants"]
+        if not tenant_prefix or len(parts) < 4 or not parts[3]:
+            continue
+
+        if len(parts) == 5 and parts[4] == "imports":
+            return _UploadBodyLimit(
+                multipart_upload_request_body_limit(max_file_bytes),
+                "The import upload request exceeds the configured size limit.",
+            )
+        if len(parts) == 6 and parts[4:] == ["position-reviews", "financial-imports"]:
+            return _UploadBodyLimit(
+                multipart_upload_request_body_limit(max_file_bytes),
+                "The M10 financial import request exceeds the configured size limit.",
+            )
+        if len(parts) == 6 and parts[4:] == ["finance-sources", "intakes"]:
+            return _UploadBodyLimit(
+                finance_source_request_body_limit(max_file_bytes),
+                "The finance source intake request exceeds the configured size limit.",
+            )
+    return None
 
 
 def _declared_content_length(scope: Scope, max_body_bytes: int) -> int | None:
@@ -53,7 +78,12 @@ def _declared_content_length(scope: Scope, max_body_bytes: int) -> int | None:
     return int(normalized)
 
 
-async def _send_too_large(scope: Scope, receive: Receive, send: Send) -> None:
+async def _send_too_large(
+    scope: Scope,
+    receive: Receive,
+    send: Send,
+    message: str,
+) -> None:
     state = scope.setdefault("state", {})
     request_id = state.get("request_id")
     if not isinstance(request_id, UUID):
@@ -65,7 +95,7 @@ async def _send_too_large(scope: Scope, receive: Receive, send: Send) -> None:
         content={
             "error": {
                 "code": "request_body_too_large",
-                "message": "The finance source intake request exceeds the configured size limit.",
+                "message": message,
                 "request_id": request_id_text,
             }
         },
@@ -74,21 +104,26 @@ async def _send_too_large(scope: Scope, receive: Receive, send: Send) -> None:
     await response(scope, receive, send)
 
 
-class FinanceSourceUploadSizeLimitMiddleware:
-    """Bound only the finance-source multipart request at ASGI body ingress."""
+class UploadRequestBodyLimitMiddleware:
+    """Bound selected multipart bodies while streaming them through ASGI."""
 
     def __init__(self, app: ASGIApp, *, max_file_bytes: int) -> None:
         self.app = app
-        self.max_body_bytes = finance_source_request_body_limit(max_file_bytes)
+        self.max_file_bytes = max_file_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not _is_finance_source_intake(scope):
+        if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
-        content_length = _declared_content_length(scope, self.max_body_bytes)
-        if content_length is not None and content_length > self.max_body_bytes:
-            await _send_too_large(scope, receive, send)
+        body_limit = _upload_body_limit(scope, self.max_file_bytes)
+        if body_limit is None:
+            await self.app(scope, receive, send)
+            return
+
+        content_length = _declared_content_length(scope, body_limit.max_bytes)
+        if content_length is not None and content_length > body_limit.max_bytes:
+            await _send_too_large(scope, receive, send, body_limit.message)
             return
 
         received_bytes = 0
@@ -96,11 +131,14 @@ class FinanceSourceUploadSizeLimitMiddleware:
 
         async def receive_with_limit() -> Message:
             nonlocal received_bytes
+            # ASGI receive yields the complete next chunk before it can be counted. Earlier
+            # chunks may already have reached Starlette's parser; never forward the chunk that
+            # would take the cumulative body beyond the cap.
             message = await receive()
             if message["type"] == "http.request":
                 received_bytes += len(message.get("body", b""))
-                if received_bytes > self.max_body_bytes:
-                    raise FinanceSourceRequestBodyTooLarge
+                if received_bytes > body_limit.max_bytes:
+                    raise UploadRequestBodyTooLarge(body_limit.message)
             return message
 
         async def track_response_start(message: Message) -> None:
@@ -111,7 +149,7 @@ class FinanceSourceUploadSizeLimitMiddleware:
 
         try:
             await self.app(scope, receive_with_limit, track_response_start)
-        except FinanceSourceRequestBodyTooLarge:
+        except UploadRequestBodyTooLarge:
             if response_started:
                 raise
-            await _send_too_large(scope, receive, send)
+            await _send_too_large(scope, receive, send, body_limit.message)

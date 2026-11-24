@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 
+from businessflow.authorization import TenantAccess, require_tenant_access
+from businessflow.database import set_user_context
+from businessflow.errors import ApiError
+from businessflow.models import UserAccount
+from businessflow.services.tenancy import update_tenant_name
 from tests.helpers import auth_headers, create_member, create_tenant, register_user
 
 
@@ -130,20 +135,27 @@ def test_owner_admin_member_permissions_and_membership_lifecycle(client):
         == 403
     )
 
-    added_member = register_user(client, "added-member@example.com")
-    del added_member
-    added = client.post(
+    register_user(client, "added-member@example.com")
+    unavailable = client.post(
         f"/api/v1/tenants/{tenant_id}/memberships",
         json={"email": "added-member@example.com", "role": "member"},
         headers=auth_headers(admin_tokens),
     )
-    assert added.status_code == 201
+    assert unavailable.status_code == 503
+    assert unavailable.json()["error"]["code"] == "membership_invitation_unavailable"
     denied_admin_grant = client.post(
         f"/api/v1/tenants/{tenant_id}/memberships",
         json={"email": "added-member@example.com", "role": "admin"},
         headers=auth_headers(admin_tokens),
     )
     assert denied_admin_grant.status_code == 403
+    unchanged_memberships = client.get(
+        f"/api/v1/tenants/{tenant_id}/memberships", headers=auth_headers(owner_tokens)
+    )
+    assert all(
+        member["email"] != "added-member@example.com"
+        for member in unchanged_memberships.json()["items"]
+    )
     denied_owner_change = client.patch(
         f"/api/v1/tenants/{tenant_id}/memberships/{owner_membership_id}",
         json={"status": "revoked"},
@@ -372,3 +384,131 @@ def test_concurrent_owner_changes_cannot_remove_all_owners(app):
             {"tenant_id": tenant["id"]},
         )
     assert active_owner_count >= 1
+
+
+def _create_stale_access_tenant(client: TestClient, suffix: str) -> tuple[str, dict[str, str]]:
+    actor_email = f"stale-access-{suffix}@example.com"
+    actor = register_user(client, actor_email)
+    tenant = create_tenant(client, actor, key=f"stale-access-key-{suffix}")
+    second_owner_email = f"stale-second-owner-{suffix}@example.com"
+    register_user(client, second_owner_email)
+    create_member(client, actor, tenant["id"], second_owner_email, "owner")
+    return actor_email, tenant
+
+
+def _preauthorize_tenant_write(
+    session, actor_email: str, tenant_id: UUID
+) -> tuple[UserAccount, TenantAccess]:
+    user = session.scalar(select(UserAccount).where(UserAccount.email == actor_email))
+    assert user is not None
+    set_user_context(session, user.id)
+    access = require_tenant_access(session, user, tenant_id, "tenant:update")
+    assert access.membership.role == "owner"
+    assert access.membership.status == "active"
+    assert access.tenant.status == "active"
+    return user, access
+
+
+def test_postgres_write_revalidates_committed_owner_to_member_demotion(client, app, admin_engine):
+    suffix = uuid4().hex[:12]
+    actor_email, tenant = _create_stale_access_tenant(client, suffix)
+    tenant_id = UUID(tenant["id"])
+
+    # Keep the request transaction open after it has loaded owner access. A separate
+    # committed PostgreSQL transaction changes the row before the privileged write.
+    with app.state.session_factory() as session, session.begin():
+        user, stale_access = _preauthorize_tenant_write(session, actor_email, tenant_id)
+        original_name = tenant["name"]
+        with admin_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE tenant_memberships SET role = 'member' "
+                    "WHERE tenant_id = :tenant_id AND user_id = :user_id"
+                ),
+                {"tenant_id": tenant_id, "user_id": user.id},
+            )
+
+        with pytest.raises(ApiError) as denied:
+            update_tenant_name(session, user, tenant_id, "Must not be written", uuid4())
+        assert denied.value.status_code == 403
+        assert denied.value.code == "forbidden"
+        assert stale_access.membership.role == "member"
+
+    with admin_engine.connect() as connection:
+        stored = connection.execute(
+            text(
+                "SELECT tenants.name, tenant_memberships.role "
+                "FROM tenants JOIN tenant_memberships ON tenant_memberships.tenant_id = tenants.id "
+                "WHERE tenants.id = :tenant_id AND tenant_memberships.user_id = :user_id"
+            ),
+            {"tenant_id": tenant_id, "user_id": user.id},
+        ).one()
+    assert stored.name == original_name
+    assert stored.role == "member"
+
+
+def test_postgres_write_revalidates_committed_membership_revocation(client, app, admin_engine):
+    suffix = uuid4().hex[:12]
+    actor_email, tenant = _create_stale_access_tenant(client, suffix)
+    tenant_id = UUID(tenant["id"])
+
+    with app.state.session_factory() as session, session.begin():
+        user, stale_access = _preauthorize_tenant_write(session, actor_email, tenant_id)
+        original_name = tenant["name"]
+        with admin_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE tenant_memberships "
+                    "SET status = 'revoked', revoked_at = now() "
+                    "WHERE tenant_id = :tenant_id AND user_id = :user_id"
+                ),
+                {"tenant_id": tenant_id, "user_id": user.id},
+            )
+
+        with pytest.raises(ApiError) as denied:
+            update_tenant_name(session, user, tenant_id, "Must not be written", uuid4())
+        assert denied.value.status_code == 404
+        assert denied.value.code == "tenant_not_found"
+        assert stale_access.membership.status == "revoked"
+
+    with admin_engine.connect() as connection:
+        stored = connection.execute(
+            text(
+                "SELECT tenants.name, tenant_memberships.status, tenant_memberships.revoked_at "
+                "FROM tenants JOIN tenant_memberships ON tenant_memberships.tenant_id = tenants.id "
+                "WHERE tenants.id = :tenant_id AND tenant_memberships.user_id = :user_id"
+            ),
+            {"tenant_id": tenant_id, "user_id": user.id},
+        ).one()
+    assert stored.name == original_name
+    assert stored.status == "revoked"
+    assert stored.revoked_at is not None
+
+
+def test_postgres_write_revalidates_committed_tenant_deactivation(client, app, admin_engine):
+    suffix = uuid4().hex[:12]
+    actor_email, tenant = _create_stale_access_tenant(client, suffix)
+    tenant_id = UUID(tenant["id"])
+
+    with app.state.session_factory() as session, session.begin():
+        user, stale_access = _preauthorize_tenant_write(session, actor_email, tenant_id)
+        original_name = tenant["name"]
+        with admin_engine.begin() as connection:
+            connection.execute(
+                text("UPDATE tenants SET status = 'disabled', updated_at = now() WHERE id = :id"),
+                {"id": tenant_id},
+            )
+
+        with pytest.raises(ApiError) as denied:
+            update_tenant_name(session, user, tenant_id, "Must not be written", uuid4())
+        assert denied.value.status_code == 404
+        assert denied.value.code == "tenant_not_found"
+        assert stale_access.tenant.status == "disabled"
+
+    with admin_engine.connect() as connection:
+        stored = connection.execute(
+            text("SELECT name, status FROM tenants WHERE id = :tenant_id"),
+            {"tenant_id": tenant_id},
+        ).one()
+    assert stored.name == original_name
+    assert stored.status == "disabled"

@@ -1,14 +1,14 @@
 # BusinessFlow AI — Identity, Authorization and Tenant-Isolation Design
 
-- **Status:** Security architecture proposal for owner review; nothing here is implemented or production-validated.
+- **Status:** The identity-provider, MFA, recovery, linking, and broader session/authorization architecture remain proposals and are not production-validated. Factual notes about the current local-account and tenant-onboarding implementation are called out below.
 - **Owner-confirmed requirements:** First-party authentication plus OIDC/enterprise SSO; proper MFA; safe account linking and recovery; session management; server-side authorization policies. `Tenant` and `Company` are distinct, with a strict 1:1 MVP relationship.
-- **Scope:** Requirements and recommended trust boundaries before any identity or authorization code is introduced. Keycloak/Authlib is a technical recommendation only; provider, package, policy and implementation choices remain pending owner approval.
+- **Scope:** This document combines proposed future trust boundaries with a bounded implementation-status note; it does not authorize unapproved identity-provider integrations, MFA, recovery, or broader policy work. Keycloak/Authlib remains a technical recommendation only; provider, package, policy, and implementation choices are pending owner approval.
 
 ## 1. Security objectives and evidence labels
 
 The system must authenticate a human or non-human principal, resolve explicit tenant membership, authorize the exact operation and object scope server-side, bind a verified tenant to each database transaction, and record security-relevant events. A frontend filter, UUID, email address, model output, caller-supplied tenant ID, or PostgreSQL RLS policy alone is not authorization.
 
-This document distinguishes **owner-confirmed requirements** from **proposed controls** and **unverified behavior**. All mechanisms below are proposals until they are approved, implemented and tested against a real PostgreSQL service and the supported identity providers.
+This document distinguishes **owner-confirmed requirements** from **proposed controls**, **implemented boundaries**, and **unverified behavior**. The current local-account implementation is described as such; proposed identity-provider and security controls still require approval, implementation, and testing against real PostgreSQL and each supported identity provider.
 
 ## 2. Proposed trust-boundary flow
 
@@ -42,13 +42,15 @@ The logical model separates:
 - **`access_role` / `permission` / `membership_role`:** BusinessFlow authorization assignments and scopes, separate from an employee's business job role.
 - **Service identity:** Non-human integration/worker principal with explicit tenant scope, limited permissions, credential rotation and separate audit actor type. It is not represented as a human user.
 
-These are proposed concepts; no table or migration has been created. The 1:1 tenant/company constraint is an MVP database restriction. Keeping `company_id` on company-scoped facts and authorization assignments allows a future 1:N relationship without making those facts company-ambiguous.
+The broader identity model remains a proposal. The current schema implements `users` and `tenant_memberships`, but does not implement the proposed `external_identity`, permission catalog, or non-human service-identity records. The 1:1 tenant/company constraint is an MVP database restriction. Keeping `company_id` on company-scoped facts and authorization assignments allows a future 1:N relationship without making those facts company-ambiguous.
 
 ### 3.2 First-party authentication
 
-The product must support a first-party sign-in path. **Current technical recommendation, not owner-approved:** use Keycloak 26.8.2 local accounts as the credential/MFA/recovery boundary and upstream OIDC broker instead of implementing password, MFA or recovery primitives in BusinessFlow. Use Authlib 1.9.10 only as the proposed server-side OIDC client integration. Version, compatibility, license and operating evidence are in [`TECHNICAL_BASELINE_PROPOSAL.md`](TECHNICAL_BASELINE_PROPOSAL.md).
+The long-term product target includes first-party sign-in. **Future technical recommendation, not owner-approved:** consider Keycloak 26.8.2 local accounts as a credential/MFA/recovery boundary and OIDC broker, with Authlib 1.9.10 as a server-side OIDC client. The current application does not use Keycloak/Authlib or implement OIDC, MFA, or recovery; its local email/password, Argon2id, and database-backed session implementation is documented in [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md). Version, compatibility, license, and operating evidence for the proposed stack are in [`TECHNICAL_BASELINE_PROPOSAL.md`](TECHNICAL_BASELINE_PROPOSAL.md).
 
-Before implementation, recheck exact release/support/security advisories and configuration; define rate limits, non-enumerating responses, registration/invitation, tenant-admin bootstrap, email verification/SMTP, account disablement, credential reset, recovery and session revocation. BusinessFlow stores no password, MFA seed, reset token or recovery secret. The specific local-account policy and provider choice remain open for owner approval.
+For this remediation, public self-service registration is disabled and an authorized deployment operator provisions the first tenant owner with the one-time `businessflow-admin bootstrap-owner` command. No public bootstrap endpoint exists. Bootstrap checks inside its single provisioning transaction that migration 0014 or a later safe descendant is applied, `bf_runtime` has no effective `users` INSERT or UPDATE privilege, and the live role has `NOSUPERUSER`, `NOBYPASSRLS`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, `NOINHERIT`, and no memberships. Migrations 0014 and 0015 enforce the same runtime-role restrictions. They do not restore user-table write privileges on downgrade. Because `bf_runtime` is shared across users and `users` has no RLS, login does not automatically rehash passwords; existing Argon2id hashes remain verifiable without an update. New tenant membership creation is temporarily unavailable until a verified invitation workflow can be delivered securely. Email delivery/provider selection and invitation/verification token security and lifetime policies remain undecided; no sender, invitation, or verification token is implemented, and end-to-end invitation onboarding is not available. Existing accounts and memberships are preserved without automatic verification, revocation, or a data migration. Therefore, legacy account email ownership is not established by this change and must not be inferred from an email match.
+
+Before a broader onboarding rollout, recheck exact identity-provider release/support/security advisories and configuration; define rate limits, non-enumerating responses, tenant-admin provisioning, email delivery, verification/invitation mechanics, and an owner-approved token lifetime/security policy, alongside account disablement, credential reset, recovery and session revocation. BusinessFlow stores no MFA seed, reset token or recovery secret.
 
 ### 3.3 OIDC / enterprise SSO
 
@@ -76,7 +78,7 @@ MFA is an owner-confirmed product requirement. The policy must define supported 
 
 ## 4. Session management
 
-Proposed browser-session properties, subject to implementation review:
+Current implementation note: login and refresh return bearer-token pairs in JSON; the M10 browser stores them in tab-scoped `sessionStorage`. Logout sends the refresh credential so the server can revoke a session even if its access JWT has expired; refresh and logout serialize on the session lock, and the browser warns if server-side revocation cannot be confirmed. The client coordinates ordinary API and blob/download refreshes within one tab, but does not implement cookie sessions, CSRF protection, cross-tab refresh sharing, or MFA step-up. Simultaneous multi-tab use is unsupported and duplicate refresh-token submission can trigger replay revocation. **MVP recommendation:** do not promise multi-tab support with the current token design; if it is a launch requirement, approve and implement a shared server-managed cookie/session with CSRF protections before expanding support. See [`BACKEND_IMPLEMENTATION.md`](BACKEND_IMPLEMENTATION.md). The following browser-session properties are future proposals, subject to implementation review:
 
 - Prefer revocable server-side sessions represented to the browser by a high-entropy opaque cookie; do not store long-lived bearer credentials in browser local storage.
 - Cookie flags: `Secure`, `HttpOnly`, appropriate `SameSite`, narrow path/domain; use anti-CSRF protection for state-changing requests and validate allowed origins.
@@ -87,7 +89,7 @@ Proposed browser-session properties, subject to implementation review:
 
 Session recommendation: Keycloak owns its SSO session; BusinessFlow keeps a separate revocable `application_session` row containing a hash of an opaque browser token, user reference, authentication strength, issue/last-seen times, idle/absolute expiry and revocation state. The browser receives only a `Secure`, `HttpOnly`, appropriately `SameSite` cookie. Keycloak owns local passwords, MFA seeds, reset tokens and recovery secrets; BusinessFlow may record redacted `identity_recovery_event` metadata but never the recovery artifact. Membership is rechecked on requests; session tenant selection is not an authorization grant.
 
-This is a recommendation, not an accepted session contract. Lifetime values, concurrent-session policy, cookie domain/origin, idle/absolute expiry, logout coupling, recovery factors, SMTP, device UX and emergency revocation remain open and must be approved and tested before login is implemented.
+This is a recommendation, not an accepted session contract. Lifetime values, concurrent-session policy, cookie domain/origin, idle/absolute expiry, logout coupling, recovery factors, SMTP, device UX, and emergency revocation remain open and must be approved and tested before adopting the proposed provider/session architecture or broadening rollout of the current local login.
 
 ## 5. Authorization architecture
 
@@ -137,7 +139,7 @@ Cross-tenant support/maintenance is a separate privileged path: narrowly scoped,
 
 ## 7. Security controls and acceptance tests
 
-Before identity/authorization implementation is accepted, require tests against the production database engine and each supported login flow. At minimum:
+Before the proposed OIDC, MFA, account-linking/recovery, and broader session/authorization controls are accepted, require tests against the production database engine and each supported login flow. At minimum:
 
 - OIDC: wrong issuer/audience/nonce/state/signature/expiry/redirect, algorithm confusion, key rotation, replay, unverified claims, disabled account and IdP key rollover.
 - First-party: password hash/storage review, rate limiting, account enumeration, reset-token replay/expiry, MFA enrollment/recovery/bypass, admin bootstrap and credential-reset session revocation.
@@ -147,16 +149,16 @@ Before identity/authorization implementation is accepted, require tests against 
 - PostgreSQL: absent/invalid tenant context, RLS read/write/delete, composite FK mismatch, duplicate company per tenant, tenant-without-company and mismatched tenant/company pairing, runtime role without `BYPASSRLS`, owner/migration-role distinction, upsert paths, pooled connection reuse and background-job isolation.
 - Operational: secret/key rotation, backup/restore of required identity/session state, security log redaction, admin emergency process and deployment misconfiguration.
 
-The bounded M7 decision workflow covers its project-specific owner/admin/member permissions, cross-tenant/company scope, submitter self-review, stale evidence, forced RLS, composite-FK integrity, immutability, rollback and concurrency requirements with PostgreSQL integration tests. The broader identity-provider, first-party account, linking, session, operational and remaining authorization plan above is not all implemented or accepted; PostgreSQL and identity-provider acceptance cannot be replaced by SQLite or static code inspection.
+The bounded M7 decision workflow covers its project-specific owner/admin/member permissions, cross-tenant/company scope, submitter self-review, stale evidence, forced RLS, composite-FK integrity, immutability, rollback, and concurrency requirements with PostgreSQL integration tests. Local email/password login, refresh-token rotation/replay detection, explicit tenant membership, and the operator-only initial-owner bootstrap are implemented, but this document does not claim production acceptance of the broader identity-provider, linking, session, operational, and authorization plan. PostgreSQL and identity-provider acceptance cannot be replaced by SQLite or static code inspection.
 
-## 8. Decisions required before implementation
+## 8. Decisions required for remaining integrations and controls
 
-- Review/approve or replace the Keycloak 26.8.2 + Authlib 1.9.10 recommendation, including local account policy, MFA factors, session storage and exact release/security configuration.
-- Select OIDC providers/protocol profile, claims mapping, tenant invitation/provisioning and JIT rules.
+- Review/approve or replace the Keycloak 26.8.2 + Authlib 1.9.10 recommendation, including MFA factors, session storage, migration from current local auth, and exact release/security configuration.
+- Select OIDC providers/protocol profile, claims mapping, tenant invitation/provisioning beyond the initial operator bootstrap, and JIT rules; select an email-delivery provider and approve the verification/invitation token security and lifetime policy before implementing those flows.
 - Decide MFA scope, factors, step-up actions, recovery and privileged reset process.
-- Define secure linking/merging, deprovisioning, tenant-admin bootstrap, session lifetimes/revocation and support access.
+- Define secure linking/merging, deprovisioning, tenant-admin provisioning beyond the initial operator bootstrap, session lifetimes/revocation, and support access.
 - Finalize permission/role catalog, department boundaries, compensation access and approval separation-of-duties.
 - Approve PostgreSQL roles, RLS policy convention, tenant context setting, migration privilege and operational access model.
 - Define multi-tenant-per-installation topology separately from the one-company-per-tenant MVP model.
 
-Until these decisions and their threat tests are approved, this document is a security design proposal—not an authorization to implement authentication, infrastructure or migrations.
+The one-time local first-owner bootstrap described above is implemented as a non-public management command. The remaining identity-provider, email-delivery, invitation/verification, recovery and broader authorization decisions are still design proposals and are not authorization to implement those integrations or migrations.

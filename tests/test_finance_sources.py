@@ -613,7 +613,7 @@ def test_finance_source_http_upload_limit_allows_upload_and_rejects_oversized_be
         assert oversized.headers["X-Request-ID"] == oversized.json()["error"]["request_id"]
 
         unrelated = limited_client.post(
-            "/api/v1/auth/register",
+            "/api/v1/auth/login",
             content=b"{}" + b" " * (request_limit + 1),
             headers={"Content-Type": "application/json"},
         )

@@ -144,27 +144,88 @@ def test_revenue_only_workflow_imports_calculates_reconciles_traces_and_replays(
 
     policy = _create_revenue_policy(client, tenant["id"], headers)
     mapping = _create_mapping(client, tenant["id"], headers)
-    imported, _content = _import_revenue_ledger(client, tenant["id"], headers, policy, mapping)
+    imported, content = _import_revenue_ledger(client, tenant["id"], headers, policy, mapping)
 
-    record_page = client.get(
-        f"{_base(tenant['id'])}/imports/{imported['id']}/records?limit=100&offset=0",
+    repeated_import = client.post(
+        f"{_base(tenant['id'])}/imports",
+        data={
+            "metadata_json": json.dumps(
+                {
+                    "source_key": "ledger-demo",
+                    "source_type": "general_ledger",
+                    "mapping_id": mapping["id"],
+                    "policy_id": policy["id"],
+                    "period_start": "2026-11-01",
+                    "period_end": "2026-11-30",
+                    "period_completeness": "complete",
+                }
+            )
+        },
+        files={"file": ("renamed-ledger.csv", content, "text/csv")},
+        headers={**headers, "Idempotency-Key": f"new-browser-session-{uuid4().hex}"},
+    )
+    assert repeated_import.status_code == 201, repeated_import.text
+    repeated = repeated_import.json()
+    assert repeated["id"] == imported["id"]
+    assert repeated["replayed"] is True
+    assert repeated["file_name"] == imported["file_name"]
+    assert repeated["mapping_id"] == imported["mapping_id"]
+    assert repeated["mapping_version"] == imported["mapping_version"]
+    assert repeated["mapping_hash"] == imported["mapping_hash"]
+    assert repeated["policy_id"] == imported["policy_id"]
+    assert repeated["policy_version"] == imported["policy_version"]
+    assert repeated["policy_hash"] == imported["policy_hash"]
+
+    persisted_history = client.get(
+        f"{_base(tenant['id'])}/imports?limit=100&offset=0",
         headers=headers,
     )
-    assert record_page.status_code == 200, record_page.text
-    assert record_page.json()["total"] == 2
-    assert [item["row_status"] for item in record_page.json()["items"]] == [
+    assert persisted_history.status_code == 200, persisted_history.text
+    assert persisted_history.json()["total"] == 1
+    assert persisted_history.json()["items"][0]["id"] == imported["id"]
+    recovered_response = client.get(
+        f"{_base(tenant['id'])}/imports/{imported['id']}",
+        headers=headers,
+    )
+    assert recovered_response.status_code == 200, recovered_response.text
+    recovered_import = recovered_response.json()
+    assert recovered_import["mapping_id"] == imported["mapping_id"]
+    assert recovered_import["mapping_version"] == imported["mapping_version"]
+    assert recovered_import["mapping_hash"] == imported["mapping_hash"]
+    assert recovered_import["policy_id"] == imported["policy_id"]
+    assert recovered_import["policy_version"] == imported["policy_version"]
+    assert recovered_import["policy_hash"] == imported["policy_hash"]
+    assert recovered_import["input_hash"] == imported["input_hash"]
+    assert recovered_import["result_hash"] == imported["result_hash"]
+    recovered_policy_response = client.get(
+        f"{_base(tenant['id'])}/policies/{imported['policy_id']}",
+        headers=headers,
+    )
+    assert recovered_policy_response.status_code == 200, recovered_policy_response.text
+    recovered_policy = recovered_policy_response.json()
+    assert recovered_policy["id"] == imported["policy_id"]
+    assert recovered_policy["version"] == imported["policy_version"]
+    assert recovered_policy["definition_hash"] == imported["policy_hash"]
+
+    recovered_records = client.get(
+        f"{_base(tenant['id'])}/imports/{recovered_import['id']}/records?limit=100&offset=0",
+        headers=headers,
+    )
+    assert recovered_records.status_code == 200, recovered_records.text
+    assert recovered_records.json()["total"] == 2
+    assert [item["row_status"] for item in recovered_records.json()["items"]] == [
         "accepted",
         "accepted",
     ]
-    assert {item["category"] for item in record_page.json()["items"]} == {
+    assert {item["category"] for item in recovered_records.json()["items"]} == {
         "revenue",
         "revenue_reduction",
     }
 
     run_request = {
-        "policy_id": policy["id"],
+        "policy_id": recovered_policy["id"],
         "measure": "revenue",
-        "ledger_import_id": imported["id"],
+        "ledger_import_id": recovered_import["id"],
         "period_start": "2026-11-01",
         "period_end": "2026-11-30",
         "currency_code": "USD",
@@ -373,6 +434,11 @@ def test_core_financials_authorization_and_company_scope_are_enforced(client):
         headers=auth_headers(member),
     )
     assert denied.status_code == 403
+    denied_policy = client.get(
+        f"{_base(tenant['id'])}/policies/{policy['id']}",
+        headers=auth_headers(member),
+    )
+    assert denied_policy.status_code == 403
 
     other_owner = register_user(client, f"core-financials-other-owner-{uuid4().hex}@example.com")
     other_tenant = create_tenant(
@@ -382,11 +448,23 @@ def test_core_financials_authorization_and_company_scope_are_enforced(client):
         company_name="Other Synthetic Company",
         key=f"core-financials-other-{uuid4().hex}",
     )
+    other_headers = auth_headers(other_owner)
     hidden = client.get(
         f"{_base(other_tenant['id'])}/imports/{imported['id']}",
-        headers=auth_headers(other_owner),
+        headers=other_headers,
     )
     assert hidden.status_code == 404
+    hidden_history = client.get(
+        f"{_base(other_tenant['id'])}/imports?limit=100&offset=0",
+        headers=other_headers,
+    )
+    assert hidden_history.status_code == 200, hidden_history.text
+    assert hidden_history.json()["total"] == 0
+    hidden_policy = client.get(
+        f"{_base(other_tenant['id'])}/policies/{policy['id']}",
+        headers=auth_headers(other_owner),
+    )
+    assert hidden_policy.status_code == 404
 
 
 def test_core_financial_tables_enforce_company_rls_runtime_grants_and_immutability(

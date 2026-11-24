@@ -44,10 +44,21 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     assert "Trace one" in core_financial_page.text
     assert "non-authoritative" in core_financial_page.text
     assert "Choose a ledger CSV" in core_financial_page.text
+    assert "Select a saved import to restore" in core_financial_page.text
     assert "Content-Security-Policy" in core_financial_page.headers
     assert "script-src 'self'" in core_financial_page.headers["Content-Security-Policy"]
     assert core_financial_script.status_code == 200
     assert 'measure: "revenue"' in core_financial_script.text
+    assert "Select saved import" in core_financial_script.text
+    assert 'id="load-more-imports"' in core_financial_page.text
+    assert "async function loadMoreImports()" in core_financial_script.text
+    assert "async function selectSavedImport(importId)" in core_financial_script.text
+    assert "/imports/${encodeURIComponent(importId)}" in core_financial_script.text
+    assert "/policies/${encodeURIComponent(imported.policy_id)}" in core_financial_script.text
+    assert (
+        "mapping v${imported.mapping_version} · policy v${imported.policy_version}"
+        in core_financial_script.text
+    )
     assert "bank_import_id" not in core_financial_script.text
     assert "/runs/${state.run.id}/evidence?metric=revenue" in core_financial_script.text
     assert "innerHTML" not in core_financial_script.text
@@ -61,6 +72,7 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     assert "/api/v1/tenants/{tenant_id}/position-reviews/briefs" in paths
     assert "/api/v1/tenants/{tenant_id}/position-reviews/briefs/{review_id}/dispositions" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/imports" in paths
+    assert "/api/v1/tenants/{tenant_id}/core-financials/policies/{policy_id}" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/runs" in paths
     run_request_schema = schema["components"]["schemas"]["CoreFinancialRunCreateRequest"]
     assert run_request_schema["properties"]["measure"]["const"] == "revenue"

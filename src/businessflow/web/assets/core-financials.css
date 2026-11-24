@@ -53,6 +53,7 @@
 .cf-history-grid h3 { margin-bottom: 9px; font-size: 19px; }
 .cf-history-list { display: grid; gap: 8px; }
 .cf-history-item { padding: 10px 11px; border: 1px solid #e0e8e2; border-radius: 10px; background: #fcfdfc; }
+.cf-history-item.is-selected { border-color: #83ad9a; background: #f2f8f4; }
 .cf-history-item p { margin: 2px 0; color: var(--muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 .cf-history-item strong { color: #34574d; }
 .cf-history-grid > div:last-child > .field { margin-bottom: 9px; }

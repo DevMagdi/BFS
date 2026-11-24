@@ -37,6 +37,7 @@ from businessflow.core_financials.service import (
     create_core_financial_run,
     ensure_core_financials_enabled,
     get_core_financial_import,
+    get_core_financial_policy,
     get_core_financial_run,
     get_core_financial_template,
     list_core_financial_imports,
@@ -157,6 +158,23 @@ def post_core_financial_mapping(
         request.state.request_id,
         request.state.now,
         settings,
+    )
+
+
+@router.get("/policies/{policy_id}", response_model=CoreFinancialPolicyResponse)
+def read_core_financial_policy(
+    tenant_id: UUID,
+    policy_id: UUID,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CoreFinancialPolicyResponse:
+    return get_core_financial_policy(
+        session,
+        user,
+        tenant_id,
+        policy_id,
+        settings=settings,
     )
 
 

@@ -901,6 +901,25 @@ def _get_scoped_policy(
     return row
 
 
+def get_core_financial_policy(
+    session: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    policy_id: UUID,
+    *,
+    settings: Settings,
+) -> CoreFinancialPolicyResponse:
+    ensure_core_financials_enabled(settings)
+    access = require_company_context_access(session, user, tenant_id, "finance:read")
+    row = _get_scoped_policy(
+        session,
+        tenant_id=tenant_id,
+        company_id=access.company.id,
+        policy_id=policy_id,
+    )
+    return _policy_response(row)
+
+
 def _get_scoped_mapping(
     session: Session,
     *,
@@ -1044,6 +1063,30 @@ def create_core_financial_import(
         company_id=access.company.id,
         key=f"{metadata.source_key}:{metadata.source_type}",
     )
+    same_evidence = session.scalar(
+        select(CoreFinancialImport)
+        .where(
+            CoreFinancialImport.tenant_id == tenant_id,
+            CoreFinancialImport.company_id == access.company.id,
+            CoreFinancialImport.source_key == metadata.source_key,
+            CoreFinancialImport.source_type == metadata.source_type,
+            CoreFinancialImport.file_hash == file_hash,
+            CoreFinancialImport.file_size_bytes == len(content),
+            CoreFinancialImport.mapping_id == mapping.id,
+            CoreFinancialImport.mapping_hash == mapping.mapping_hash,
+            CoreFinancialImport.policy_id == policy_row.id,
+            CoreFinancialImport.policy_hash == policy_row.definition_hash,
+            CoreFinancialImport.period_start == metadata.period_start,
+            CoreFinancialImport.period_end == metadata.period_end,
+            CoreFinancialImport.period_completeness == metadata.period_completeness,
+        )
+        .order_by(CoreFinancialImport.created_at.asc(), CoreFinancialImport.id.asc())
+        .limit(1)
+    )
+    if same_evidence is not None:
+        _verify_import_integrity(session, same_evidence)
+        return _import_response(same_evidence, replayed=True)
+
     existing_ids, prior_records, prior_reversed_ids = _prior_source_records(
         session,
         tenant_id=tenant_id,

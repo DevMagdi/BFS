@@ -33,6 +33,8 @@
     headers: [],
     mapping: null,
     imported: null,
+    importHistoryItems: [],
+    importHistoryTotal: 0,
     recordItems: [],
     recordTotal: 0,
     recordOffset: 0,
@@ -254,13 +256,32 @@
   function selectPolicy(policy) {
     state.policy = policy || null;
     const selector = $("#policy-history");
-    if (policy) selector.value = policy.id;
+    if (policy) {
+      if (!state.policies.some((item) => item.id === policy.id)) state.policies.push(policy);
+      if (!Array.from(selector.options).some((option) => option.value === policy.id)) {
+        selector.append(new Option(
+          `${policy.policy_key} · v${policy.version} · ${shortHash(policy.definition_hash)}`,
+          policy.id,
+        ));
+      }
+      selector.value = policy.id;
+      selector.disabled = false;
+    }
     const detail = policy
-      ? `Policy ${policy.policy_key} · version ${policy.version} · illustrative, not authoritative.`
+      ? policy.policy_key === POLICY_KEY
+        ? `Policy ${policy.policy_key} · version ${policy.version} · illustrative, not authoritative.`
+        : `Saved import policy ${policy.policy_key} · version ${policy.version}. This workflow only calculates the illustrative revenue-only policy.`
       : "No revenue-only policy selected. Create or reuse the explicit example policy first.";
-    setStatus("#policy-state", detail, policy ? "is-success" : "muted");
-    $("#save-mapping-button").disabled = !state.policy || !state.file;
+    const policyStatusKind = !policy
+      ? "muted"
+      : policy.policy_key === POLICY_KEY
+        ? "is-success"
+        : "muted";
+    setStatus("#policy-state", detail, policyStatusKind);
     if (!policy) state.mapping = null;
+    const supportedRevenuePolicy = state.policy?.policy_key === POLICY_KEY;
+    $("#save-mapping-button").disabled = !supportedRevenuePolicy || !state.file;
+    $("#import-button").disabled = !supportedRevenuePolicy || !state.mapping || !state.file;
     updateRunButton();
   }
 
@@ -322,8 +343,9 @@
     }
     refreshIgnoredColumns();
     show($("#mapping-editor"), true);
-    $("#save-mapping-button").disabled = !state.policy;
-    $("#import-button").disabled = !state.mapping || !state.policy;
+    const supportedRevenuePolicy = state.policy?.policy_key === POLICY_KEY;
+    $("#save-mapping-button").disabled = !supportedRevenuePolicy;
+    $("#import-button").disabled = !state.mapping || !supportedRevenuePolicy;
   }
 
   function refreshIgnoredColumns() {
@@ -394,6 +416,7 @@
 
   async function saveMapping() {
     const button = $("#save-mapping-button");
+    if (!state.file || state.policy?.policy_key !== POLICY_KEY) return;
     button.disabled = true;
     try {
       const body = mappingPayload();
@@ -401,10 +424,10 @@
       state.mapping = data;
       invalidateReport("Mapping is saved and versioned. Import the selected CSV to normalize its rows.");
       setStatus("#file-state", `Mapping version ${data.version} saved · ${shortHash(data.mapping_hash)}. Ready to import.`, "is-success");
-      $("#import-button").disabled = false;
+      $("#import-button").disabled = !state.mapping || state.policy?.policy_key !== POLICY_KEY;
     } catch (error) {
       handleError(error);
-      button.disabled = !state.policy || !state.file;
+      button.disabled = !state.file || state.policy?.policy_key !== POLICY_KEY;
     }
   }
 
@@ -453,8 +476,8 @@
   }
 
   async function importLedger() {
-    if (!state.file || !state.policy || !state.mapping) {
-      showMessage("Select a policy, CSV, and saved mapping before importing.");
+    if (!state.file || !state.policy || !state.mapping || state.policy.policy_key !== POLICY_KEY) {
+      showMessage("Select the supported revenue-only policy, a CSV, and its saved mapping before importing.");
       return;
     }
     const period = selectedImportPeriod();
@@ -495,7 +518,8 @@
       await loadHistory();
       syncRunDates(period.start, period.end);
       updateRunButton();
-      showMessage(`Import saved · ${data.accepted_rows} accepted, ${data.rejected_rows} rejected, ${data.duplicate_rows} duplicate.`, data.quality_status === "passed" ? "success" : "error");
+      const importVerb = data.replayed ? "Existing import reused" : "Import saved";
+      showMessage(`${importVerb} · ${data.accepted_rows} accepted, ${data.rejected_rows} rejected, ${data.duplicate_rows} duplicate.`, data.quality_status === "passed" ? "success" : "error");
     } catch (error) {
       handleError(error);
       setStatus("#file-state", error.message || "The CSV could not be imported.", "is-error");
@@ -597,7 +621,9 @@
       && reportEnd >= reportStart;
     const ready = Boolean(
       state.policy
+      && state.policy.policy_key === POLICY_KEY
       && imported
+      && imported.source_type === "general_ledger"
       && imported.quality_status === "passed"
       && imported.period_completeness === "complete"
       && periodCovered
@@ -606,7 +632,9 @@
     $("#create-run-button").disabled = !ready;
     if (!ready && imported) {
       let message = "A revenue run needs a selected versioned policy and a complete, accepted ledger import.";
-      if (imported.quality_status !== "passed") message = "Fix rejected or duplicate rows and import a clean ledger before calculating.";
+      if (imported.source_type !== "general_ledger") message = "This workflow calculates revenue only from a general-ledger import; other saved source types remain inspectable here.";
+      else if (state.policy && state.policy.policy_key !== POLICY_KEY) message = "This saved import uses a policy outside the revenue-only workflow; its records remain inspectable but are not calculable here.";
+      else if (imported.quality_status !== "passed") message = "Fix rejected or duplicate rows and import a clean ledger before calculating.";
       else if (imported.period_completeness !== "complete") message = "The source period is not caller-asserted complete; the workflow will not calculate a revenue value.";
       else if (!periodCovered) message = "The report period must be valid and contained within the imported source period.";
       setStatus("#run-state", message, "muted");
@@ -649,7 +677,12 @@
   }
 
   async function createRun() {
-    if (!state.imported || !state.policy) return;
+    if (
+      !state.imported
+      || !state.policy
+      || state.policy.policy_key !== POLICY_KEY
+      || state.imported.source_type !== "general_ledger"
+    ) return;
     const button = $("#create-run-button");
     button.disabled = true;
     setStatus("#run-state", "Calculating the single supported measure against the saved canonical rows…", "muted");
@@ -772,6 +805,103 @@
     }
   }
 
+  function renderImportHistory() {
+    const importRoot = $("#import-history");
+    importRoot.replaceChildren();
+    if (!state.importHistoryItems.length) {
+      importRoot.append(node("p", "fine-print", "No saved imports for this Company."));
+    }
+    for (const item of state.importHistoryItems) {
+      const card = node("article", "cf-history-item");
+      const isSelected = item.id === state.imported?.id;
+      const selectButton = node(
+        "button",
+        "button button-secondary button-small",
+        isSelected ? "Selected import" : "Select saved import",
+      );
+      selectButton.type = "button";
+      selectButton.dataset.importId = item.id;
+      selectButton.setAttribute("aria-pressed", String(isSelected));
+      selectButton.addEventListener("click", () => selectSavedImport(item.id));
+      card.classList.toggle("is-selected", isSelected);
+      card.append(
+        node("p", "", `${item.source_key} · ${item.source_type} · ${item.period_start} to ${item.period_end}`),
+        node("p", "", `${item.accepted_rows} accepted · ${item.rejected_rows} rejected · ${item.duplicate_rows} duplicate · ${item.period_completeness} completeness`),
+        node("p", "", `${item.file_name} · SHA-256 ${shortHash(item.file_hash)} · ${item.quality_status}`),
+        node("p", "cf-hash", `Original mapping v${item.mapping_version} · ${shortHash(item.mapping_hash)} · policy v${item.policy_version} · ${shortHash(item.policy_hash)}`),
+        selectButton,
+      );
+      importRoot.append(card);
+    }
+    show($("#load-more-imports"), state.importHistoryItems.length < state.importHistoryTotal);
+  }
+
+  async function selectSavedImport(importId) {
+    if (!state.tenant || !importId) return;
+    const historyButtons = Array.from(
+      $("#import-history").querySelectorAll("button[data-import-id]"),
+    );
+    historyButtons.forEach((button) => { button.disabled = true; });
+    try {
+      const { data: imported } = await request(
+        `${coreBase()}/imports/${encodeURIComponent(importId)}`,
+      );
+      const { data: policy } = await request(
+        `${coreBase()}/policies/${encodeURIComponent(imported.policy_id)}`,
+      );
+      if (
+        policy.id !== imported.policy_id
+        || policy.version !== imported.policy_version
+        || policy.definition_hash !== imported.policy_hash
+      ) {
+        throw new Error("The saved import's immutable policy version could not be verified.");
+      }
+
+      invalidateReport("Restoring saved normalized rows and their original immutable versions…");
+      state.mapping = null;
+      state.imported = imported;
+      state.controlFile = null;
+      $("#control-file").value = "";
+      $("#control-expected").value = "";
+      $("#control-source-id").value = "";
+      $("#control-locator").value = "";
+      $("#control-absolute-tolerance").value = "0";
+      $("#control-relative-tolerance").value = "0";
+      setStatus("#control-file-state", "No control file selected; reconciliation will be marked not provided.", "muted");
+      $("#run-history").value = "";
+      $("#load-run-button").disabled = true;
+      selectPolicy(policy);
+      $("#source-key").value = imported.source_key;
+      $("#source-period-start").value = imported.period_start;
+      $("#source-period-end").value = imported.period_end;
+      $("#source-completeness").value = imported.period_completeness;
+      $("#import-button").disabled = true;
+      syncRunDates(imported.period_start, imported.period_end);
+      setStatus(
+        "#file-state",
+        state.file
+          ? "Saved import selected. The current CSV remains an upload draft; save its mapping before creating a new import."
+          : "Saved import recovered from Company history. No source CSV is needed to calculate from its retained normalized rows.",
+        "is-success",
+      );
+      renderImportSummary(imported);
+      await loadRecords(true);
+      renderImportHistory();
+      updateRunButton();
+      showMessage(
+        `Saved import restored · mapping v${imported.mapping_version} · policy v${imported.policy_version}. ${imported.quality_status === "passed" ? "" : "This import is incomplete and cannot produce a revenue value."}`,
+        imported.quality_status === "passed" ? "success" : "error",
+      );
+    } catch (error) {
+      if (state.imported?.id === importId) renderImportHistory();
+      handleError(error);
+    } finally {
+      Array.from($("#import-history").querySelectorAll("button[data-import-id]")).forEach((button) => {
+        button.disabled = false;
+      });
+    }
+  }
+
   async function loadHistory() {
     if (!state.tenant || !state.template) return;
     try {
@@ -779,20 +909,10 @@
         request(`${coreBase()}/imports?limit=100&offset=0`),
         request(`${coreBase()}/runs?limit=100&offset=0`),
       ]);
-      const imports = importsResponse.data?.items || [];
+      state.importHistoryItems = importsResponse.data?.items || [];
+      state.importHistoryTotal = importsResponse.data?.total || 0;
       const runs = runsResponse.data?.items || [];
-      const importRoot = $("#import-history");
-      importRoot.replaceChildren();
-      if (!imports.length) importRoot.append(node("p", "fine-print", "No saved imports for this Company."));
-      for (const item of imports) {
-        const card = node("article", "cf-history-item");
-        card.append(
-          node("p", "", `${item.source_key} · ${item.source_type} · ${item.period_start} to ${item.period_end}`),
-          node("p", "", `${item.accepted_rows} accepted · ${item.rejected_rows} rejected · ${item.duplicate_rows} duplicate · ${item.period_completeness} completeness`),
-          node("p", "", `${item.file_name} · SHA-256 ${shortHash(item.file_hash)} · ${item.quality_status}`),
-        );
-        importRoot.append(card);
-      }
+      renderImportHistory();
       const selector = $("#run-history");
       selector.replaceChildren(new Option("Choose a saved revenue run", ""));
       for (const item of runs) {
@@ -808,6 +928,24 @@
     } catch (error) {
       if (error.code === "core_financials_disabled") setFeatureDisabled(error.message);
       else showMessage(error.message || "Company-scoped financial history could not be loaded.");
+    }
+  }
+
+  async function loadMoreImports() {
+    if (!state.tenant || state.importHistoryItems.length >= state.importHistoryTotal) return;
+    const button = $("#load-more-imports");
+    button.disabled = true;
+    try {
+      const { data } = await request(
+        `${coreBase()}/imports?limit=${PAGE_SIZE}&offset=${state.importHistoryItems.length}`,
+      );
+      state.importHistoryItems.push(...(data.items || []));
+      state.importHistoryTotal = data.total || state.importHistoryTotal;
+      renderImportHistory();
+    } catch (error) {
+      handleError(error);
+    } finally {
+      button.disabled = false;
     }
   }
 
@@ -835,8 +973,13 @@
     state.policy = null;
     state.mapping = null;
     state.imported = null;
+    state.importHistoryItems = [];
+    state.importHistoryTotal = 0;
     state.run = null;
     state.template = null;
+    $("#run-history").replaceChildren(new Option("Choose a saved revenue run", ""));
+    $("#load-run-button").disabled = true;
+    renderImportHistory();
     show($("#disabled-panel"), false);
     show($("#workflow"), false);
     $("#workflow-status").replaceChildren(node("p", "loading", "Loading the authenticated Company workspace…"));
@@ -949,6 +1092,7 @@
     $("#load-more-records").addEventListener("click", () => loadRecords(false).catch(handleError));
     $("#load-more-evidence").addEventListener("click", () => loadEvidence(false).catch(handleError));
     $("#reload-history-button").addEventListener("click", loadHistory);
+    $("#load-more-imports").addEventListener("click", loadMoreImports);
     $("#run-history").addEventListener("change", () => {
       $("#load-run-button").disabled = !$("#run-history").value;
     });

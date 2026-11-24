@@ -2,7 +2,7 @@
 
 - **Status:** Current code facts, the historical M9 target direction, the separately scoped M10 synthetic demo, and the bounded M14–M16 finance slices are deliberately separated. M10 remains synthetic-only; M14–M16 APIs are default-disabled, M15/M16 are hard-blocked in production, and unresolved finance-owner/source/access/correction/retention/independent-control gates do not authorize production accounting-data processing.
 - **Product direction:** Company-wide Business Intelligence & Decision Platform; see [`product/PRODUCT_VISION.md`](product/PRODUCT_VISION.md).
-- **Detailed assessment:** [`architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md`](architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md) and [`architecture/TARGET_DOMAIN_ARCHITECTURE.md`](architecture/TARGET_DOMAIN_ARCHITECTURE.md).
+- **Detailed assessment:** [`architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md`](architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md), [`architecture/TARGET_DOMAIN_ARCHITECTURE.md`](architecture/TARGET_DOMAIN_ARCHITECTURE.md), and the [finance/capability matrix](architecture/FINANCIAL_INTELLIGENCE_CAPABILITY_MATRIX.md).
 
 ## 1. Current implementation
 
@@ -49,6 +49,7 @@ This is a target flow, not a system diagram of the whole implemented platform. C
 - [Target domain architecture](architecture/TARGET_DOMAIN_ARCHITECTURE.md)
 - [Current-versus-target gap analysis](architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md)
 - [Financial intelligence architecture](architecture/FINANCIAL_INTELLIGENCE_ARCHITECTURE.md)
+- [Finance/calculation capability matrix and code-backed audit](architecture/FINANCIAL_INTELLIGENCE_CAPABILITY_MATRIX.md)
 - [Product roadmap proposal](roadmap/PRODUCT_ROADMAP.md)
 - [Database design and actual schema subset](DATABASE_DESIGN.md)
 - [Backend implementation and tests](BACKEND_IMPLEMENTATION.md)

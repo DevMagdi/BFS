@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="description" content="An experimental, illustrative revenue-import and traceability workflow for BusinessFlow.">
+    <title>Revenue workflow · BusinessFlow</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <link rel="stylesheet" href="/assets/core-financials.css">
+    <script src="/assets/api_client.js" defer></script>
+    <script src="/assets/core-financials.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="wordmark" href="/" aria-label="BusinessFlow home">
+          <span class="mark" aria-hidden="true">B</span>
+          <span>business<span class="wordmark-light">flow</span></span>
+        </a>
+        <div class="topbar-right">
+          <span class="demo-stamp">EXPERIMENTAL · REVENUE ONLY</span>
+          <span id="user-label" class="user-label" hidden></span>
+          <a class="button button-quiet button-small" href="/">Main workspace</a>
+        </div>
+      </header>
+
+      <main>
+        <section id="auth-required" class="panel cf-auth" aria-labelledby="auth-title" hidden>
+          <p class="eyebrow">AUTHENTICATION REQUIRED</p>
+          <h1 id="auth-title">Sign in to continue.</h1>
+          <p class="lede">Use the existing BusinessFlow sign-in, then open this experimental workflow from your workspace.</p>
+          <a class="button button-primary" href="/">Return to sign in <span aria-hidden="true">→</span></a>
+        </section>
+
+        <section id="core-app" hidden>
+          <div class="workspace-heading cf-heading">
+            <div>
+              <p class="eyebrow">CORE FINANCIALS · FIRST INTEGRATED INCREMENT</p>
+              <h1>Trace one <em>revenue</em> result.</h1>
+              <p id="company-caption" class="lede"></p>
+            </div>
+            <label id="company-picker-wrap" class="company-picker" hidden>
+              <span>Company workspace</span>
+              <select id="company-picker" aria-label="Choose a Company workspace"></select>
+            </label>
+          </div>
+
+          <div class="notice notice-demo" role="note">
+            <span class="notice-symbol" aria-hidden="true">!</span>
+            <p><strong>Experimental, illustrative, non-authoritative.</strong> Use synthetic or explicitly authorized test data only. This increment imports one general-ledger CSV and calculates Revenue only. The source and completeness are caller-asserted; there is no FX, accounting approval, or production authorization.</p>
+          </div>
+
+          <div id="global-message" class="global-message" role="status" aria-live="polite" hidden></div>
+          <div id="workflow-status" class="stack cf-workflow-status" aria-live="polite"></div>
+
+          <section id="disabled-panel" class="panel cf-disabled" aria-labelledby="disabled-title" hidden>
+            <p class="eyebrow">FEATURE FLAG OFF</p>
+            <h2 id="disabled-title">Core Financials is unavailable.</h2>
+            <p>This API is default-disabled and hard-blocked in production. An authorized operator may enable it only in an isolated non-production environment.</p>
+            <p id="disabled-detail" class="fine-print"></p>
+          </section>
+
+          <div id="workflow" class="cf-workflow" hidden>
+            <section class="panel cf-panel" aria-labelledby="policy-title">
+              <div class="cf-section-heading">
+                <div>
+                  <p class="eyebrow">STEP 01 · VERSION THE ILLUSTRATIVE RULE</p>
+                  <h2 id="policy-title">Revenue policy</h2>
+                </div>
+                <span class="section-index">01 / 03</span>
+              </div>
+              <p class="muted">The example maps revenue and revenue reductions to selected ledger accounts. Other categories remain unknown and are not calculated in this revenue-only workflow.</p>
+              <div class="cf-actions">
+                <button id="create-policy-button" class="button button-primary" type="button" disabled>Create or reuse illustrative policy</button>
+                <label class="field cf-history-field"><span>Saved policy version</span><select id="policy-history" disabled><option value="">No policy selected</option></select></label>
+              </div>
+              <p id="policy-state" class="cf-status muted" aria-live="polite">Load the template before creating a policy.</p>
+              <div class="cf-account-map">
+                <strong>Example account rules:</strong>
+                <span>4000 → Revenue (credit-normal)</span>
+                <span>4090 → Revenue reduction (debit-normal)</span>
+              </div>
+            </section>
+
+            <section class="panel cf-panel" aria-labelledby="source-title">
+              <div class="cf-section-heading">
+                <div>
+                  <p class="eyebrow">STEP 02 · MAP, VALIDATE, AND SAVE SOURCE ROWS</p>
+                  <h2 id="source-title">General-ledger CSV</h2>
+                </div>
+                <span class="section-index">02 / 03</span>
+              </div>
+              <p class="muted">One UTF-8 CSV, up to the server's configured import limit (default 25 MB / 10,000 rows). The original file is hashed but not archived; normalized source values are retained.</p>
+              <div class="cf-actions cf-template-actions">
+                <button id="use-ledger-example" class="button button-primary" type="button">Load synthetic ledger example</button>
+                <button id="download-ledger-template" class="button button-secondary" type="button">Download illustrative ledger CSV</button>
+                <button id="use-control-example" class="button button-quiet" type="button">Load synthetic control example</button>
+                <button id="download-control-template" class="button button-quiet" type="button">Download illustrative control CSV</button>
+              </div>
+              <div class="cf-grid">
+                <label class="field"><span>Caller source key</span><input id="source-key" type="text" maxlength="64" value="ledger-demo" autocomplete="off"></label>
+                <label class="field"><span>Declared source period starts</span><input id="source-period-start" type="date" value="2026-11-01" required></label>
+                <label class="field"><span>Declared source period ends</span><input id="source-period-end" type="date" value="2026-11-30" required></label>
+                <label class="field"><span>Declared completeness</span>
+                  <select id="source-completeness" required>
+                    <option value="unknown" selected>Unknown</option>
+                    <option value="partial">Partial</option>
+                    <option value="complete">Complete — caller assertion</option>
+                  </select>
+                </label>
+              </div>
+              <p class="cf-inline-note">Completeness is a user assertion only; this upload cannot prove that the source export contains every relevant row.</p>
+              <label class="file-picker cf-file-picker">Choose a ledger CSV<input id="ledger-file" type="file" accept=".csv,text/csv"></label>
+              <p id="file-state" class="cf-status muted" aria-live="polite">No file selected. The file remains in this browser until you explicitly import it.</p>
+              <div id="mapping-editor" class="cf-mapping-editor" hidden>
+                <h3>Map source headers</h3>
+                <p class="fine-print">Map each canonical field once. Any extra column must be explicitly ignored with a rationale.</p>
+                <div id="mapping-fields" class="cf-mapping-fields"></div>
+                <div id="ignored-fields" class="cf-ignored-fields"></div>
+                <div class="cf-actions">
+                  <button id="save-mapping-button" class="button button-secondary" type="button" disabled>Save versioned mapping</button>
+                  <button id="import-button" class="button button-primary" type="button" disabled>Import and validate rows</button>
+                </div>
+              </div>
+              <div id="import-summary" class="cf-result-stack" aria-live="polite"></div>
+              <div id="record-table" class="cf-table-wrap"></div>
+              <button id="load-more-records" class="button button-quiet" type="button" hidden>Load more source rows</button>
+            </section>
+
+            <section class="panel cf-panel" aria-labelledby="run-title">
+              <div class="cf-section-heading">
+                <div>
+                  <p class="eyebrow">STEP 03 · CALCULATE, RECONCILE, AND TRACE</p>
+                  <h2 id="run-title">Revenue run</h2>
+                </div>
+                <span class="section-index">03 / 03</span>
+              </div>
+              <p class="muted">Revenue = mapped revenue account balances less mapped revenue-reduction balances, for one currency and an inclusive transaction-date window. No other measure is returned by this API increment.</p>
+              <div class="cf-grid">
+                <label class="field"><span>Report period starts</span><input id="report-period-start" type="date" value="2026-11-01" required></label>
+                <label class="field"><span>Report period ends</span><input id="report-period-end" type="date" value="2026-11-30" required></label>
+                <label class="field"><span>Currency</span><input id="report-currency" type="text" value="USD" maxlength="3" pattern="[A-Z]{3}" required></label>
+              </div>
+              <p class="cf-inline-note">To calculate a number, the selected import must be caller-asserted complete, contain no rejected or duplicate rows, and cover the report period.</p>
+              <details class="cf-control-details">
+                <summary>Optional reconciliation control</summary>
+                <p class="fine-print">Provide a separate caller-designated control file and reference. The amount and source independence are not independently verified. If its file hash overlaps the ledger import, the comparison is marked not verifiable.</p>
+                <label class="file-picker cf-file-picker">Choose a control CSV<input id="control-file" type="file" accept=".csv,text/csv"></label>
+                <div class="cf-grid cf-control-grid">
+                  <label class="field"><span>Expected revenue</span><input id="control-expected" type="text" inputmode="decimal" placeholder="900"></label>
+                  <label class="field"><span>Control source ID</span><input id="control-source-id" type="text" maxlength="128" placeholder="monthly-close-summary"></label>
+                  <label class="field"><span>Record locator</span><input id="control-locator" type="text" maxlength="256" placeholder="csv:row:2/revenue_total"></label>
+                  <label class="field"><span>Absolute tolerance</span><input id="control-absolute-tolerance" type="text" inputmode="decimal" value="0"></label>
+                  <label class="field"><span>Relative tolerance</span><input id="control-relative-tolerance" type="text" inputmode="decimal" value="0"></label>
+                </div>
+                <p id="control-file-state" class="cf-status muted" aria-live="polite">No control file selected; reconciliation will be marked not provided.</p>
+              </details>
+              <button id="create-run-button" class="button button-primary" type="button" disabled>Calculate illustrative revenue</button>
+              <p id="run-state" class="cf-status muted" aria-live="polite">Create a policy, import an accepted ledger, and explicitly select the completeness assertion first.</p>
+              <div id="run-result" class="cf-result-stack"></div>
+              <button id="load-more-evidence" class="button button-quiet" type="button" hidden>Load more evidence</button>
+              <button id="verify-run-button" class="button button-secondary" type="button" hidden>Replay-verify this run</button>
+              <div id="verification-result" class="cf-result-stack" aria-live="polite"></div>
+            </section>
+
+            <section class="panel cf-panel" aria-labelledby="history-title">
+              <div class="cf-section-heading">
+                <div>
+                  <p class="eyebrow">SAVED, COMPANY-SCOPED RECORDS</p>
+                  <h2 id="history-title">Workflow history</h2>
+                </div>
+                <button id="reload-history-button" class="button button-quiet" type="button">Reload history</button>
+              </div>
+              <div class="cf-history-grid">
+                <div><h3>Imports</h3><div id="import-history" class="cf-history-list"></div></div>
+                <div><h3>Revenue runs</h3>
+                  <label class="field"><span>Saved run</span><select id="run-history"><option value="">No saved run selected</option></select></label>
+                  <button id="load-run-button" class="button button-secondary" type="button" disabled>Inspect saved run</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <span>Evidence before answers.</span>
+        <span>Experimental · Illustrative only · Default disabled · No production accounting use</span>
+      </footer>
+    </div>
+  </body>
+</html>

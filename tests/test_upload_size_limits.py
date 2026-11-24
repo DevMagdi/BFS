@@ -99,6 +99,7 @@ def _limited_app(settings):
             update={
                 "import_max_file_bytes": 1024,
                 "finance_source_intake_enabled": True,
+                "core_financials_enabled": True,
             }
         )
     )
@@ -141,6 +142,11 @@ def _route_limits(max_file_bytes: int, tenant_id: str):
         ),
         (
             f"/api/v1/tenants/{tenant_id}/finance-sources/intakes",
+            finance_source_request_body_limit(max_file_bytes),
+            True,
+        ),
+        (
+            f"/api/v1/tenants/{tenant_id}/core-financials/imports",
             finance_source_request_body_limit(max_file_bytes),
             True,
         ),
@@ -220,7 +226,7 @@ def test_declared_oversized_m4_m10_and_m14_bodies_stop_before_multipart_parser(
         assert unrelated_json.json()["error"]["code"] == "invalid_request"
 
 
-@pytest.mark.parametrize("route_index", [0, 1, 2], ids=["m4", "m10", "m14"])
+@pytest.mark.parametrize("route_index", [0, 1, 2, 3], ids=["m4", "m10", "m14", "core-financials"])
 def test_exact_limit_is_accepted_and_one_byte_over_is_rejected(
     settings, monkeypatch, route_index: int
 ) -> None:

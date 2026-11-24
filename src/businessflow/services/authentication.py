@@ -7,19 +7,14 @@ from functools import lru_cache
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from businessflow.audit import record_event
 from businessflow.config import Settings
 from businessflow.database import set_user_context
 from businessflow.models import AuthSession, RefreshToken, UserAccount
-from businessflow.schemas import LoginRequest, RegisterRequest
-from businessflow.security.passwords import (
-    hash_password,
-    password_hash_needs_rehash,
-    verify_password,
-)
+from businessflow.schemas import LoginRequest
+from businessflow.security.passwords import hash_password, verify_password
 from businessflow.security.throttling import (
     clear_login_email_failure,
     get_login_bucket_digests,
@@ -96,51 +91,6 @@ def _issue_session(
     )
 
 
-def register(
-    session: Session,
-    body: RegisterRequest,
-    settings: Settings,
-    request_id: UUID,
-) -> AuthResult:
-    email = str(body.email).strip().lower()
-    if session.scalar(select(UserAccount.id).where(UserAccount.email == email)) is not None:
-        return AuthFailure(
-            409,
-            "registration_unavailable",
-            "Registration could not be completed with these details.",
-        )
-
-    user = UserAccount(
-        id=uuid4(),
-        email=email,
-        display_name=body.display_name,
-        password_hash=hash_password(body.password),
-        status="active",
-    )
-    try:
-        with session.begin_nested():
-            session.add(user)
-            session.flush()
-    except IntegrityError:
-        return AuthFailure(
-            409,
-            "registration_unavailable",
-            "Registration could not be completed with these details.",
-        )
-
-    now = datetime.now(UTC)
-    set_user_context(session, user.id)
-    record_event(
-        session,
-        "auth.registration_succeeded",
-        actor_user_id=user.id,
-        target_type="user",
-        target_id=user.id,
-        request_id=request_id,
-    )
-    return _issue_session(session, user, settings, now)
-
-
 def login(
     session: Session,
     body: LoginRequest,
@@ -187,8 +137,6 @@ def login(
             )
         return AuthFailure(401, "invalid_credentials", "Invalid email or password.")
 
-    if password_hash_needs_rehash(user.password_hash):
-        user.password_hash = hash_password(body.password)
     clear_login_email_failure(session, bucket_hashes[0])
     set_user_context(session, user.id)
     tokens = _issue_session(session, user, settings, now)
@@ -216,17 +164,30 @@ def refresh(
         return generic_failure
 
     now = datetime.now(UTC)
-    token = session.scalar(
-        select(RefreshToken)
-        .where(RefreshToken.token_hash == digest_refresh_token(raw_refresh_token))
-        .with_for_update()
-    )
-    if token is None:
+    token_identity = session.execute(
+        select(RefreshToken.id, RefreshToken.session_id).where(
+            RefreshToken.token_hash == digest_refresh_token(raw_refresh_token)
+        )
+    ).one_or_none()
+    if token_identity is None:
         return generic_failure
+
+    # Refresh and logout use one lock order: session first, then token rows. That makes
+    # rotation/revocation serialize without a session->token / token->session deadlock.
     auth_session = session.scalar(
-        select(AuthSession).where(AuthSession.id == token.session_id).with_for_update()
+        select(AuthSession).where(AuthSession.id == token_identity.session_id).with_for_update()
     )
     if auth_session is None or auth_session.revoked_at is not None:
+        return generic_failure
+    token = session.scalar(
+        select(RefreshToken)
+        .where(
+            RefreshToken.id == token_identity.id,
+            RefreshToken.token_hash == digest_refresh_token(raw_refresh_token),
+        )
+        .with_for_update()
+    )
+    if token is None or token.session_id != auth_session.id:
         return generic_failure
 
     if token.consumed_at is not None:
@@ -308,31 +269,92 @@ def refresh(
 
 def logout(
     session: Session,
-    user: UserAccount,
-    session_id: UUID,
     request_id: UUID,
-) -> None:
+    *,
+    session_id: UUID | None = None,
+    user_id: UUID | None = None,
+    raw_refresh_token: str | None = None,
+) -> AuthFailure | None:
+    """Revoke one session using a verified access or refresh credential.
+
+    A refresh credential can identify the session after its access JWT has expired. The
+    parent session is locked before any token rows, matching refresh rotation's lock order.
+    """
+    invalid = AuthFailure(401, "invalid_logout_credential", "Logout credentials are invalid.")
+    refresh_identity = None
+    refresh_digest = None
+    if raw_refresh_token is not None:
+        if not 32 <= len(raw_refresh_token) <= 256:
+            return invalid
+        refresh_digest = digest_refresh_token(raw_refresh_token)
+        refresh_identity = session.execute(
+            select(RefreshToken.id, RefreshToken.session_id).where(
+                RefreshToken.token_hash == refresh_digest
+            )
+        ).one_or_none()
+        if refresh_identity is None:
+            return invalid
+        session_id = refresh_identity.session_id
+        user_id = None
+    elif session_id is None or user_id is None:
+        return invalid
+
+    session_query = select(AuthSession).where(AuthSession.id == session_id)
+    if user_id is not None:
+        session_query = session_query.where(AuthSession.user_id == user_id)
+    auth_session = session.scalar(session_query.with_for_update())
+    if auth_session is None:
+        return invalid
+
+    # A repeated logout is successful only after the session is revoked and any
+    # unrevoked token rows are closed; a write failure must still fail the request.
+    if auth_session.revoked_at is not None:
+        session.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.session_id == auth_session.id,
+                RefreshToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=auth_session.revoked_at)
+        )
+        return None
+
     now = datetime.now(UTC)
-    auth_session = session.scalar(
-        select(AuthSession)
-        .where(AuthSession.id == session_id, AuthSession.user_id == user.id)
-        .with_for_update()
-    )
-    if auth_session is None or auth_session.revoked_at is not None:
-        return
+    if auth_session.expires_at <= now:
+        return invalid
+
+    if refresh_identity is not None and refresh_digest is not None:
+        refresh_token = session.scalar(
+            select(RefreshToken)
+            .where(
+                RefreshToken.id == refresh_identity.id,
+                RefreshToken.token_hash == refresh_digest,
+            )
+            .with_for_update()
+        )
+        if (
+            refresh_token is None
+            or refresh_token.session_id != auth_session.id
+            or refresh_token.revoked_at is not None
+            or refresh_token.expires_at <= now
+        ):
+            return invalid
+
     auth_session.revoked_at = now
     auth_session.revoke_reason = "logout"
     session.execute(
         update(RefreshToken)
-        .where(RefreshToken.session_id == session_id, RefreshToken.revoked_at.is_(None))
+        .where(RefreshToken.session_id == auth_session.id, RefreshToken.revoked_at.is_(None))
         .values(revoked_at=now)
     )
+    set_user_context(session, auth_session.user_id)
     record_event(
         session,
         "auth.session_revoked",
-        actor_user_id=user.id,
+        actor_user_id=auth_session.user_id,
         target_type="auth_session",
-        target_id=session_id,
+        target_id=auth_session.id,
         request_id=request_id,
         details={"reason": "logout"},
     )
+    return None

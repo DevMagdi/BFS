@@ -104,104 +104,22 @@
     }
   }
 
-  function persistTokens(tokens) {
-    state.accessToken = tokens.access_token;
-    state.refreshToken = tokens.refresh_token;
-    sessionStorage.setItem(SESSION_KEYS.access, tokens.access_token);
-    sessionStorage.setItem(SESSION_KEYS.refresh, tokens.refresh_token);
-  }
-
-  function clearAuth() {
-    state.accessToken = null;
-    state.refreshToken = null;
-    state.user = null;
-    state.tenant = null;
-    state.demo = null;
-    sessionStorage.removeItem(SESSION_KEYS.access);
-    sessionStorage.removeItem(SESSION_KEYS.refresh);
-    sessionStorage.removeItem(SESSION_KEYS.tenant);
-    showAuthenticated(false);
-  }
+  const apiClient = window.BusinessFlowApiClient.create({
+    apiBase: API_BASE,
+    state,
+    sessionStorage,
+    sessionKeys: SESSION_KEYS,
+    ApiFailure,
+    apiErrorMessage,
+    onAuthCleared: () => showAuthenticated(false),
+  });
+  const { clearAuth, persistTokens, request, requestBlob } = apiClient;
 
   function randomKey(prefix = "m10") {
     const random = window.crypto && typeof window.crypto.randomUUID === "function"
       ? window.crypto.randomUUID().replaceAll("-", "")
       : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
     return `${prefix}-${random}`;
-  }
-
-  async function refreshAccessToken() {
-    if (!state.refreshToken) return false;
-    try {
-      const response = await fetch(`${API_BASE}/auth/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: state.refreshToken }),
-        credentials: "same-origin",
-        cache: "no-store",
-      });
-      const data = response.status === 204 ? null : await response.json().catch(() => null);
-      if (!response.ok || !data || !data.access_token) {
-        clearAuth();
-        return false;
-      }
-      persistTokens(data);
-      return true;
-    } catch (_error) {
-      return false;
-    }
-  }
-
-  async function request(path, options = {}, retry = true) {
-    const headers = new Headers(options.headers || {});
-    const requestOptions = { ...options, headers, credentials: "same-origin", cache: "no-store" };
-    const hasBody = Object.prototype.hasOwnProperty.call(options, "body");
-    if (hasBody && !(options.body instanceof FormData) && typeof options.body !== "string") {
-      headers.set("Content-Type", "application/json");
-      requestOptions.body = JSON.stringify(options.body);
-    }
-    const pathOnly = path.split("?", 1)[0];
-    const publicAuthPath = ["/auth/login", "/auth/register", "/auth/refresh"].includes(pathOnly);
-    if (state.accessToken && !publicAuthPath) {
-      headers.set("Authorization", `Bearer ${state.accessToken}`);
-    }
-
-    let response;
-    try {
-      response = await fetch(`${API_BASE}${path}`, requestOptions);
-    } catch (_error) {
-      throw new ApiFailure("The local server could not be reached. Check that the API is running.", 0, "network_error");
-    }
-    if (response.status === 401 && retry && !publicAuthPath && pathOnly !== "/auth/logout" && await refreshAccessToken()) {
-      return request(path, options, false);
-    }
-    const data = response.status === 204 ? null : await response.json().catch(() => null);
-    if (!response.ok) {
-      const error = data && data.error ? data.error : null;
-      throw new ApiFailure(apiErrorMessage(data, response.status), response.status, error?.code);
-    }
-    return { data, response };
-  }
-
-  async function requestBlob(path) {
-    const headers = new Headers();
-    if (state.accessToken) headers.set("Authorization", `Bearer ${state.accessToken}`);
-    let response;
-    try {
-      response = await fetch(`${API_BASE}${path}`, {
-        headers,
-        credentials: "same-origin",
-        cache: "no-store",
-      });
-    } catch (_error) {
-      throw new ApiFailure("The local server could not be reached. Check that the API is running.", 0, "network_error");
-    }
-    if (response.status === 401 && await refreshAccessToken()) return requestBlob(path);
-    if (!response.ok) {
-      const data = await response.json().catch(() => null);
-      throw new ApiFailure(apiErrorMessage(data, response.status), response.status, data?.error?.code);
-    }
-    return response.blob();
   }
 
   async function sha256(blobOrBuffer) {
@@ -250,35 +168,22 @@
     $("#user-label").textContent = state.user ? state.user.display_name : "";
   }
 
-  function toggleRegisterFields() {
-    const registering = fieldValue("#auth-mode") === "register";
-    setVisible($("#display-name-field"), registering);
-    $("#display-name").required = registering;
-    $("#password").autocomplete = registering ? "new-password" : "current-password";
-    $("#password-help").textContent = registering
-      ? "Use at least 12 characters for this local account."
-      : "Use your existing BusinessFlow local account.";
-  }
-
   async function submitAuth(event) {
     event.preventDefault();
     clearMessage();
-    const registering = fieldValue("#auth-mode") === "register";
     const body = {
       email: fieldValue("#email").trim(),
       password: fieldValue("#password"),
     };
-    const endpoint = registering ? "/auth/register" : "/auth/login";
-    if (registering) body.display_name = fieldValue("#display-name").trim();
     const button = $("#auth-form button[type='submit']");
     button.disabled = true;
     try {
-      const { data } = await request(endpoint, { method: "POST", body });
+      const { data } = await request("/auth/login", { method: "POST", body });
       persistTokens(data);
       const me = await request("/auth/me");
       state.user = me.data;
       await loadTenants();
-      showMessage(registering ? "Local account created. Continue in the synthetic workspace." : "Signed in.", "success");
+      showMessage("Signed in.", "success");
       $("#password").value = "";
     } catch (error) {
       showMessage(error.message || "Sign-in failed.");
@@ -1439,19 +1344,45 @@
     if (name === "record" && state.review) updateRecordUi(state.review);
   }
 
+  let logoutInFlight = null;
+
   async function logout() {
+    if (logoutInFlight) return logoutInFlight;
+    logoutInFlight = (async () => {
+      const hadCredentials = Boolean(state.accessToken || state.refreshToken);
+      let serverRevocationConfirmed = !hadCredentials;
+      try {
+        if (state.refreshToken) {
+          await request(
+            "/auth/logout",
+            { method: "POST", body: { refresh_token: state.refreshToken } },
+            false,
+          );
+          serverRevocationConfirmed = true;
+        } else if (state.accessToken) {
+          await request("/auth/logout", { method: "POST" }, false);
+          serverRevocationConfirmed = true;
+        }
+      } catch (_error) {
+        // Clear local credentials, but never imply that server-side revocation succeeded.
+      }
+      clearAuth();
+      state.tenants = [];
+      if (hadCredentials && !serverRevocationConfirmed) {
+        showMessage(
+          "Signed out on this device, but the server could not confirm session revocation. " +
+            "The session may remain active until it expires.",
+        );
+      }
+    })();
     try {
-      if (state.accessToken) await request("/auth/logout", { method: "POST" }, false);
-    } catch (_error) {
-      // Tokens are cleared locally even if the server cannot be reached.
+      await logoutInFlight;
+    } finally {
+      logoutInFlight = null;
     }
-    clearAuth();
-    state.tenants = [];
-    showAuthenticated(false);
   }
 
   function bindEvents() {
-    $("#auth-mode").addEventListener("change", toggleRegisterFields);
     $("#auth-form").addEventListener("submit", submitAuth);
     $("#tenant-form").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -1520,7 +1451,6 @@
 
   async function bootstrap() {
     bindEvents();
-    toggleRegisterFields();
     updateCreateButtonState();
     if (!state.accessToken) {
       showAuthenticated(false);
@@ -1532,7 +1462,6 @@
       await loadTenants();
     } catch (_error) {
       clearAuth();
-      showAuthenticated(false);
     }
   }
 

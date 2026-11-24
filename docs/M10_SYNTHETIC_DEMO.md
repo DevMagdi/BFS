@@ -14,29 +14,43 @@ Prerequisites: Docker Compose, Python 3.11 or newer, and a modern browser.
    python -c 'import secrets; print(secrets.token_urlsafe(48))'
    ```
 
-   Keep `.env` local and do not reuse production or customer credentials.
+   `BF_BOOTSTRAP_PASSWORD` is only the PostgreSQL initialization-superuser password; it is not a BusinessFlow user password. Keep `.env` local and do not reuse production or customer credentials.
 
-2. Start PostgreSQL, apply the migrations using the dedicated migration role, then start the API:
+2. Start PostgreSQL and apply migrations using the dedicated migration role:
 
    ```sh
    docker compose up -d db
-   docker compose --profile tools run --rm migrate
+   docker compose --profile tools run --build --rm migrate
+   ```
+
+3. Before starting the API, provision the initial owner and tenant/company using the non-public command. The CLI image is already built by the migration service; it reads the migration URL from the service environment and prompts for the owner password without echoing it. Use tenant/company names that satisfy the M10 synthetic-seed guard:
+
+   ```sh
+   docker compose --profile tools run --rm -it --entrypoint sh migrate -c \
+     'export BOOTSTRAP_DATABASE_URL="$MIGRATION_DATABASE_URL"; exec businessflow-admin bootstrap-owner --email demo-owner@example.com --display-name "Demo Owner" --tenant-name "M10 Synthetic Demo" --company-name "Synthetic Demo Company" --base-currency USD --timezone UTC --locale en'
+   ```
+
+   The command is for an authorized operator on a pristine install only. It does not verify email ownership or send email. See [`../scripts/README.md`](../scripts/README.md) for the security boundary and remaining onboarding requirements.
+
+4. Start the API and open `http://localhost:8000/`:
+
+   ```sh
    docker compose up -d api
    ```
 
-3. Open `http://localhost:8000/`. Create a local account or sign in. Create a clearly labeled tenant and Company; the form defaults to **M10 Synthetic Demo** / **Synthetic Demo Company**.
+   Sign in using the provisioned email and the password entered at the CLI prompt. Public signup is disabled; the CLI-created tenant and Company are already available. No invitation or email-delivery workflow exists.
 
-4. In **Create Review**, explicitly select **Seed synthetic demo data**. Seeding is idempotent and only proceeds for a labeled Company with no existing workforce, project, staged/applied import, or metric data. It applies the bundled prior-period M4 examples and records an immutable four-week M5 baseline. It does not silently seed or overwrite an existing Company.
+5. In **Create Review**, explicitly select **Seed synthetic demo data**. Seeding is idempotent and only proceeds for a labeled Company with no existing workforce, project, staged/applied import, or metric data. It applies the bundled prior-period M4 examples and records an immutable four-week M5 baseline. It does not silently seed or overwrite an existing Company.
 
-5. Download each of the four synthetic operational CSVs, select it in its matching card, inspect the suggested mapping, keep every column mapped to its same-named field, validate, review the preview, then confirm and apply. The seeded employee and project rows are intentionally duplicates; acknowledge those warnings. Capacity and assignment imports must have no warnings or skipped rows. M4 preserves source-row hashes and canonical links and does not overwrite existing facts.
+6. Download each of the four synthetic operational CSVs, select it in its matching card, inspect the suggested mapping, keep every column mapped to its same-named field, validate, review the preview, then confirm and apply. The seeded employee and project rows are intentionally duplicates; acknowledge those warnings. Capacity and assignment imports must have no warnings or skipped rows. M4 preserves source-row hashes and canonical links and does not overwrite existing facts.
 
    **This demo accepts only the exact built-in synthetic CSV template bytes.** The browser checks before upload, the API rejects non-template operational files before parsing or persisting their source rows, and the API requires the exact same-name field mapping. Direct create/update/delete operations on canonical workforce, project, capacity, and assignment records are also disabled in a seeded M10 workspace; use only the guarded import flow. Do not upload customer, payroll, accounting, personal, or other confidential data. The finance endpoint also rejects any file other than its exact built-in synthetic export before persisting parsed rows.
 
-6. Optionally validate and explicitly confirm the built-in finance CSV. The review shows source-native text, currency, period, and row provenance only; it performs no aggregation, FX conversion, variance, financial classification, or financial conclusion. Leaving finance unselected records an explicit abstention.
+7. Optionally validate and explicitly confirm the built-in finance CSV. The review shows source-native text, currency, period, and row provenance only; it performs no aggregation, FX conversion, variance, financial classification, or financial conclusion. Leaving finance unselected records an explicit abstention.
 
-7. Review the attestations. The four-week planned-assignment comparison is withheld unless the M5 definition, active cohort, and assignment-completeness attestations are all checked and the bounded inputs are compatible. Capacity currentness attestations are recorded separately. These are human attestations, not proof of completeness or source accuracy.
+8. Review the attestations. The four-week planned-assignment comparison is withheld unless the M5 definition, active cohort, and assignment-completeness attestations are all checked and the bounded inputs are compatible. Capacity currentness attestations are recorded separately. These are human attestations, not proof of completeness or source accuracy.
 
-8. Select **Create Position Brief**. Inspect the saved version, M5 run hashes, M4 file/validation hashes, row evidence, exact units and period semantics, limitations, and abstentions in **Position Decision Brief**. Then use **Record Review** to save a human disposition and rationale against the exact result hash. A reviewer can record one immutable disposition per brief; no external action is executed.
+9. Select **Create Position Brief**. Inspect the saved version, M5 run hashes, M4 file/validation hashes, row evidence, exact units and period semantics, limitations, and abstentions in **Position Decision Brief**. Then use **Record Review** to save a human disposition and rationale against the exact result hash. A reviewer can record one immutable disposition per brief; no external action is executed.
 
 Every screen remains labeled synthetic. M5’s recorded capacity and planned assignment hours are not actual work, timesheets, utilization, or financial performance. The comparison is observational and never explains why a plan changed.
 

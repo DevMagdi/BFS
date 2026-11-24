@@ -19,8 +19,8 @@ from businessflow.api.data_import_routes import router as data_import_router
 from businessflow.api.direct_cash_forecast_routes import router as direct_cash_forecast_router
 from businessflow.api.finance_source_routes import router as finance_source_router
 from businessflow.api.finance_source_upload_limit import (
-    FinanceSourceRequestBodyTooLarge,
-    FinanceSourceUploadSizeLimitMiddleware,
+    UploadRequestBodyLimitMiddleware,
+    UploadRequestBodyTooLarge,
 )
 from businessflow.api.financial_assessment_routes import router as financial_assessment_router
 from businessflow.api.financial_calculation_routes import router as financial_calculation_router
@@ -74,7 +74,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     # Add first so the request-context middleware below wraps its early 413 responses.
     application.add_middleware(
-        FinanceSourceUploadSizeLimitMiddleware,
+        UploadRequestBodyLimitMiddleware,
         max_file_bytes=active_settings.import_max_file_bytes,
     )
     engine = create_database_engine(
@@ -113,16 +113,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Do not echo body values: validation failures may contain passwords or bearer tokens.
         return _error_response(request, 422, "invalid_request", "Request validation failed.")
 
-    @application.exception_handler(FinanceSourceRequestBodyTooLarge)
-    async def handle_finance_source_body_limit(
-        request: Request, _exc: FinanceSourceRequestBodyTooLarge
+    @application.exception_handler(UploadRequestBodyTooLarge)
+    async def handle_upload_body_limit(
+        request: Request, exc: UploadRequestBodyTooLarge
     ) -> JSONResponse:
-        return _error_response(
-            request,
-            413,
-            "request_body_too_large",
-            "The finance source intake request exceeds the configured size limit.",
+        message = (
+            exc.detail
+            if isinstance(exc.detail, str)
+            else "The upload request exceeds the configured size limit."
         )
+        return _error_response(request, 413, "request_body_too_large", message)
 
     @application.exception_handler(StarletteHTTPException)
     async def handle_http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:

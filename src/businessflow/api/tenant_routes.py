@@ -174,17 +174,20 @@ def get_memberships(
     )
 
 
-@router.post("/{tenant_id}/memberships", response_model=MembershipResponse, status_code=201)
+@router.post(
+    "/{tenant_id}/memberships",
+    status_code=503,
+    response_model=None,
+    responses={503: {"description": "Verified membership invitations are unavailable"}},
+)
 def add_membership(
     tenant_id: UUID,
     body: MembershipCreateRequest,
-    request: Request,
     user: UserAccount = Depends(get_current_user),
     session: Session = Depends(get_session),
-) -> MembershipResponse:
+) -> None:
     access = require_tenant_access(session, user, tenant_id, "membership:create")
-    row = create_membership(session, access, body, request.state.request_id)
-    return _membership_response(row)
+    create_membership(session, access, body)
 
 
 @router.patch("/{tenant_id}/memberships/{membership_id}", response_model=MembershipResponse)

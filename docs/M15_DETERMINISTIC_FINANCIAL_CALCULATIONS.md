@@ -6,7 +6,7 @@ This branch contains a **bounded, experimental M15 engineering prototype**, not 
 
 The prototype does not close M14's open governance gates: no accountable finance owner, authoritative source/access decision, correction or retention policy, or independently governed control has been approved. Production and customer accounting data remain unauthorized. The roadmap continues to treat M15 as conditional; this prototype is not owner approval, milestone acceptance, a delivery commitment, or authorization to expand the formula scope. See [`roadmap/PRODUCT_ROADMAP.md`](roadmap/PRODUCT_ROADMAP.md).
 
-Only `businessflow.finance.source-group-subtotal` version `1.0.0` is executable, and its catalog state is `executable_mechanical_only` / `mechanical_only_not_accounting_policy`. Gross profit, margin ratios, multi-period/source rollups, and cash forecasts are catalogued as deferred with no executable formula. They require explicit owner decisions and independent expected examples before any future proposal to enable them.
+Only `businessflow.finance.source-group-subtotal` version `1.0.0` is executable in M15, and its catalog state is `executable_mechanical_only` / `mechanical_only_not_accounting_policy`. Gross profit, margin ratios, multi-period/source rollups, and M15 cash-flow formulas remain deferred with no executable M15 formula. A separate M16 prototype now implements only a caller-asserted direct 13-week known-item cash roll-forward; it does not convert M15 accrual amounts to cash or authenticate cash meaning, timing, completeness, or accuracy. See [`M16_DIRECT_CASH_FORECAST.md`](M16_DIRECT_CASH_FORECAST.md). It requires distinct owner decisions and independent expected examples before any broader proposal to enable finance calculations.
 
 ## Default-disabled activation
 
@@ -56,7 +56,9 @@ Replay is a verification operation, not an approval, source refresh, or independ
 
 The database-free unit suite covers M11 exact Decimal behavior and M15 catalog, golden result, lexical input hashing, HMAC binding, evidence eligibility, stale-at-calculation abstention, missing/invalid/duplicate/conflicting rows, limits, feature flags, and replay/tamper detection. PostgreSQL integration tests are authored for M15 API behavior, auth/tenant isolation, RLS, grants, append-only triggers, M14 commitment persistence, the direct `0011`↔`0012` upgrade/downgrade/re-upgrade path, and rejection of an unauthorized migration role without partial schema changes. GitHub Actions is configured to run the full suite with separate PostgreSQL runtime, migration, and admin test roles on PostgreSQL 18.7; offline Alembic SQL is not a substitute for that run.
 
-### Local verification — 2026-11-21
+### M15-scope verification at its delivery — 2026-11-21 (historical)
+
+The results below describe the M15 delivery snapshot before M16 migration `0013_direct_cash_forecast`; they are not the current Alembic head or M16 verification. The current-head regression, full-suite, and M16 verification results are recorded in [`M16_DIRECT_CASH_FORECAST.md`](M16_DIRECT_CASH_FORECAST.md).
 
 - Ruff lint and format checks pass (**151 files**); mypy passes for **105 source files**.
 - The isolated unit suite passes (**105 passed**). `compileall` and `git diff --check` pass.

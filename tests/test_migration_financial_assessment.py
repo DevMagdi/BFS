@@ -51,7 +51,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0012_financial_calculations"
+                "0013_direct_cash_forecast"
             )
             assert (
                 connection.scalar(text("SELECT to_regclass('public.financial_assessments')"))
@@ -360,6 +360,107 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
                 == 2
             )
 
+            assert (
+                connection.scalar(text("SELECT to_regclass('public.direct_cash_forecast_runs')"))
+                == "direct_cash_forecast_runs"
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT relrowsecurity AND relforcerowsecurity FROM pg_class "
+                        "WHERE oid = to_regclass('public.direct_cash_forecast_runs')"
+                    )
+                )
+                is True
+            )
+            assert connection.scalar(
+                text(
+                    "SELECT has_table_privilege('bf_runtime', "
+                    "'direct_cash_forecast_runs', 'SELECT')"
+                )
+            )
+            assert connection.scalar(
+                text(
+                    "SELECT has_table_privilege('bf_runtime', "
+                    "'direct_cash_forecast_runs', 'INSERT')"
+                )
+            )
+            for privilege in ("UPDATE", "DELETE", "TRUNCATE"):
+                assert not connection.scalar(
+                    text(
+                        "SELECT has_table_privilege('bf_runtime', "
+                        "'direct_cash_forecast_runs', :privilege)"
+                    ),
+                    {"privilege": privilege},
+                )
+            assert connection.execute(
+                text("SELECT cmd FROM pg_policies WHERE tablename = 'direct_cash_forecast_runs'")
+            ).scalars().all() == ["ALL"]
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal "
+                        "AND tgname = 'trg_direct_cash_forecast_runs_append_only'"
+                    )
+                )
+                == 1
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_constraint "
+                        "WHERE conname = 'ck_direct_cash_forecast_runs_horizon'"
+                    )
+                )
+                == 1
+            )
+
+        # Exercise the 0012↔0013 M16 boundary and reject a non-migrator upgrade.
+        command.downgrade(_config_for_database(migration_url), "0012_financial_calculations")
+        with migration_engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0012_financial_calculations"
+            )
+            assert (
+                connection.scalar(text("SELECT to_regclass('public.direct_cash_forecast_runs')"))
+                is None
+            )
+            assert (
+                connection.scalar(text("SELECT to_regclass('public.financial_calculation_runs')"))
+                == "financial_calculation_runs"
+            )
+
+        wrong_role_url = admin_base_url.set(database=database_name).render_as_string(
+            hide_password=False
+        )
+        os.environ["MIGRATION_DATABASE_URL"] = wrong_role_url
+        try:
+            with pytest.raises(
+                Exception,
+                match="migrations must run as the dedicated bf_migrator role",
+            ):
+                command.upgrade(_config_for_database(wrong_role_url), "head")
+        finally:
+            os.environ["MIGRATION_DATABASE_URL"] = migration_url
+        with migration_engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0012_financial_calculations"
+            )
+            assert (
+                connection.scalar(text("SELECT to_regclass('public.direct_cash_forecast_runs')"))
+                is None
+            )
+
+        command.upgrade(_config_for_database(migration_url), "head")
+        with migration_engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0013_direct_cash_forecast"
+            )
+            assert (
+                connection.scalar(text("SELECT to_regclass('public.direct_cash_forecast_runs')"))
+                == "direct_cash_forecast_runs"
+            )
+
         # Exercise the 0012 boundary directly, preserving the complete M14 schema on downgrade.
         command.downgrade(_config_for_database(migration_url), "0011_finance_source_intake")
         with migration_engine.connect() as connection:
@@ -422,7 +523,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0012_financial_calculations"
+                "0013_direct_cash_forecast"
             )
             assert (
                 connection.scalar(text("SELECT to_regclass('public.financial_calculation_runs')"))
@@ -464,6 +565,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
                 "finance_source_intakes",
                 "finance_source_row_evidence",
                 "financial_calculation_runs",
+                "direct_cash_forecast_runs",
             ):
                 assert (
                     connection.scalar(
@@ -497,7 +599,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0012_financial_calculations"
+                "0013_direct_cash_forecast"
             )
             assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 6
             assert (
@@ -526,6 +628,10 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
             assert (
                 connection.scalar(text("SELECT to_regclass('public.financial_calculation_runs')"))
                 == "financial_calculation_runs"
+            )
+            assert (
+                connection.scalar(text("SELECT to_regclass('public.direct_cash_forecast_runs')"))
+                == "direct_cash_forecast_runs"
             )
             assert (
                 connection.scalar(

@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     financial_calculations_enabled: bool = Field(
         default=False, validation_alias="FINANCIAL_CALCULATIONS_ENABLED"
     )
+    direct_cash_forecasts_enabled: bool = Field(
+        default=False, validation_alias="DIRECT_CASH_FORECASTS_ENABLED"
+    )
     import_max_file_bytes: int = Field(
         default=25 * 1024 * 1024,
         ge=1024,

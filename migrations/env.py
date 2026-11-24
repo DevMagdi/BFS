@@ -11,6 +11,7 @@ from businessflow.company_context import models as company_context_models  # noq
 from businessflow.company_data import models as company_data_models  # noqa: F401
 from businessflow.data_imports import models as data_import_models  # noqa: F401
 from businessflow.database import Base
+from businessflow.direct_cash_forecasts import models as direct_cash_forecast_models  # noqa: F401
 from businessflow.finance_sources import models as finance_source_models  # noqa: F401
 from businessflow.financial_assessments import models as financial_assessment_models  # noqa: F401
 from businessflow.financial_calculations import models as financial_calculation_models  # noqa: F401

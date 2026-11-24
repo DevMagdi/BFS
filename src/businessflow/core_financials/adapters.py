@@ -9,7 +9,9 @@ from typing import cast
 
 from businessflow.calculation_core.decimal import (
     decimal_text,
+    exact_decimal_sum,
     parse_decimal_text,
+    parse_output_decimal_text,
     validate_currency_code,
 )
 from businessflow.core_financials.contracts import (
@@ -53,6 +55,11 @@ class NormalizedSourceRow:
     mapped_source_values: dict[str, str | None]
     row_status: ImportRowStatus
     issues: tuple[str, ...]
+
+
+def _exact_difference(left: Decimal, right: Decimal) -> Decimal:
+    """Subtract signed source amounts without inheriting the process Decimal context."""
+    return exact_decimal_sum((left, right.copy_negate()))
 
 
 def validate_source_headers(
@@ -200,7 +207,9 @@ def normalize_source_rows(
                 elif account_code is not None and category is not None:
                     account_rule = policy.account_map[account_code]
                     signed_amount = (
-                        debit - credit if account_rule.normal_balance == "debit" else credit - debit
+                        _exact_difference(debit, credit)
+                        if account_rule.normal_balance == "debit"
+                        else _exact_difference(credit, debit)
                     )
         else:
             raw_account = values.get("bank_account_id")
@@ -220,7 +229,7 @@ def normalize_source_rows(
                 if (cash_in > 0) == (cash_out > 0):
                     issues.append("bank_row_must_have_exactly_one_positive_side")
                 else:
-                    signed_amount = cash_in - cash_out
+                    signed_amount = _exact_difference(cash_in, cash_out)
 
         status: ImportRowStatus
         if "duplicate_source_record_id" in issues:
@@ -293,7 +302,12 @@ def normalize_source_rows(
             or original.currency_code != row.currency_code
             or original.signed_amount is None
             or row.signed_amount is None
-            or parse_decimal_text(original.signed_amount) + parse_decimal_text(row.signed_amount)
+            or exact_decimal_sum(
+                (
+                    parse_output_decimal_text(original.signed_amount),
+                    parse_output_decimal_text(row.signed_amount),
+                )
+            )
             != 0
         ):
             reason = "reversal_must_be_linked_exact_opposite_entry"

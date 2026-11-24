@@ -10,7 +10,7 @@ from businessflow.calculation_core.decimal import (
     decimal_text,
     exact_decimal_sum,
     fixed_scale_text,
-    parse_decimal_text,
+    parse_output_decimal_text,
     quantize_decimal,
     round_currency_amount,
 )
@@ -71,6 +71,11 @@ class FinancialRunLine:
     fact: CanonicalFinancialFact
     coefficient: Literal[-1, 1]
     contribution_amount: str
+
+
+def _apply_formula_coefficient(value: Decimal, coefficient: Literal[-1, 1]) -> Decimal:
+    """Apply a formula sign without context-rounded Decimal multiplication."""
+    return value if coefficient == 1 else value.copy_negate()
 
 
 def calculate_financial_metrics(
@@ -254,7 +259,7 @@ def calculate_financial_metrics(
                 else:
                     category_total = (
                         exact_decimal_sum(
-                            parse_decimal_text(row.signed_amount) for row in category_rows
+                            parse_output_decimal_text(row.signed_amount) for row in category_rows
                         )
                         if category_rows
                         else Decimal(0)
@@ -289,7 +294,9 @@ def calculate_financial_metrics(
                 continue
 
             exact_value = exact_decimal_sum(
-                parse_decimal_text(category_totals[category]) * coefficient
+                _apply_formula_coefficient(
+                    parse_output_decimal_text(category_totals[category]), coefficient
+                )
                 for category, coefficient in formula_terms
             )
             for category, coefficient in formula_terms:
@@ -297,7 +304,9 @@ def calculate_financial_metrics(
                     continue
                 for fact in selected:
                     if fact.category == category:
-                        contribution = parse_decimal_text(fact.signed_amount) * coefficient
+                        contribution = _apply_formula_coefficient(
+                            parse_output_decimal_text(fact.signed_amount), coefficient
+                        )
                         lines.append(
                             FinancialRunLine(
                                 metric=metric,
@@ -309,7 +318,9 @@ def calculate_financial_metrics(
             included_count = sum(1 for fact in selected if fact.category in set(required_coverage))
         else:
             exact_value = (
-                exact_decimal_sum(parse_decimal_text(fact.signed_amount) for fact in selected)
+                exact_decimal_sum(
+                    parse_output_decimal_text(fact.signed_amount) for fact in selected
+                )
                 if selected
                 else Decimal(0)
             )

@@ -326,6 +326,36 @@ def test_first_persisted_workflow_calculates_only_revenue_with_exact_control_and
     assert not any(statement.code == "cash_flow_scope" for statement in analysis)
 
 
+def test_revenue_formula_and_evidence_preserve_precision_beyond_default_decimal_context() -> None:
+    large_amount = "123456789012345678901234567890.12"
+    facts = (
+        _fact(
+            import_id=LEDGER_IMPORT_ID,
+            source_type="general_ledger",
+            category="revenue",
+            amount=large_amount,
+            row_number=2,
+            account_code="4000",
+        ),
+        _fact(
+            import_id=LEDGER_IMPORT_ID,
+            source_type="general_ledger",
+            category="revenue_reduction",
+            amount="0.01",
+            row_number=3,
+            account_code="4090",
+        ),
+    )
+
+    results, _analysis, lines, state = _run(facts=facts, requested_metrics=("revenue",))
+
+    revenue = results[0]
+    assert state == "calculated"
+    assert revenue.category_totals == {"revenue": large_amount, "revenue_reduction": "0.01"}
+    assert revenue.exact_value == "123456789012345678901234567890.11"
+    assert {line.contribution_amount for line in lines} == {large_amount, "-0.01"}
+
+
 def test_run_api_contract_is_revenue_only_and_requires_general_ledger_input() -> None:
     request = CoreFinancialRunCreateRequest(
         policy_id=POLICY_ID,
@@ -455,6 +485,38 @@ def test_ledger_adapter_uses_explicit_mapping_normal_balance_and_declared_period
     assert "transaction_date_outside_declared_source_period" in rows[1].issues
 
 
+def test_ledger_adapter_preserves_exact_large_amounts_and_signed_65_character_results() -> None:
+    headers = tuple(f"column_{index}" for index, _ in enumerate(LEDGER_FIELDS))
+    large_amount = "123456789012345678901234567890.12"
+    maximum_amount = "9" * 64
+    csv = (
+        ",".join(headers)
+        + "\n"
+        + f"large-credit,2026-11-10,4000,0,{large_amount},USD,normal,\n"
+        + f"large-debit,2026-11-11,4000,{maximum_amount},0,USD,normal,\n"
+    )
+    sheet = parse_file("large-ledger.csv", csv.encode(), max_rows=10).worksheets[0]
+
+    rows = normalize_source_rows(
+        sheet,
+        source_type="general_ledger",
+        source_key="ledger-main",
+        file_hash="a" * 64,
+        mapping_hash="b" * 64,
+        policy_hash="c" * 64,
+        field_mapping=dict(zip(LEDGER_FIELDS, headers, strict=True)),
+        policy=_policy(),
+        policy_id=str(POLICY_ID),
+        source_period_start=REQUEST_START,
+        source_period_end=REQUEST_END,
+    )
+
+    assert [row.row_status for row in rows] == ["accepted", "accepted"]
+    assert rows[0].signed_amount == large_amount
+    assert rows[1].signed_amount == f"-{maximum_amount}"
+    assert len(rows[1].signed_amount) == 65
+
+
 def test_bank_adapter_requires_bank_account_identity_and_preserves_cash_movement_sign() -> None:
     headers = tuple(f"bank_column_{index}" for index, _ in enumerate(BANK_FIELDS))
     csv = (
@@ -462,6 +524,7 @@ def test_bank_adapter_requires_bank_account_identity_and_preserves_cash_movement
         + "\n"
         + "bank-1,2026-11-10,operating-1,75,0,USD,normal,\n"
         + "bank-2,2026-11-11,,0,25,USD,normal,\n"
+        + f"bank-large-out,2026-11-12,operating-1,0,{'9' * 64},USD,normal,\n"
     )
     sheet = parse_file("bank.csv", csv.encode(), max_rows=10).worksheets[0]
     mapping = CoreFinancialMappingCreateRequest(
@@ -489,6 +552,8 @@ def test_bank_adapter_requires_bank_account_identity_and_preserves_cash_movement
     assert rows[0].signed_amount == "75"
     assert rows[1].row_status == "rejected"
     assert "bank_account_id_invalid" in rows[1].issues
+    assert rows[2].row_status == "accepted"
+    assert rows[2].signed_amount == f"-{'9' * 64}"
 
 
 def test_reversal_must_be_exact_opposite_and_binds_to_policy_version() -> None:
@@ -543,6 +608,39 @@ def test_reversal_must_be_exact_opposite_and_binds_to_policy_version() -> None:
     )
     assert wrong_policy[0].row_status == "rejected"
     assert "reversal_original_missing_or_policy_version_mismatch" in wrong_policy[0].issues
+
+
+def test_reversal_comparison_does_not_round_large_amounts_into_a_false_match() -> None:
+    headers = tuple(f"ledger_column_{index}" for index, _ in enumerate(LEDGER_FIELDS))
+    original_amount = "123456789012345678901234567890"
+    mismatched_reversal = "123456789012345678901234567891"
+    csv = (
+        ",".join(headers)
+        + "\n"
+        + f"sale-original,2026-11-10,4000,0,{original_amount},USD,normal,\n"
+        + f"sale-reversal,2026-11-12,4000,{mismatched_reversal},0,USD,reversal,sale-original\n"
+    )
+    sheet = parse_file("large-reversal.csv", csv.encode(), max_rows=10).worksheets[0]
+
+    rows = normalize_source_rows(
+        sheet,
+        source_type="general_ledger",
+        source_key="ledger-main",
+        file_hash="a" * 64,
+        mapping_hash="b" * 64,
+        policy_hash="c" * 64,
+        field_mapping=dict(zip(LEDGER_FIELDS, headers, strict=True)),
+        policy=_policy(),
+        policy_id=str(POLICY_ID),
+        source_period_start=REQUEST_START,
+        source_period_end=REQUEST_END,
+    )
+
+    assert rows[0].row_status == "accepted"
+    assert rows[0].signed_amount == original_amount
+    assert rows[1].row_status == "rejected"
+    assert rows[1].signed_amount == f"-{mismatched_reversal}"
+    assert "reversal_must_be_linked_exact_opposite_entry" in rows[1].issues
 
 
 def test_core_financials_flag_defaults_off_and_cannot_be_enabled_in_production() -> None:

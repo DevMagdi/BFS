@@ -341,7 +341,7 @@ def upgrade() -> None:
         sa.Column("account_code", sa.String(length=128), nullable=True),
         sa.Column("category", sa.String(length=32), nullable=True),
         sa.Column("event_type", sa.String(length=16), nullable=True),
-        sa.Column("signed_amount", sa.String(length=64), nullable=True),
+        sa.Column("signed_amount", sa.String(length=65), nullable=True),
         sa.Column("reverses_record_id", sa.String(length=256), nullable=True),
         sa.Column("canonical_record_key", sa.String(length=64), nullable=True),
         sa.Column("source_row_hash", sa.String(length=64), nullable=False),

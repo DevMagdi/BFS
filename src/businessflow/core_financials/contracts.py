@@ -52,6 +52,15 @@ MoneyText = Annotated[
         pattern=r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$",
     ),
 ]
+SignedAmountText = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        min_length=1,
+        max_length=65,
+        pattern=r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$",
+    ),
+]
 OutputMoneyText = Annotated[
     str,
     StringConstraints(
@@ -358,7 +367,7 @@ class CoreFinancialRecordResponse(StrictModel):
     account_code: str | None
     category: FinancialCategory | None
     event_type: TransactionKind | None
-    signed_amount: MoneyText | None
+    signed_amount: SignedAmountText | None
     row_status: ImportRowStatus
     row_hash: HashText
     issues: tuple[str, ...]
@@ -531,7 +540,7 @@ class CoreFinancialRunEvidenceResponse(StrictModel):
     account_code: str | None
     category: FinancialCategory | None
     event_type: TransactionKind
-    source_signed_amount: MoneyText
+    source_signed_amount: SignedAmountText
     formula_coefficient: Literal[-1, 1]
     contribution_amount: OutputMoneyText
 

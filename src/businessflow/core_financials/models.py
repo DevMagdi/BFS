@@ -382,7 +382,7 @@ class CoreFinancialRecord(Base):
     account_code: Mapped[str | None] = mapped_column(String(128))
     category: Mapped[str | None] = mapped_column(String(32))
     event_type: Mapped[str | None] = mapped_column(String(16))
-    signed_amount: Mapped[str | None] = mapped_column(String(64))
+    signed_amount: Mapped[str | None] = mapped_column(String(65))
     reverses_record_id: Mapped[str | None] = mapped_column(String(256))
     canonical_record_key: Mapped[str | None] = mapped_column(String(64))
     source_row_hash: Mapped[str] = mapped_column(String(64), nullable=False)

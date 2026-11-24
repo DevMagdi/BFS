@@ -12,7 +12,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from businessflow.audit import record_event
-from businessflow.calculation_core.decimal import parse_decimal_text, validate_currency_code
+from businessflow.calculation_core.decimal import parse_output_decimal_text, validate_currency_code
 from businessflow.config import Settings
 from businessflow.core_financials.adapters import (
     NormalizedSourceRow,
@@ -760,8 +760,10 @@ def _verify_import_integrity(
                 or (source_import.source_type == "bank_activity" and record.category is not None)
             ):
                 raise _integrity_error()
+            if len(record.signed_amount) > 65:
+                raise _integrity_error()
             try:
-                parse_decimal_text(record.signed_amount)
+                parse_output_decimal_text(record.signed_amount)
                 validate_currency_code(record.currency_code)
             except ValueError:
                 raise _integrity_error() from None

@@ -234,6 +234,90 @@ def test_revenue_only_workflow_imports_calculates_reconciles_traces_and_replays(
     assert run_history.json()["total"] == 1
 
 
+def test_fractional_and_max_precision_amounts_round_trip_through_import_run_and_evidence(client):
+    owner = register_user(client, f"core-financials-decimal-{uuid4().hex}@example.com")
+    headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="Core Financials Decimal Test",
+        company_name="Synthetic Decimal Test Company",
+        key=f"core-financials-decimal-{uuid4().hex}",
+    )
+    policy = _create_revenue_policy(client, tenant["id"], headers)
+    mapping = _create_mapping(client, tenant["id"], headers)
+    header_names = (
+        "record_id",
+        "transaction_date",
+        "account_code",
+        "debit",
+        "credit",
+        "currency",
+        "event_type",
+        "reversal_of",
+    )
+    maximum_amount = "9" * 64
+    content = (
+        ",".join(header_names)
+        + "\n"
+        + "sale-cent,2026-11-10,4000,0,1000.25,USD,normal,\n"
+        + "refund-cent,2026-11-18,4090,0.10,0,USD,refund,\n"
+        + f"large-debit,2026-11-20,4000,{maximum_amount},0,USD,normal,\n"
+    ).encode("utf-8")
+    metadata = {
+        "source_key": "ledger-demo",
+        "source_type": "general_ledger",
+        "mapping_id": mapping["id"],
+        "policy_id": policy["id"],
+        "period_start": "2026-11-01",
+        "period_end": "2026-11-30",
+        "period_completeness": "complete",
+    }
+    imported_response = client.post(
+        f"{_base(tenant['id'])}/imports",
+        data={"metadata_json": json.dumps(metadata)},
+        files={"file": ("decimal-ledger.csv", content, "text/csv")},
+        headers={**headers, "Idempotency-Key": f"decimal-flow-{uuid4().hex}"},
+    )
+    assert imported_response.status_code == 201, imported_response.text
+    imported = imported_response.json()
+    assert imported["quality_status"] == "passed"
+    records_response = client.get(
+        f"{_base(tenant['id'])}/imports/{imported['id']}/records?limit=100&offset=0",
+        headers=headers,
+    )
+    assert records_response.status_code == 200, records_response.text
+    records = records_response.json()["items"]
+    assert [item["signed_amount"] for item in records] == [
+        "1000.25",
+        "0.1",
+        f"-{maximum_amount}",
+    ]
+
+    run_response = client.post(
+        f"{_base(tenant['id'])}/runs",
+        json={
+            "policy_id": policy["id"],
+            "ledger_import_id": imported["id"],
+            "period_start": "2026-11-01",
+            "period_end": "2026-11-30",
+            "currency_code": "USD",
+        },
+        headers=headers,
+    )
+    assert run_response.status_code == 201, run_response.text
+    assert run_response.json()["state"] == "calculated"
+    evidence_response = client.get(
+        f"{_base(tenant['id'])}/runs/{run_response.json()['id']}/evidence?metric=revenue&limit=100&offset=0",
+        headers=headers,
+    )
+    assert evidence_response.status_code == 200, evidence_response.text
+    evidence = evidence_response.json()["items"]
+    assert len(evidence) == 3
+    assert f"-{maximum_amount}" in {item["source_signed_amount"] for item in evidence}
+    assert "-0.1" in {item["contribution_amount"] for item in evidence}
+
+
 def test_core_financials_authorization_and_company_scope_are_enforced(client):
     owner = register_user(client, f"core-financials-auth-owner-{uuid4().hex}@example.com")
     owner_headers = auth_headers(owner)

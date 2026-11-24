@@ -104,6 +104,9 @@ def calculate_financial_metrics(
         or any(metric not in FINANCIAL_MEASURES for metric in selected_metrics)
     ):
         raise ValueError("requested_metrics must be a non-empty set of supported measures")
+    control_metrics = [control.metric for control in controls]
+    if len(control_metrics) != len(set(control_metrics)):
+        raise ValueError("at most one reconciliation control per metric is supported")
     controls_by_metric = {control.metric: control for control in controls}
     facts_by_import: dict[UUID, list[CanonicalFinancialFact]] = {}
     for fact in facts:

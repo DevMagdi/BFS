@@ -388,6 +388,31 @@ def test_run_api_contract_is_revenue_only_and_requires_general_ledger_input() ->
         )
 
 
+def test_run_rejects_multiple_controls_for_the_same_measure() -> None:
+    control = MetricControl(
+        metric="revenue",
+        expected_value="900",
+        currency_code="USD",
+        source=ControlSource(
+            source_id="separate-control-export",
+            source_hash="e" * 64,
+            record_locator="control:row:1",
+        ),
+    )
+
+    with pytest.raises(ValidationError, match="one reconciliation control per metric"):
+        CoreFinancialRunCreateRequest(
+            policy_id=POLICY_ID,
+            ledger_import_id=LEDGER_IMPORT_ID,
+            period_start=REQUEST_START,
+            period_end=REQUEST_END,
+            currency_code="USD",
+            controls=(control, control),
+        )
+    with pytest.raises(ValueError, match="one reconciliation control per metric"):
+        _run(controls=(control, control))
+
+
 def test_not_applicable_formula_categories_contribute_zero_but_surprise_rows_abstain() -> None:
     policy = _policy(not_applicable_categories=("non_operating_income",))
     clean_facts = _facts(include_non_operating_income=False)

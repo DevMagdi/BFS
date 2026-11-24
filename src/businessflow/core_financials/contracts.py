@@ -433,6 +433,9 @@ class CoreFinancialRunCreateRequest(StrictModel):
     def validate_run_input(self) -> CoreFinancialRunCreateRequest:
         if self.period_end < self.period_start:
             raise ValueError("period_end must not precede period_start")
+        control_metrics = [control.metric for control in self.controls]
+        if len(control_metrics) != len(set(control_metrics)):
+            raise ValueError("only one reconciliation control per metric is supported")
         if any(control.metric != self.measure for control in self.controls):
             raise ValueError("reconciliation controls must match the requested measure")
         if any(control.currency_code != self.currency_code for control in self.controls):

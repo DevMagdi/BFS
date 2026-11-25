@@ -106,16 +106,18 @@ def _fact(
     row_number: int,
     transaction_date: date = date(2026, 11, 10),
     account_code: str | None = None,
+    currency_code: str = "USD",
+    event_type: str = "normal",
 ) -> CanonicalFinancialFact:
     return CanonicalFinancialFact(
         id=UUID(int=row_number),
         import_id=import_id,
         source_record_id=f"record-{row_number}",
         transaction_date=transaction_date,
-        currency_code="USD",
+        currency_code=currency_code,
         account_code=account_code,
         category=category,  # type: ignore[arg-type]
-        event_type="normal",
+        event_type=event_type,
         signed_amount=amount,
         source_row_number=row_number,
         source_row_hash=f"{row_number:064x}",
@@ -250,6 +252,8 @@ def test_policy_template_is_explicit_but_unknown_coverage_never_yields_authorita
 ):
     template = illustrative_policy_template()
     assert set(template.category_coverage.values()) == {"unknown"}
+    assert template.cash_flow_policy is not None
+    assert template.cash_flow_policy.transfer_treatment == "exclude_marked_transfers"
     results, _analysis, _lines, state = _run(policy=template)
     metrics = _metric_map(results)
     assert state == "incomplete"
@@ -294,6 +298,269 @@ def test_complete_policy_calculates_signed_p_and_l_and_net_bank_movement_exactly
     assert metrics["revenue"].reconciliation.state == "not_provided"
     assert len([line for line in lines if line.metric == "revenue"]) == 2
     assert any(statement.code == "cash_flow_scope" for statement in analysis)
+
+
+@pytest.mark.parametrize(
+    ("metric", "rows", "expected"),
+    [
+        (
+            "revenue",
+            (("revenue", "1000", "4000", "normal"), ("revenue_reduction", "100", "4090", "refund")),
+            "900",
+        ),
+        (
+            "expenses",
+            (
+                ("cost_of_sales", "300", "5000", "normal"),
+                ("operating_expense", "200", "6000", "normal"),
+                ("non_operating_expense", "10", "7100", "adjustment"),
+                ("tax_expense", "20", "8000", "normal"),
+            ),
+            "530",
+        ),
+        (
+            "gross_profit",
+            (
+                ("revenue", "1000", "4000", "normal"),
+                ("revenue_reduction", "100", "4090", "refund"),
+                ("cost_of_sales", "300", "5000", "normal"),
+            ),
+            "600",
+        ),
+        (
+            "operating_profit",
+            (
+                ("revenue", "1000", "4000", "normal"),
+                ("revenue_reduction", "100", "4090", "refund"),
+                ("cost_of_sales", "300", "5000", "normal"),
+                ("operating_expense", "200", "6000", "normal"),
+            ),
+            "400",
+        ),
+        (
+            "net_profit",
+            (
+                ("revenue", "1000", "4000", "normal"),
+                ("revenue_reduction", "100", "4090", "refund"),
+                ("cost_of_sales", "300", "5000", "normal"),
+                ("operating_expense", "200", "6000", "normal"),
+                ("non_operating_income", "50", "7000", "normal"),
+                ("non_operating_expense", "10", "7100", "normal"),
+                ("tax_expense", "20", "8000", "normal"),
+            ),
+            "420",
+        ),
+        (
+            "cash_flow",
+            (
+                (None, "750", "operating-1", "normal"),
+                (None, "-100", "operating-1", "refund"),
+                (None, "50", "operating-1", "transfer"),
+            ),
+            "650",
+        ),
+    ],
+)
+def test_independent_golden_dataset_for_each_measure(metric, rows, expected) -> None:
+    source_type = "bank_activity" if metric == "cash_flow" else "general_ledger"
+    import_id = BANK_IMPORT_ID if metric == "cash_flow" else LEDGER_IMPORT_ID
+    facts = tuple(
+        _fact(
+            import_id=import_id,
+            source_type=source_type,
+            category=category,
+            amount=amount,
+            row_number=index + 20,
+            account_code=account_code,
+            event_type=event_type,
+        )
+        for index, (category, amount, account_code, event_type) in enumerate(rows)
+    )
+
+    results, _analysis, lines, state = _run(facts=facts, requested_metrics=(metric,))
+
+    result = results[0]
+    assert state == "calculated"
+    assert result.metric == metric
+    assert result.exact_value == expected
+    assert result.reported_value == expected
+    assert result.source_import_ids == (import_id,)
+    if metric == "cash_flow":
+        assert result.excluded_transfer_count == 1
+        assert {line.fact.event_type for line in lines} == {"normal", "refund"}
+    else:
+        assert result.excluded_transfer_count == 0
+        assert all(line.fact.source_type == "general_ledger" for line in lines)
+
+
+def test_p_and_l_measures_reconcile_cross_metric_identities_but_cash_flow_remains_distinct() -> (
+    None
+):
+    results, _analysis, _lines, state = _run()
+    metrics = _metric_map(results)
+    assert state == "calculated"
+    assert metrics["gross_profit"].exact_value == (str(int(metrics["revenue"].exact_value) - 300))
+    assert metrics["operating_profit"].exact_value == (
+        str(int(metrics["gross_profit"].exact_value) - 200)
+    )
+    assert metrics["net_profit"].exact_value == (
+        str(int(metrics["operating_profit"].exact_value) + 50 - 10 - 20)
+    )
+    assert metrics["expenses"].exact_value == "530"
+    assert metrics["cash_flow"].exact_value == "650"
+    assert metrics["cash_flow"].exact_value != metrics["net_profit"].exact_value
+    assert metrics["cash_flow"].source_import_ids == (BANK_IMPORT_ID,)
+    assert metrics["net_profit"].source_import_ids == (LEDGER_IMPORT_ID,)
+    cash_flow_scope = next(item for item in _run()[1] if item.code == "cash_flow_scope")
+    assert "Opening and closing balances are not reported or inferred" in cash_flow_scope.text
+    assert not any("balance" in field for field in BANK_FIELDS)
+
+
+def test_cash_flow_transfer_rule_is_explicit_and_unmatched_pnl_rows_never_supply_cash() -> None:
+    facts = (
+        _fact(
+            import_id=BANK_IMPORT_ID,
+            source_type="bank_activity",
+            category=None,
+            amount="100",
+            row_number=30,
+            account_code="operating-1",
+        ),
+        _fact(
+            import_id=BANK_IMPORT_ID,
+            source_type="bank_activity",
+            category=None,
+            amount="-40",
+            row_number=31,
+            account_code="operating-1",
+            event_type="transfer",
+        ),
+    )
+    excluded = _metric_map(_run(facts=facts, requested_metrics=("cash_flow",))[0])["cash_flow"]
+    assert excluded.exact_value == "100"
+    assert excluded.excluded_transfer_count == 1
+
+    policy_payload = _policy().model_dump(mode="json")
+    policy_payload["cash_flow_policy"]["transfer_treatment"] = (
+        "include_marked_transfers_as_observed_movements"
+    )
+    included_policy = CoreFinancialPolicyCreateRequest.model_validate(policy_payload)
+    included = _metric_map(
+        _run(policy=included_policy, facts=facts, requested_metrics=("cash_flow",))[0]
+    )["cash_flow"]
+    assert included.exact_value == "60"
+    assert included.excluded_transfer_count == 0
+
+    pnl_only = (
+        _fact(
+            import_id=LEDGER_IMPORT_ID,
+            source_type="general_ledger",
+            category="revenue",
+            amount="5000",
+            row_number=32,
+            account_code="4000",
+        ),
+    )
+    results, _analysis, lines, state = calculate_financial_metrics(
+        policy=_policy(),
+        policy_version=1,
+        request_period_start=REQUEST_START,
+        request_period_end=REQUEST_END,
+        currency_code="USD",
+        ledger_import=_import_state(LEDGER_IMPORT_ID, "general_ledger"),
+        bank_import=None,
+        facts=pnl_only,
+        controls=(),
+        requested_metrics=("cash_flow",),
+    )
+    cash_flow = results[0]
+    assert state == "incomplete"
+    assert cash_flow.status == "missing_source"
+    assert cash_flow.exact_value is None
+    assert "required_source_missing" in cash_flow.reason_codes
+    assert lines == ()
+
+
+def test_source_currency_quality_period_and_cash_policy_gaps_withhold_values() -> None:
+    mixed_currency_facts = (
+        _fact(
+            import_id=LEDGER_IMPORT_ID,
+            source_type="general_ledger",
+            category="revenue",
+            amount="100",
+            row_number=40,
+            account_code="4000",
+        ),
+        _fact(
+            import_id=LEDGER_IMPORT_ID,
+            source_type="general_ledger",
+            category="revenue",
+            amount="100",
+            row_number=41,
+            account_code="4000",
+            currency_code="EUR",
+        ),
+    )
+    revenue = _metric_map(_run(facts=mixed_currency_facts, requested_metrics=("revenue",))[0])[
+        "revenue"
+    ]
+    assert revenue.status == "incomplete"
+    assert revenue.exact_value is None
+    assert revenue.excluded_other_currency_count == 1
+    assert "source_currency_mismatch_no_fx" in revenue.reason_codes
+
+    mixed_bank_facts = (
+        _fact(
+            import_id=BANK_IMPORT_ID,
+            source_type="bank_activity",
+            category=None,
+            amount="100",
+            row_number=42,
+            account_code="operating-1",
+        ),
+        _fact(
+            import_id=BANK_IMPORT_ID,
+            source_type="bank_activity",
+            category=None,
+            amount="-10",
+            row_number=43,
+            account_code="operating-1",
+            currency_code="EUR",
+        ),
+    )
+    bank_cash_flow = _metric_map(_run(facts=mixed_bank_facts, requested_metrics=("cash_flow",))[0])[
+        "cash_flow"
+    ]
+    assert bank_cash_flow.status == "incomplete"
+    assert bank_cash_flow.exact_value is None
+    assert bank_cash_flow.excluded_other_currency_count == 1
+    assert "source_currency_mismatch_no_fx" in bank_cash_flow.reason_codes
+
+    incomplete_bank = _import_state(
+        BANK_IMPORT_ID,
+        "bank_activity",
+        period_completeness="partial",
+        quality_status="incomplete",
+        period_start=date(2026, 11, 15),
+    )
+    cash = _metric_map(_run(bank=incomplete_bank, requested_metrics=("cash_flow",))[0])["cash_flow"]
+    assert cash.status == "incomplete"
+    assert cash.exact_value is None
+    assert {
+        "source_period_completeness_not_asserted",
+        "source_contains_rejected_or_duplicate_rows",
+        "source_period_does_not_cover_requested_period",
+    }.issubset(cash.reason_codes)
+
+    legacy_policy_payload = _policy().model_dump(mode="json")
+    legacy_policy_payload["cash_flow_policy"] = None
+    legacy_policy = CoreFinancialPolicyCreateRequest.model_validate(legacy_policy_payload)
+    legacy_cash = _metric_map(_run(policy=legacy_policy, requested_metrics=("cash_flow",))[0])[
+        "cash_flow"
+    ]
+    assert legacy_cash.status == "incomplete"
+    assert legacy_cash.exact_value is None
+    assert "cash_flow_policy_missing" in legacy_cash.reason_codes
 
 
 def test_first_persisted_workflow_calculates_only_revenue_with_exact_control_and_evidence() -> None:
@@ -356,36 +623,65 @@ def test_revenue_formula_and_evidence_preserve_precision_beyond_default_decimal_
     assert {line.contribution_amount for line in lines} == {large_amount, "-0.01"}
 
 
-def test_run_api_contract_is_revenue_only_and_requires_general_ledger_input() -> None:
-    request = CoreFinancialRunCreateRequest(
-        policy_id=POLICY_ID,
+def test_run_api_contract_selects_measure_and_requires_its_matching_source() -> None:
+    common = {
+        "policy_id": POLICY_ID,
+        "period_start": REQUEST_START,
+        "period_end": REQUEST_END,
+        "currency_code": "USD",
+    }
+    revenue = CoreFinancialRunCreateRequest(
+        **common,
         ledger_import_id=LEDGER_IMPORT_ID,
-        period_start=REQUEST_START,
-        period_end=REQUEST_END,
-        currency_code="USD",
     )
-    assert request.measure == "revenue"
-    assert "bank_import_id" not in request.model_dump(mode="json")
-    assert "bank_import_id" not in CoreFinancialRunCreateRequest.model_fields
+    assert revenue.measure == "revenue"
+    assert revenue.ledger_import_id == LEDGER_IMPORT_ID
+    assert revenue.bank_import_id is None
 
-    with pytest.raises(ValidationError):
-        CoreFinancialRunCreateRequest(
-            policy_id=POLICY_ID,
-            measure="net_profit",
+    for measure in ("expenses", "gross_profit", "operating_profit", "net_profit"):
+        request = CoreFinancialRunCreateRequest(
+            **common,
+            measure=measure,
             ledger_import_id=LEDGER_IMPORT_ID,
-            period_start=REQUEST_START,
-            period_end=REQUEST_END,
-            currency_code="USD",
         )
-    with pytest.raises(ValidationError):
+        assert request.measure == measure
+
+    cash_flow = CoreFinancialRunCreateRequest(
+        **common,
+        measure="cash_flow",
+        bank_import_id=BANK_IMPORT_ID,
+    )
+    assert cash_flow.bank_import_id == BANK_IMPORT_ID
+    assert cash_flow.ledger_import_id is None
+
+    with pytest.raises(ValidationError, match="cash_flow requires a bank import"):
         CoreFinancialRunCreateRequest(
-            policy_id=POLICY_ID,
+            **common,
+            measure="cash_flow",
+            ledger_import_id=LEDGER_IMPORT_ID,
+        )
+    with pytest.raises(ValidationError, match="P&L measures require a ledger import"):
+        CoreFinancialRunCreateRequest(
+            **common,
+            measure="net_profit",
+            bank_import_id=BANK_IMPORT_ID,
+        )
+    with pytest.raises(ValidationError, match="cash_flow requires a bank import"):
+        CoreFinancialRunCreateRequest(
+            **common,
+            measure="cash_flow",
             ledger_import_id=LEDGER_IMPORT_ID,
             bank_import_id=BANK_IMPORT_ID,
-            period_start=REQUEST_START,
-            period_end=REQUEST_END,
-            currency_code="USD",
         )
+    with pytest.raises(ValidationError, match="P&L measures require a ledger import"):
+        CoreFinancialRunCreateRequest(
+            **common,
+            measure="revenue",
+            ledger_import_id=LEDGER_IMPORT_ID,
+            bank_import_id=BANK_IMPORT_ID,
+        )
+    with pytest.raises(ValidationError):
+        CoreFinancialRunCreateRequest(**common)
 
 
 def test_run_rejects_multiple_controls_for_the_same_measure() -> None:
@@ -579,6 +875,58 @@ def test_bank_adapter_requires_bank_account_identity_and_preserves_cash_movement
     assert "bank_account_id_invalid" in rows[1].issues
     assert rows[2].row_status == "accepted"
     assert rows[2].signed_amount == f"-{'9' * 64}"
+
+
+def test_transfer_event_is_accepted_only_by_the_bank_adapter() -> None:
+    bank_headers = tuple(f"bank_column_{index}" for index, _ in enumerate(BANK_FIELDS))
+    bank_sheet = parse_file(
+        "bank-transfer.csv",
+        (
+            ",".join(bank_headers)
+            + "\n"
+            + "bank-transfer,2026-11-10,operating-1,0,25,USD,transfer,\n"
+        ).encode(),
+        max_rows=10,
+    ).worksheets[0]
+    bank_rows = normalize_source_rows(
+        bank_sheet,
+        source_type="bank_activity",
+        source_key="bank-main",
+        file_hash="a" * 64,
+        mapping_hash="b" * 64,
+        policy_hash="c" * 64,
+        field_mapping=dict(zip(BANK_FIELDS, bank_headers, strict=True)),
+        policy=_policy(),
+        policy_id=str(POLICY_ID),
+        source_period_start=REQUEST_START,
+        source_period_end=REQUEST_END,
+    )
+    assert bank_rows[0].row_status == "accepted"
+    assert bank_rows[0].event_type == "transfer"
+
+    ledger_headers = tuple(f"ledger_column_{index}" for index, _ in enumerate(LEDGER_FIELDS))
+    ledger_sheet = parse_file(
+        "ledger-transfer.csv",
+        (
+            ",".join(ledger_headers) + "\n" + "ledger-transfer,2026-11-10,4000,0,25,USD,transfer,\n"
+        ).encode(),
+        max_rows=10,
+    ).worksheets[0]
+    ledger_rows = normalize_source_rows(
+        ledger_sheet,
+        source_type="general_ledger",
+        source_key="ledger-main",
+        file_hash="a" * 64,
+        mapping_hash="b" * 64,
+        policy_hash="c" * 64,
+        field_mapping=dict(zip(LEDGER_FIELDS, ledger_headers, strict=True)),
+        policy=_policy(),
+        policy_id=str(POLICY_ID),
+        source_period_start=REQUEST_START,
+        source_period_end=REQUEST_END,
+    )
+    assert ledger_rows[0].row_status == "rejected"
+    assert "event_type_invalid" in ledger_rows[0].issues
 
 
 def test_reversal_must_be_exact_opposite_and_binds_to_policy_version() -> None:

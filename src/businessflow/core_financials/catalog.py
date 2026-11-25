@@ -4,7 +4,8 @@ from typing import Final
 
 from businessflow.core_financials.contracts import CoreFinancialPolicyCreateRequest
 
-CORE_FINANCIAL_ENGINE_VERSION: Final = "businessflow.core-financials.v2-revenue-only"
+LEGACY_CORE_FINANCIAL_ENGINE_VERSION: Final = "businessflow.core-financials.v2-revenue-only"
+CORE_FINANCIAL_ENGINE_VERSION: Final = "businessflow.core-financials.v3-shared-measures"
 CORE_FINANCIAL_SOURCE_CONTRACT_VERSION: Final = 1
 CORE_FINANCIAL_MAX_CONTROL_COUNT: Final = 6
 CORE_FINANCIAL_MAX_ROWS: Final = 10_000
@@ -84,5 +85,14 @@ def illustrative_policy_template() -> CoreFinancialPolicyCreateRequest:
                 },
             },
             "rounding": {"target": "none", "mode": "half_even"},
+            "cash_flow_policy": {
+                "movement_rule": "cash_in_less_cash_out",
+                "refund_treatment": "include_as_signed_bank_movement",
+                "reversal_treatment": "require_linked_exact_opposite_entry",
+                "adjustment_treatment": "include_as_signed_bank_movement",
+                "transfer_treatment": "exclude_marked_transfers",
+                "opening_balance_treatment": "not_reported_no_balance_fields",
+                "closing_balance_treatment": "not_reported_no_balance_fields",
+            },
         }
     )

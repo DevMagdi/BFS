@@ -152,16 +152,13 @@ def normalize_source_rows(
 
         kind_raw = values.get("event_type")
         event_type: TransactionKind | None = None
+        allowed_event_types = {"normal", "refund", "reversal", "adjustment"}
+        if source_type == "bank_activity":
+            allowed_event_types.add("transfer")
         if (
             kind_raw is not None
             and kind_raw == kind_raw.strip()
-            and kind_raw
-            in {
-                "normal",
-                "refund",
-                "reversal",
-                "adjustment",
-            }
+            and kind_raw in allowed_event_types
         ):
             event_type = cast(TransactionKind, kind_raw)
         else:

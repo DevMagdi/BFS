@@ -74,6 +74,51 @@ def _create_mapping(
     return response.json()
 
 
+def _create_bank_mapping(
+    client: TestClient,
+    tenant_id: str,
+    headers: dict[str, str],
+    source_key: str = "bank-demo",
+) -> dict[str, object]:
+    csv_headers = (
+        "record_id",
+        "transaction_date",
+        "bank_account_id",
+        "cash_in",
+        "cash_out",
+        "currency",
+        "event_type",
+        "reversal_of",
+    )
+    response = client.post(
+        f"{_base(tenant_id)}/mappings",
+        json={
+            "source_key": source_key,
+            "source_type": "bank_activity",
+            "field_mapping": dict(zip(BANK_FIELDS, csv_headers, strict=True)),
+            "ignored_columns": [],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def _create_complete_policy(
+    client: TestClient,
+    tenant_id: str,
+    headers: dict[str, str],
+) -> dict[str, object]:
+    template_response = client.get(f"{_base(tenant_id)}/template", headers=headers)
+    assert template_response.status_code == 200, template_response.text
+    policy = template_response.json()["illustrative_policy"]
+    policy["policy_key"] = "illustrative.six-measure-golden"
+    policy["category_coverage"] = {category: "complete" for category in policy["category_coverage"]}
+    response = client.post(f"{_base(tenant_id)}/policies", json=policy, headers=headers)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
 def _import_revenue_ledger(
     client: TestClient,
     tenant_id: str,
@@ -128,6 +173,52 @@ def _import_revenue_ledger(
     assert replay.status_code == 201, replay.text
     assert replay.json()["id"] == imported["id"]
     assert replay.json()["replayed"] is True
+    return imported, content
+
+
+def _import_bank_activity(
+    client: TestClient,
+    tenant_id: str,
+    headers: dict[str, str],
+    policy: dict[str, object],
+    mapping: dict[str, object],
+) -> tuple[dict[str, object], bytes]:
+    csv_headers = (
+        "record_id",
+        "transaction_date",
+        "bank_account_id",
+        "cash_in",
+        "cash_out",
+        "currency",
+        "event_type",
+        "reversal_of",
+    )
+    csv_rows = [
+        "bank-in-001,2026-11-10,operating-1,750,0,USD,normal,",
+        "bank-out-001,2026-11-12,operating-1,0,100,USD,normal,",
+        "bank-transfer-001,2026-11-15,operating-1,0,50,USD,transfer,",
+    ]
+    content = (",".join(csv_headers) + "\n" + "\n".join(csv_rows) + "\n").encode("utf-8")
+    metadata = {
+        "source_key": "bank-demo",
+        "source_type": "bank_activity",
+        "mapping_id": mapping["id"],
+        "policy_id": policy["id"],
+        "period_start": "2026-11-01",
+        "period_end": "2026-11-30",
+        "period_completeness": "complete",
+    }
+    response = client.post(
+        f"{_base(tenant_id)}/imports",
+        data={"metadata_json": json.dumps(metadata)},
+        files={"file": ("illustrative-bank.csv", content, "text/csv")},
+        headers={**headers, "Idempotency-Key": f"bank-flow-{uuid4().hex}"},
+    )
+    assert response.status_code == 201, response.text
+    imported = response.json()
+    assert imported["source_type"] == "bank_activity"
+    assert imported["quality_status"] == "passed"
+    assert imported["accepted_rows"] == 3
     return imported, content
 
 
@@ -250,7 +341,7 @@ def test_revenue_only_workflow_imports_calculates_reconciles_traces_and_replays(
     assert run["authority"] == "illustrative_not_authoritative"
     assert run["reporting_framework"] == "management_reporting"
     assert run["state"] == "calculated"
-    assert len(run["metrics"]) == 1  # The API increment deliberately exposes Revenue only.
+    assert len(run["metrics"]) == 1  # Each persisted run deliberately selects one measure.
     revenue = run["metrics"][0]
     assert revenue["metric"] == "revenue"
     assert revenue["status"] == "calculated"
@@ -293,6 +384,173 @@ def test_revenue_only_workflow_imports_calculates_reconciles_traces_and_replays(
     assert run_history.status_code == 200, run_history.text
     assert import_history.json()["total"] == 1
     assert run_history.json()["total"] == 1
+
+
+def test_six_measure_workflow_binds_ledger_and_bank_lineage_and_replays(client):
+    owner = register_user(client, f"core-financials-six-{uuid4().hex}@example.com")
+    headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="Core Financials Six-Measure Test",
+        company_name="Synthetic Six-Measure Company",
+        key=f"core-financials-six-{uuid4().hex}",
+    )
+    policy = _create_complete_policy(client, tenant["id"], headers)
+    ledger_mapping = _create_mapping(client, tenant["id"], headers)
+    bank_mapping = _create_bank_mapping(client, tenant["id"], headers)
+
+    ledger_headers = (
+        "record_id",
+        "transaction_date",
+        "account_code",
+        "debit",
+        "credit",
+        "currency",
+        "event_type",
+        "reversal_of",
+    )
+    ledger_rows = [
+        "sale-001,2026-11-01,4000,0,1000,USD,normal,",
+        "refund-001,2026-11-30,4090,100,0,USD,refund,",
+        "cost-001,2026-11-30,5000,300,0,USD,normal,",
+        "opex-001,2026-11-30,6000,200,0,USD,normal,",
+        "nonop-income-001,2026-11-30,7000,0,50,USD,normal,",
+        "nonop-expense-001,2026-11-30,7100,10,0,USD,normal,",
+        "tax-001,2026-11-30,8000,20,0,USD,normal,",
+    ]
+    ledger_content = (",".join(ledger_headers) + "\n" + "\n".join(ledger_rows) + "\n").encode(
+        "utf-8"
+    )
+    ledger_metadata = {
+        "source_key": "ledger-demo",
+        "source_type": "general_ledger",
+        "mapping_id": ledger_mapping["id"],
+        "policy_id": policy["id"],
+        "period_start": "2026-11-01",
+        "period_end": "2026-11-30",
+        "period_completeness": "complete",
+    }
+    ledger_response = client.post(
+        f"{_base(tenant['id'])}/imports",
+        data={"metadata_json": json.dumps(ledger_metadata)},
+        files={"file": ("six-measure-ledger.csv", ledger_content, "text/csv")},
+        headers={**headers, "Idempotency-Key": f"six-ledger-{uuid4().hex}"},
+    )
+    assert ledger_response.status_code == 201, ledger_response.text
+    ledger_import = ledger_response.json()
+    assert ledger_import["quality_status"] == "passed"
+    assert ledger_import["accepted_rows"] == 7
+
+    bank_import, _bank_content = _import_bank_activity(
+        client, tenant["id"], headers, policy, bank_mapping
+    )
+    wrong_ledger_source = client.post(
+        f"{_base(tenant['id'])}/runs",
+        json={
+            "policy_id": policy["id"],
+            "measure": "revenue",
+            "ledger_import_id": bank_import["id"],
+            "period_start": "2026-11-01",
+            "period_end": "2026-11-30",
+            "currency_code": "USD",
+        },
+        headers=headers,
+    )
+    assert wrong_ledger_source.status_code == 409
+    assert wrong_ledger_source.json()["error"]["code"] == "core_financial_run_reference_mismatch"
+
+    wrong_bank_source = client.post(
+        f"{_base(tenant['id'])}/runs",
+        json={
+            "policy_id": policy["id"],
+            "measure": "cash_flow",
+            "bank_import_id": ledger_import["id"],
+            "period_start": "2026-11-01",
+            "period_end": "2026-11-30",
+            "currency_code": "USD",
+        },
+        headers=headers,
+    )
+    assert wrong_bank_source.status_code == 409
+    assert wrong_bank_source.json()["error"]["code"] == "core_financial_run_reference_mismatch"
+
+    expected = {
+        "revenue": "900",
+        "expenses": "530",
+        "gross_profit": "600",
+        "operating_profit": "400",
+        "net_profit": "420",
+    }
+    created_runs: dict[str, dict[str, object]] = {}
+    for measure, value in expected.items():
+        response = client.post(
+            f"{_base(tenant['id'])}/runs",
+            json={
+                "policy_id": policy["id"],
+                "measure": measure,
+                "ledger_import_id": ledger_import["id"],
+                "period_start": "2026-11-01",
+                "period_end": "2026-11-30",
+                "currency_code": "USD",
+            },
+            headers=headers,
+        )
+        assert response.status_code == 201, response.text
+        run = response.json()
+        metric = run["metrics"][0]
+        assert run["state"] == "calculated"
+        assert run["ledger_import_id"] == ledger_import["id"]
+        assert run["bank_import_id"] is None
+        assert metric["metric"] == measure
+        assert metric["exact_value"] == value
+        created_runs[measure] = run
+
+    cash_response = client.post(
+        f"{_base(tenant['id'])}/runs",
+        json={
+            "policy_id": policy["id"],
+            "measure": "cash_flow",
+            "bank_import_id": bank_import["id"],
+            "period_start": "2026-11-01",
+            "period_end": "2026-11-30",
+            "currency_code": "USD",
+        },
+        headers=headers,
+    )
+    assert cash_response.status_code == 201, cash_response.text
+    cash_run = cash_response.json()
+    cash_metric = cash_run["metrics"][0]
+    assert cash_run["state"] == "calculated"
+    assert cash_run["ledger_import_id"] is None
+    assert cash_run["bank_import_id"] == bank_import["id"]
+    assert cash_metric["exact_value"] == "650"
+    assert cash_metric["included_record_count"] == 2
+    assert cash_metric["excluded_transfer_count"] == 1
+    created_runs["cash_flow"] = cash_run
+
+    assert int(created_runs["gross_profit"]["metrics"][0]["exact_value"]) == (
+        int(created_runs["revenue"]["metrics"][0]["exact_value"]) - 300
+    )
+    assert int(created_runs["operating_profit"]["metrics"][0]["exact_value"]) == 400
+    assert int(created_runs["net_profit"]["metrics"][0]["exact_value"]) == 420
+    assert int(created_runs["cash_flow"]["metrics"][0]["exact_value"]) != 420
+
+    cash_evidence = client.get(
+        f"{_base(tenant['id'])}/runs/{cash_run['id']}/evidence?metric=cash_flow&limit=100&offset=0",
+        headers=headers,
+    )
+    assert cash_evidence.status_code == 200, cash_evidence.text
+    assert cash_evidence.json()["total"] == 2
+    assert all(item["source_type"] == "bank_activity" for item in cash_evidence.json()["items"])
+    assert all(
+        item["source_import_id"] == bank_import["id"] for item in cash_evidence.json()["items"]
+    )
+
+    for measure, run in created_runs.items():
+        replay = client.post(f"{_base(tenant['id'])}/runs/{run['id']}/verify", headers=headers)
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["passed"] is True, f"{measure}: {replay.text}"
 
 
 def test_fractional_and_max_precision_amounts_round_trip_through_import_run_and_evidence(client):
@@ -389,38 +647,27 @@ def test_core_financials_authorization_and_company_scope_are_enforced(client):
         company_name="Synthetic Authorization Company",
         key=f"core-financials-auth-{uuid4().hex}",
     )
-    unsupported_bank_mapping = client.post(
-        f"{_base(tenant['id'])}/mappings",
+    policy = _create_revenue_policy(client, tenant["id"], owner_headers)
+    mapping = _create_mapping(client, tenant["id"], owner_headers)
+    bank_mapping = _create_bank_mapping(client, tenant["id"], owner_headers)
+    bank_import, _bank_content = _import_bank_activity(
+        client, tenant["id"], owner_headers, policy, bank_mapping
+    )
+    bank_run = client.post(
+        f"{_base(tenant['id'])}/runs",
         json={
-            "source_key": "bank-demo",
-            "source_type": "bank_activity",
-            "field_mapping": dict(zip(BANK_FIELDS, BANK_FIELDS, strict=True)),
-            "ignored_columns": [],
+            "policy_id": policy["id"],
+            "measure": "cash_flow",
+            "bank_import_id": bank_import["id"],
+            "period_start": "2026-11-01",
+            "period_end": "2026-11-30",
+            "currency_code": "USD",
         },
         headers=owner_headers,
     )
-    assert unsupported_bank_mapping.status_code == 422
-    assert unsupported_bank_mapping.json()["error"]["code"] == "unsupported_source_type"
-
-    policy = _create_revenue_policy(client, tenant["id"], owner_headers)
-    mapping = _create_mapping(client, tenant["id"], owner_headers)
-    bank_metadata = {
-        "source_key": "bank-demo",
-        "source_type": "bank_activity",
-        "mapping_id": str(uuid4()),
-        "policy_id": policy["id"],
-        "period_start": "2026-11-01",
-        "period_end": "2026-11-30",
-        "period_completeness": "complete",
-    }
-    rejected_bank_import = client.post(
-        f"{_base(tenant['id'])}/imports",
-        data={"metadata_json": json.dumps(bank_metadata)},
-        files={"file": ("bank.csv", (",".join(BANK_FIELDS) + "\n").encode(), "text/csv")},
-        headers={**owner_headers, "Idempotency-Key": f"bank-flow-{uuid4().hex}"},
-    )
-    assert rejected_bank_import.status_code == 422
-    assert rejected_bank_import.json()["error"]["code"] == "unsupported_source_type"
+    assert bank_run.status_code == 201, bank_run.text
+    assert bank_run.json()["metrics"][0]["exact_value"] == "650"
+    assert bank_run.json()["ledger_import_id"] is None
 
     imported, _content = _import_revenue_ledger(
         client, tenant["id"], owner_headers, policy, mapping
@@ -434,6 +681,11 @@ def test_core_financials_authorization_and_company_scope_are_enforced(client):
         headers=auth_headers(member),
     )
     assert denied.status_code == 403
+    denied_bank_import = client.get(
+        f"{_base(tenant['id'])}/imports/{bank_import['id']}",
+        headers=auth_headers(member),
+    )
+    assert denied_bank_import.status_code == 403
     denied_policy = client.get(
         f"{_base(tenant['id'])}/policies/{policy['id']}",
         headers=auth_headers(member),
@@ -454,6 +706,11 @@ def test_core_financials_authorization_and_company_scope_are_enforced(client):
         headers=other_headers,
     )
     assert hidden.status_code == 404
+    hidden_bank_import = client.get(
+        f"{_base(other_tenant['id'])}/imports/{bank_import['id']}",
+        headers=other_headers,
+    )
+    assert hidden_bank_import.status_code == 404
     hidden_history = client.get(
         f"{_base(other_tenant['id'])}/imports?limit=100&offset=0",
         headers=other_headers,

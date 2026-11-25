@@ -30,6 +30,7 @@ from businessflow.core_financials.catalog import (
     CORE_FINANCIAL_ENGINE_VERSION,
     CORE_FINANCIAL_MAX_ROWS,
     ILLUSTRATIVE_POLICY_DISCLAIMER,
+    LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
     illustrative_policy_template,
 )
 from businessflow.core_financials.contracts import (
@@ -146,7 +147,9 @@ def _lock_for_key(
 
 
 def _policy_hash(definition: CoreFinancialPolicyCreateRequest) -> str:
-    return content_hash(definition.model_dump(mode="json"))
+    # Excluding null values preserves hashes for immutable v2 policies, which predate the
+    # explicitly versioned Cash Flow rule object.
+    return content_hash(definition.model_dump(mode="json", exclude_none=True))
 
 
 def _mapping_hash(request: CoreFinancialMappingCreateRequest) -> str:
@@ -486,10 +489,11 @@ def _build_import_input_snapshot(
     mapping: CoreFinancialMapping,
     policy: CoreFinancialPolicy,
     source_row_hashes: list[dict[str, object]],
+    engine_version: str = CORE_FINANCIAL_ENGINE_VERSION,
 ) -> dict[str, object]:
     return {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
-        "engine_version": CORE_FINANCIAL_ENGINE_VERSION,
+        "engine_version": engine_version,
         "scope": {"tenant_id": str(tenant_id), "company_id": str(company_id)},
         "source": {
             "source_key": source_key,
@@ -536,7 +540,14 @@ def _import_input_snapshot(
 ) -> dict[str, object]:
     stored_file = row.input_snapshot.get("file") if isinstance(row.input_snapshot, dict) else None
     blank_rows = stored_file.get("blank_rows_ignored") if isinstance(stored_file, dict) else None
-    if isinstance(blank_rows, bool) or not isinstance(blank_rows, int) or blank_rows < 0:
+    engine_version = row.input_snapshot.get("engine_version")
+    if (
+        isinstance(blank_rows, bool)
+        or not isinstance(blank_rows, int)
+        or blank_rows < 0
+        or engine_version
+        not in (LEGACY_CORE_FINANCIAL_ENGINE_VERSION, CORE_FINANCIAL_ENGINE_VERSION)
+    ):
         raise _integrity_error()
     return _build_import_input_snapshot(
         tenant_id=row.tenant_id,
@@ -557,6 +568,7 @@ def _import_input_snapshot(
             {"row_number": record.source_row_number, "row_hash": record.source_row_hash}
             for record in records
         ],
+        engine_version=engine_version,
     )
 
 
@@ -613,10 +625,11 @@ def _import_result_snapshot(
     rows: list[dict[str, object]],
     *,
     quality_status: str,
+    engine_version: str = CORE_FINANCIAL_ENGINE_VERSION,
 ) -> dict[str, object]:
     return {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
-        "engine_version": CORE_FINANCIAL_ENGINE_VERSION,
+        "engine_version": engine_version,
         "counts": _counts_for_rows(rows),
         "quality_status": quality_status,
         "rows": rows,
@@ -677,6 +690,10 @@ def _verify_import_integrity(
         or not isinstance(source_import.result_snapshot, dict)
         or content_hash(source_import.input_snapshot) != source_import.input_hash
         or content_hash(source_import.result_snapshot) != source_import.result_hash
+        or source_import.input_snapshot.get("engine_version")
+        not in (LEGACY_CORE_FINANCIAL_ENGINE_VERSION, CORE_FINANCIAL_ENGINE_VERSION)
+        or source_import.result_snapshot.get("engine_version")
+        != source_import.input_snapshot.get("engine_version")
     ):
         raise _integrity_error()
     mapping = session.scalar(
@@ -774,7 +791,10 @@ def _verify_import_integrity(
     quality_status = (
         "passed" if counts["rejected_rows"] == 0 and counts["duplicate_rows"] == 0 else "incomplete"
     )
-    expected_result = _import_result_snapshot(summaries, quality_status=quality_status)
+    engine_version = cast(str, source_import.input_snapshot["engine_version"])
+    expected_result = _import_result_snapshot(
+        summaries, quality_status=quality_status, engine_version=engine_version
+    )
     expected_input = _import_input_snapshot(source_import, mapping, policy, records)
     if (
         counts["total_rows"] != source_import.total_rows
@@ -1454,7 +1474,7 @@ def _fact_payload(fact: CanonicalFinancialFact) -> dict[str, object]:
 
 
 def _run_request_payload(request: CoreFinancialRunCreateRequest) -> dict[str, object]:
-    return request.model_dump(mode="json")
+    return request.model_dump(mode="json", exclude_none=True)
 
 
 def _run_import_payload(
@@ -1502,6 +1522,7 @@ def _run_input_snapshot(
     request: CoreFinancialRunCreateRequest,
     imports: tuple[tuple[CoreFinancialImport, list[CoreFinancialRecord]] | None, ...],
     facts: tuple[CanonicalFinancialFact, ...],
+    engine_version: str = CORE_FINANCIAL_ENGINE_VERSION,
 ) -> dict[str, object]:
     source_imports = [
         _run_import_payload(source_import, records)
@@ -1521,14 +1542,14 @@ def _run_input_snapshot(
     )
     return {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
-        "engine_version": CORE_FINANCIAL_ENGINE_VERSION,
+        "engine_version": engine_version,
         "scope": {"tenant_id": str(tenant_id), "company_id": str(company_id)},
         "policy": {
             "id": str(policy_row.id),
             "policy_key": policy_row.policy_key,
             "version": policy_row.version,
             "definition_hash": policy_row.definition_hash,
-            "definition": policy.model_dump(mode="json"),
+            "definition": policy.model_dump(mode="json", exclude_none=True),
             "authority": policy_row.authority,
         },
         "request": _run_request_payload(request),
@@ -1542,12 +1563,17 @@ def _run_result_snapshot(
     state: Literal["calculated", "incomplete"],
     metrics: tuple[CoreFinancialMetricResult, ...],
     analysis: tuple[CoreFinancialAnalysisStatement, ...],
+    engine_version: str = CORE_FINANCIAL_ENGINE_VERSION,
 ) -> dict[str, object]:
+    metric_payloads = [item.model_dump(mode="json") for item in metrics]
+    if engine_version == LEGACY_CORE_FINANCIAL_ENGINE_VERSION:
+        for item in metric_payloads:
+            item.pop("excluded_transfer_count", None)
     return {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
-        "engine_version": CORE_FINANCIAL_ENGINE_VERSION,
+        "engine_version": engine_version,
         "state": state,
-        "metrics": [item.model_dump(mode="json") for item in metrics],
+        "metrics": metric_payloads,
         "analysis": [item.model_dump(mode="json") for item in analysis],
     }
 
@@ -1580,11 +1606,12 @@ def _trace_hash(
     result_hash: str,
     evidence_hash: str,
     created_at: datetime,
+    engine_version: str = CORE_FINANCIAL_ENGINE_VERSION,
 ) -> str:
     return content_hash(
         {
             "schema_version": SNAPSHOT_SCHEMA_VERSION,
-            "engine_version": CORE_FINANCIAL_ENGINE_VERSION,
+            "engine_version": engine_version,
             "run_id": str(run_id),
             "input_hash": input_hash,
             "result_hash": result_hash,
@@ -1601,10 +1628,12 @@ def _verify_run_record(session: Session, row: CoreFinancialRun) -> list[CoreFina
         or content_hash(row.input_snapshot) != row.input_hash
         or content_hash(row.result_snapshot) != row.result_hash
         or row.state != row.result_snapshot.get("state")
-        or row.input_snapshot.get("engine_version") != CORE_FINANCIAL_ENGINE_VERSION
-        or row.result_snapshot.get("engine_version") != CORE_FINANCIAL_ENGINE_VERSION
+        or row.input_snapshot.get("engine_version")
+        not in (LEGACY_CORE_FINANCIAL_ENGINE_VERSION, CORE_FINANCIAL_ENGINE_VERSION)
+        or row.result_snapshot.get("engine_version") != row.input_snapshot.get("engine_version")
     ):
         raise _integrity_error()
+    engine_version = cast(str, row.input_snapshot["engine_version"])
     evidence_rows = list(
         session.scalars(
             select(CoreFinancialRunEvidence)
@@ -1623,6 +1652,7 @@ def _verify_run_record(session: Session, row: CoreFinancialRun) -> list[CoreFina
         result_hash=row.result_hash,
         evidence_hash=evidence_hash,
         created_at=row.created_at,
+        engine_version=engine_version,
     )
     if expected_trace != row.trace_hash:
         raise _integrity_error()
@@ -1658,8 +1688,9 @@ def _run_response(session: Session, row: CoreFinancialRun) -> CoreFinancialRunRe
             currency_code=row.currency_code,
             fx_policy="one_currency_no_fx",
             ledger_import_id=row.ledger_import_id,
+            bank_import_id=row.bank_import_id,
             state=cast(Literal["calculated", "incomplete"], row.state),
-            engine_version=CORE_FINANCIAL_ENGINE_VERSION,
+            engine_version=cast(str, row.input_snapshot["engine_version"]),
             metrics=metrics,
             analysis=analysis,
             input_hash=row.input_hash,
@@ -1697,43 +1728,42 @@ def _load_run_calculation_inputs(
     ledger_state: SourceImportState | None = None
     bank_state: SourceImportState | None = None
     facts: list[CanonicalFinancialFact] = []
-    source_import = _get_scoped_import(
-        session,
-        tenant_id=tenant_id,
-        company_id=company_id,
-        import_id=request.ledger_import_id,
+    selected_sources: tuple[tuple[SourceType, UUID | None], ...] = (
+        ("general_ledger", request.ledger_import_id),
+        ("bank_activity", request.bank_import_id),
     )
-    if (
-        source_import.source_type != "general_ledger"
-        or source_import.policy_id != policy_row.id
-        or source_import.policy_version != policy_row.version
-        or source_import.policy_hash != policy_row.definition_hash
-    ):
-        raise ApiError(
-            409,
-            "core_financial_run_reference_mismatch",
-            "The selected import does not match the requested ledger and policy version.",
+    for expected_type, import_id in selected_sources:
+        if import_id is None:
+            input_imports.append(None)
+            continue
+        source_import = _get_scoped_import(
+            session,
+            tenant_id=tenant_id,
+            company_id=company_id,
+            import_id=import_id,
         )
-    _verify_import_integrity(session, source_import)
-    records = list(
-        session.scalars(
-            select(CoreFinancialRecord)
-            .where(
-                CoreFinancialRecord.tenant_id == tenant_id,
-                CoreFinancialRecord.company_id == company_id,
-                CoreFinancialRecord.import_id == source_import.id,
+        if (
+            source_import.source_type != expected_type
+            or source_import.policy_id != policy_row.id
+            or source_import.policy_version != policy_row.version
+            or source_import.policy_hash != policy_row.definition_hash
+        ):
+            raise ApiError(
+                409,
+                "core_financial_run_reference_mismatch",
+                "The selected import does not match the requested source and policy version.",
             )
-            .order_by(CoreFinancialRecord.source_row_number)
+        _mapping, _source_policy, records = _verify_import_integrity(session, source_import)
+        facts.extend(
+            _fact_from_record(record, source_import)
+            for record in records
+            if record.row_status == "accepted"
         )
-    )
-    facts.extend(
-        _fact_from_record(record, source_import)
-        for record in records
-        if record.row_status == "accepted"
-    )
-    ledger_state = _source_import_state(source_import)
-    input_imports.append((source_import, records))
-    input_imports.append(None)
+        input_imports.append((source_import, records))
+        if expected_type == "general_ledger":
+            ledger_state = _source_import_state(source_import)
+        else:
+            bank_state = _source_import_state(source_import)
     return (
         policy_row,
         policy,
@@ -1817,7 +1847,7 @@ def create_core_financial_run(
         policy_version=policy_row.version,
         policy_hash=policy_row.definition_hash,
         ledger_import_id=request.ledger_import_id,
-        bank_import_id=None,
+        bank_import_id=request.bank_import_id,
         period_start=request.period_start,
         period_end=request.period_end,
         currency_code=request.currency_code,
@@ -1857,7 +1887,9 @@ def create_core_financial_run(
         details={
             "policy_id": policy_row.id,
             "policy_version": policy_row.version,
+            "measure": request.measure,
             "ledger_import_id": request.ledger_import_id,
+            "bank_import_id": request.bank_import_id,
             "period_start": request.period_start.isoformat(),
             "period_end": request.period_end.isoformat(),
             "currency_code": request.currency_code,
@@ -1970,12 +2002,13 @@ def verify_core_financial_run(
     if (
         saved_request.policy_id != row.policy_id
         or saved_request.ledger_import_id != row.ledger_import_id
-        or row.bank_import_id is not None
+        or saved_request.bank_import_id != row.bank_import_id
         or saved_request.period_start != row.period_start
         or saved_request.period_end != row.period_end
         or saved_request.currency_code != row.currency_code
     ):
         raise _integrity_error()
+    engine_version = cast(str, row.input_snapshot["engine_version"])
     (
         policy_row,
         policy,
@@ -1997,6 +2030,7 @@ def verify_core_financial_run(
         request=saved_request,
         imports=imports,
         facts=facts,
+        engine_version=engine_version,
     )
     replayed_input_hash = content_hash(replayed_input)
     if replayed_input_hash != row.input_hash or replayed_input != row.input_snapshot:
@@ -2013,7 +2047,12 @@ def verify_core_financial_run(
         controls=saved_request.controls,
         requested_metrics=(saved_request.measure,),
     )
-    replayed_result = _run_result_snapshot(state=replayed_state, metrics=metrics, analysis=analysis)
+    replayed_result = _run_result_snapshot(
+        state=replayed_state,
+        metrics=metrics,
+        analysis=analysis,
+        engine_version=engine_version,
+    )
     replayed_result_hash = content_hash(replayed_result)
     replayed_evidence = sorted(
         (_line_payload(item) for item in lines),
@@ -2029,6 +2068,7 @@ def verify_core_financial_run(
         result_hash=replayed_result_hash,
         evidence_hash=content_hash(replayed_evidence),
         created_at=row.created_at,
+        engine_version=engine_version,
     )
     if replayed_trace_hash != row.trace_hash:
         reasons.append("persisted_trace_hash_mismatch")
@@ -2042,7 +2082,7 @@ def verify_core_financial_run(
         replayed_input_hash=replayed_input_hash,
         recorded_result_hash=row.result_hash,
         replayed_result_hash=replayed_result_hash,
-        engine_version=CORE_FINANCIAL_ENGINE_VERSION,
+        engine_version=engine_version,
     )
 
 

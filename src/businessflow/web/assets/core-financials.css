@@ -114,3 +114,50 @@
   .cf-overview-grid, .cf-overview-checks { grid-template-columns: 1fr; }
   .cf-overview-card-header, .cf-overview-check-header { align-items: center; }
 }
+
+.cf-comparison-panel { border-color: #bdd8ca; background: linear-gradient(180deg, #f8fcf9 0%, #fff 42%); }
+.cf-period-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; margin: 15px 0; }
+.cf-period-fieldset { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; min-width: 0; margin: 0; padding: 12px; border: 1px solid #dbe8df; border-radius: 12px; background: #fff; }
+.cf-period-fieldset legend { padding: 0 6px; color: #31594d; font-size: 12px; font-weight: 800; }
+.cf-period-fieldset .field { min-width: 0; margin: 0; }
+.cf-period-fieldset input { width: 100%; }
+.cf-comparison-results { display: grid; gap: 12px; margin-top: 14px; }
+.cf-comparison-summary { padding: 13px 15px; border: 1px solid #dbe8df; border-radius: 12px; background: #f6faf7; }
+.cf-comparison-summary.is-warning { border-color: #e6d3a2; background: #fffaf0; }
+.cf-comparison-summary h3 { margin: 0 0 6px; color: #294b40; font-size: 17px; }
+.cf-comparison-summary p { margin: 4px 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.cf-comparison-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+.cf-comparison-card { min-width: 0; padding: 13px; border: 1px solid #dce7df; border-radius: 12px; background: #fff; }
+.cf-comparison-card.is-abstained { border-color: #e7d4a5; background: #fffcf5; }
+.cf-comparison-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 9px; }
+.cf-comparison-card h3 { margin: 0; color: #294b40; font-size: 16px; }
+.cf-comparison-badge { flex: 0 0 auto; padding: 3px 8px; border-radius: 999px; color: #315b4d; background: #e4f1e9; font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.cf-comparison-badge.is-abstained { color: #795c1e; background: #f7edcf; }
+.cf-comparison-card p { margin: 5px 0; color: var(--muted); font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
+.cf-comparison-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+.cf-comparison-value { min-width: 0; padding: 9px; border-radius: 9px; background: #f5f8f6; }
+.cf-comparison-value span { display: block; color: #65756e; font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.cf-comparison-value strong { display: block; margin-top: 3px; color: #234a3d; font-size: 15px; overflow-wrap: anywhere; }
+.cf-comparison-variance { padding: 9px; border-left: 3px solid #83ad9a; border-radius: 0 8px 8px 0; background: #f6faf7; }
+.cf-comparison-variance strong { color: #244a3e; }
+.cf-comparison-reasons { margin: 8px 0 0; padding: 8px 10px 8px 24px; border-radius: 9px; color: #6a5729; background: #fff6df; }
+.cf-comparison-reasons li { margin: 3px 0; font-size: 10px; line-height: 1.5; }
+.cf-comparison-section { margin-top: 11px; padding-top: 9px; border-top: 1px solid #e6ece7; }
+.cf-comparison-section h4 { margin: 0 0 5px; color: #35574c; font-size: 12px; }
+.cf-comparison-table { width: 100%; border-collapse: collapse; margin-top: 7px; font-size: 10px; }
+.cf-comparison-table th, .cf-comparison-table td { padding: 6px 5px; border-bottom: 1px solid #e8ede9; text-align: left; vertical-align: top; }
+.cf-comparison-table th { color: #687a72; font-size: 8px; text-transform: uppercase; }
+.cf-comparison-table td { color: #3d5149; overflow-wrap: anywhere; }
+.cf-comparison-links { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; }
+.cf-comparison-links a, .cf-comparison-card a { color: #1c6554; font-size: 10px; font-weight: 750; text-decoration-thickness: 1px; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.cf-comparison-run { margin-top: 6px; padding: 8px; border-radius: 8px; background: #f7f9f7; }
+.cf-comparison-evidence { margin-top: 8px; overflow-x: auto; }
+.cf-comparison-evidence .cf-table { min-width: 720px; }
+@media (max-width: 720px) {
+  .cf-period-grid, .cf-comparison-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 520px) {
+  .cf-period-fieldset { grid-template-columns: 1fr; }
+  .cf-comparison-values { grid-template-columns: 1fr 1fr; }
+  .cf-comparison-card-header { align-items: center; }
+}

@@ -11,6 +11,8 @@ from businessflow.api.dependencies import get_current_user, get_session, get_set
 from businessflow.api.finance_source_limits import FINANCE_SOURCE_MAX_METADATA_BYTES
 from businessflow.config import Settings
 from businessflow.core_financials.contracts import (
+    CoreFinancialComparisonRequest,
+    CoreFinancialComparisonResponse,
     CoreFinancialImportMetadata,
     CoreFinancialImportPage,
     CoreFinancialImportResponse,
@@ -28,10 +30,12 @@ from businessflow.core_financials.contracts import (
     CoreFinancialRunResponse,
     CoreFinancialRunVerificationResponse,
     CoreFinancialTemplateResponse,
+    FinancialCategory,
     FinancialMeasure,
     SourceType,
 )
 from businessflow.core_financials.service import (
+    compare_core_financial_periods,
     create_core_financial_import,
     create_core_financial_mapping,
     create_core_financial_policy,
@@ -373,6 +377,27 @@ def read_core_financial_overview(
     return get_core_financial_overview(session, user, tenant_id, settings=settings)
 
 
+@router.post(
+    "/comparisons",
+    response_model=CoreFinancialComparisonResponse,
+    summary="Compare two selected periods using persisted financial runs",
+    description=(
+        "Select two non-overlapping period windows. The API selects the latest exact-period run "
+        "for each of the six measures, then calculates only when period shape, currency, basis, "
+        "policy, engine, source completeness, and saved measure status are compatible. It does "
+        "not recalculate, impute, convert currencies, or infer causal explanations."
+    ),
+)
+def compare_core_financial_run_periods(
+    tenant_id: UUID,
+    body: CoreFinancialComparisonRequest,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CoreFinancialComparisonResponse:
+    return compare_core_financial_periods(session, user, tenant_id, body, settings=settings)
+
+
 @router.get("/runs/{run_id}", response_model=CoreFinancialRunResponse)
 def read_core_financial_run(
     tenant_id: UUID,
@@ -424,6 +449,7 @@ def read_core_financial_run_evidence(
     limit: PageLimit = 50,
     offset: PageOffset = 0,
     metric: FinancialMeasure | None = None,
+    category: FinancialCategory | None = None,
     user: UserAccount = Depends(get_current_user),
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
@@ -436,5 +462,6 @@ def read_core_financial_run_evidence(
         limit=limit,
         offset=offset,
         metric=metric,
+        category=category,
         settings=settings,
     )

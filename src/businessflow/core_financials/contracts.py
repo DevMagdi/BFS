@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from datetime import date, datetime
 from typing import Annotated, Literal
 from uuid import UUID
@@ -137,6 +138,40 @@ FINANCIAL_MEASURES: tuple[FinancialMeasure, ...] = (
     *P_AND_L_MEASURES,
     "cash_flow",
 )
+PeriodAlignment = Literal["equal_day_count", "equal_calendar_month_count"]
+
+
+def period_alignment(
+    prior_start: date,
+    prior_end: date,
+    current_start: date,
+    current_end: date,
+) -> PeriodAlignment | None:
+    """Match full calendar-month windows by month count and custom windows by inclusive days."""
+    prior_whole_months = (
+        prior_start.day == 1
+        and prior_end.day == calendar.monthrange(prior_end.year, prior_end.month)[1]
+    )
+    current_whole_months = (
+        current_start.day == 1
+        and current_end.day == calendar.monthrange(current_end.year, current_end.month)[1]
+    )
+    if prior_whole_months and current_whole_months:
+        prior_month_count = (
+            (prior_end.year - prior_start.year) * 12 + prior_end.month - prior_start.month + 1
+        )
+        current_month_count = (
+            (current_end.year - current_start.year) * 12
+            + current_end.month
+            - current_start.month
+            + 1
+        )
+        return "equal_calendar_month_count" if prior_month_count == current_month_count else None
+    if prior_whole_months or current_whole_months:
+        return None
+    prior_days = (prior_end - prior_start).days + 1
+    current_days = (current_end - current_start).days + 1
+    return "equal_day_count" if prior_days == current_days else None
 
 
 class AccountRule(StrictModel):
@@ -543,6 +578,28 @@ class CoreFinancialRunPage(StrictModel):
     offset: int
 
 
+class CoreFinancialPeriodSelection(StrictModel):
+    period_start: date
+    period_end: date
+
+    @model_validator(mode="after")
+    def validate_period(self) -> CoreFinancialPeriodSelection:
+        if self.period_end < self.period_start:
+            raise ValueError("period_end must not precede period_start")
+        return self
+
+
+class CoreFinancialComparisonRequest(StrictModel):
+    prior_period: CoreFinancialPeriodSelection
+    current_period: CoreFinancialPeriodSelection
+
+    @model_validator(mode="after")
+    def validate_period_order(self) -> CoreFinancialComparisonRequest:
+        if self.prior_period.period_end >= self.current_period.period_start:
+            raise ValueError("prior_period must end before current_period starts")
+        return self
+
+
 class CoreFinancialOverviewSource(StrictModel):
     id: UUID
     source_key: str
@@ -566,6 +623,33 @@ class CoreFinancialOverviewSource(StrictModel):
     rejected_rows: int
     duplicate_rows: int
     import_url: str
+
+
+class CoreFinancialComparisonRunReference(StrictModel):
+    run_id: UUID
+    measure: FinancialMeasure
+    run_url: str
+    evidence_url: str
+    metric_status: Literal["calculated", "incomplete", "missing_source"]
+    exact_value: OutputMoneyText | None
+    reported_value: OutputMoneyText | None
+    period_start: date
+    period_end: date
+    currency_code: CurrencyCode
+    basis: Literal["accrual", "cash", "cash_movement"]
+    run_state: Literal["calculated", "incomplete"]
+    engine_version: str
+    policy_id: UUID
+    policy_version: int
+    policy_hash: HashText
+    input_hash: HashText
+    result_hash: HashText
+    trace_hash: HashText
+    evidence_count: int = Field(ge=0)
+    source_import: CoreFinancialOverviewSource
+    category_totals: dict[str, OutputMoneyText] = Field(default_factory=dict)
+    formula_terms: tuple[FormulaTerm, ...] = ()
+    reason_codes: tuple[str, ...] = ()
 
 
 class CoreFinancialOverviewMeasure(StrictModel):
@@ -714,6 +798,60 @@ class CoreFinancialRunEvidencePage(StrictModel):
     total: int
     limit: int
     offset: int
+
+
+class CoreFinancialComparisonContributor(StrictModel):
+    category: FinancialCategory
+    prior_contribution: OutputMoneyText
+    current_contribution: OutputMoneyText
+    absolute_variance: OutputMoneyText
+    direction: Literal["increase", "decrease", "unchanged"]
+    prior_evidence_count: int = Field(ge=0)
+    current_evidence_count: int = Field(ge=0)
+    prior_evidence_url: str
+    current_evidence_url: str
+
+
+class CoreFinancialComparisonFinding(StrictModel):
+    measure: FinancialMeasure
+    disposition: Literal["calculated", "abstained"]
+    reason_codes: tuple[str, ...] = ()
+    reasons: tuple[str, ...] = ()
+    prior_run: CoreFinancialComparisonRunReference | None = None
+    current_run: CoreFinancialComparisonRunReference | None = None
+    absolute_variance: OutputMoneyText | None = None
+    percentage_variance: OutputMoneyText | None = None
+    percentage_variance_status: Literal["calculated", "abstained"]
+    percentage_variance_reason_codes: tuple[str, ...] = ()
+    direction: Literal["increase", "decrease", "unchanged"] | None = None
+    prior_margin: OutputMoneyText | None = None
+    current_margin: OutputMoneyText | None = None
+    margin_variance_percentage_points: OutputMoneyText | None = None
+    margin_status: Literal["not_applicable", "calculated", "abstained"]
+    margin_reason_codes: tuple[str, ...] = ()
+    margin_caution_codes: tuple[str, ...] = ()
+    contributors_status: Literal["not_applicable", "calculated", "abstained"]
+    contributors_reason_codes: tuple[str, ...] = ()
+    contributors: list[CoreFinancialComparisonContributor] = Field(default_factory=list)
+
+
+class CoreFinancialComparisonResponse(StrictModel):
+    tenant_id: UUID
+    company_id: UUID
+    selection_rule: Literal["latest_persisted_run_per_measure_exact_period"]
+    prior_period: CoreFinancialPeriodSelection
+    current_period: CoreFinancialPeriodSelection
+    period_alignment: PeriodAlignment | None
+    period_reason_codes: tuple[str, ...] = ()
+    findings: tuple[CoreFinancialComparisonFinding, ...]
+    limitations: tuple[str, ...] = ()
+    assumptions: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def require_all_measures_in_catalog_order(self) -> CoreFinancialComparisonResponse:
+        if tuple(item.measure for item in self.findings) != FINANCIAL_MEASURES:
+            raise ValueError("a period comparison must contain all six measures in catalog order")
+        return self
 
 
 class CoreFinancialTemplateResponse(StrictModel):

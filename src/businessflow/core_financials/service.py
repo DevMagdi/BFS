@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import PurePosixPath
 from typing import BinaryIO, Literal, cast
 from uuid import UUID, uuid4
@@ -12,7 +13,11 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from businessflow.audit import record_event
-from businessflow.calculation_core.decimal import parse_output_decimal_text, validate_currency_code
+from businessflow.calculation_core.decimal import (
+    exact_decimal_sum,
+    parse_output_decimal_text,
+    validate_currency_code,
+)
 from businessflow.config import Settings
 from businessflow.core_financials.adapters import (
     NormalizedSourceRow,
@@ -33,11 +38,15 @@ from businessflow.core_financials.catalog import (
     LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
     illustrative_policy_template,
 )
+from businessflow.core_financials.comparison import ComparisonRunData, build_period_comparison
 from businessflow.core_financials.contracts import (
     BANK_FIELDS,
     FINANCIAL_MEASURES,
     LEDGER_FIELDS,
     CoreFinancialAnalysisStatement,
+    CoreFinancialComparisonRequest,
+    CoreFinancialComparisonResponse,
+    CoreFinancialComparisonRunReference,
     CoreFinancialImportMetadata,
     CoreFinancialImportPage,
     CoreFinancialImportResponse,
@@ -48,6 +57,7 @@ from businessflow.core_financials.contracts import (
     CoreFinancialOverviewMeasure,
     CoreFinancialOverviewResponse,
     CoreFinancialOverviewSource,
+    CoreFinancialPeriodSelection,
     CoreFinancialPolicyCreateRequest,
     CoreFinancialPolicyPage,
     CoreFinancialPolicyResponse,
@@ -62,6 +72,7 @@ from businessflow.core_financials.contracts import (
     CoreFinancialTemplateResponse,
     FinancialCategory,
     FinancialMeasure,
+    FormulaTerm,
     SourceType,
 )
 from businessflow.core_financials.models import (
@@ -2024,6 +2035,238 @@ def _missing_overview_measure(measure: FinancialMeasure) -> CoreFinancialOvervie
     )
 
 
+def _overview_source_from_import(
+    tenant_id: UUID,
+    import_row: CoreFinancialImport,
+) -> CoreFinancialOverviewSource:
+    return CoreFinancialOverviewSource(
+        id=import_row.id,
+        source_key=import_row.source_key,
+        source_type=cast(SourceType, import_row.source_type),
+        file_name=import_row.file_name,
+        file_hash=import_row.file_hash,
+        input_hash=import_row.input_hash,
+        result_hash=import_row.result_hash,
+        mapping_version=import_row.mapping_version,
+        mapping_hash=import_row.mapping_hash,
+        policy_id=import_row.policy_id,
+        policy_version=import_row.policy_version,
+        policy_hash=import_row.policy_hash,
+        period_start=import_row.period_start,
+        period_end=import_row.period_end,
+        period_completeness=cast(
+            Literal["complete", "partial", "unknown"], import_row.period_completeness
+        ),
+        completeness_authority="caller_asserted_not_verified",
+        quality_status=cast(Literal["passed", "incomplete"], import_row.quality_status),
+        total_rows=import_row.total_rows,
+        accepted_rows=import_row.accepted_rows,
+        rejected_rows=import_row.rejected_rows,
+        duplicate_rows=import_row.duplicate_rows,
+        import_url=(f"/api/v1/tenants/{tenant_id}/core-financials/imports/{import_row.id}"),
+    )
+
+
+def _load_comparison_run_data(
+    session: Session,
+    *,
+    tenant_id: UUID,
+    company_id: UUID,
+    row: CoreFinancialRun,
+    measure: FinancialMeasure,
+    source_cache: dict[UUID, tuple[CoreFinancialImport, CoreFinancialOverviewSource]],
+    policy_cache: dict[UUID, tuple[CoreFinancialPolicy, CoreFinancialPolicyCreateRequest]],
+) -> ComparisonRunData:
+    run_response = _run_response(session, row)
+    request_payload = row.input_snapshot.get("request")
+    if not isinstance(request_payload, dict):
+        raise _integrity_error()
+    try:
+        saved_request = CoreFinancialRunCreateRequest.model_validate(request_payload)
+    except ValidationError:
+        raise _integrity_error() from None
+    if (
+        saved_request.measure != measure
+        or saved_request.policy_id != row.policy_id
+        or saved_request.ledger_import_id != row.ledger_import_id
+        or saved_request.bank_import_id != row.bank_import_id
+        or saved_request.period_start != row.period_start
+        or saved_request.period_end != row.period_end
+        or saved_request.currency_code != row.currency_code
+        or len(run_response.metrics) != 1
+        or run_response.metrics[0].metric != measure
+    ):
+        raise _integrity_error()
+    metric = run_response.metrics[0]
+    if (metric.status == "calculated") != (run_response.state == "calculated"):
+        raise _integrity_error()
+    if metric.status == "calculated":
+        if metric.exact_value is None or metric.reported_value is None:
+            raise _integrity_error()
+    elif metric.exact_value is not None or metric.reported_value is not None:
+        raise _integrity_error()
+
+    policy_entry = policy_cache.get(row.policy_id)
+    if policy_entry is None:
+        policy_row = _get_scoped_policy(
+            session,
+            tenant_id=tenant_id,
+            company_id=company_id,
+            policy_id=row.policy_id,
+        )
+        policy_definition = _verify_policy(policy_row)
+        policy_entry = (policy_row, policy_definition)
+        policy_cache[row.policy_id] = policy_entry
+    policy_row, policy_definition = policy_entry
+    if policy_row.version != row.policy_version or policy_row.definition_hash != row.policy_hash:
+        raise _integrity_error()
+
+    formula_terms: tuple[FormulaTerm, ...]
+    if measure == "cash_flow":
+        source_import_id = row.bank_import_id
+        expected_source_type: SourceType = "bank_activity"
+        if row.ledger_import_id is not None:
+            raise _integrity_error()
+        formula_terms = ()
+    else:
+        source_import_id = row.ledger_import_id
+        expected_source_type = "general_ledger"
+        if row.bank_import_id is not None:
+            raise _integrity_error()
+        formula_terms = policy_definition.metric_formulas[measure].terms
+    if source_import_id is None:
+        raise _integrity_error()
+    if metric.source_import_ids and metric.source_import_ids != (source_import_id,):
+        raise _integrity_error()
+
+    source_entry = source_cache.get(source_import_id)
+    if source_entry is None:
+        import_row = _get_scoped_import(
+            session,
+            tenant_id=tenant_id,
+            company_id=company_id,
+            import_id=source_import_id,
+        )
+        _verify_import_integrity(session, import_row)
+        source_entry = (import_row, _overview_source_from_import(tenant_id, import_row))
+        source_cache[source_import_id] = source_entry
+    import_row, source = source_entry
+    if (
+        import_row.source_type != expected_source_type
+        or import_row.policy_id != row.policy_id
+        or import_row.policy_version != row.policy_version
+        or import_row.policy_hash != row.policy_hash
+    ):
+        raise _integrity_error()
+
+    persisted_evidence = _verify_run_record(session, row)
+    evidence_rows = list(
+        session.execute(
+            select(CoreFinancialRunEvidence, CoreFinancialRecord)
+            .join(
+                CoreFinancialRecord,
+                (CoreFinancialRecord.id == CoreFinancialRunEvidence.record_id)
+                & (CoreFinancialRecord.tenant_id == CoreFinancialRunEvidence.tenant_id)
+                & (CoreFinancialRecord.company_id == CoreFinancialRunEvidence.company_id),
+            )
+            .where(
+                CoreFinancialRunEvidence.tenant_id == tenant_id,
+                CoreFinancialRunEvidence.company_id == company_id,
+                CoreFinancialRunEvidence.run_id == row.id,
+                CoreFinancialRunEvidence.metric == measure,
+            )
+            .order_by(CoreFinancialRecord.category, CoreFinancialRecord.id)
+        )
+    )
+    if (
+        len(evidence_rows) != len(persisted_evidence)
+        or len(evidence_rows) != metric.included_record_count
+    ):
+        raise _integrity_error()
+
+    coefficient_by_category = {term.category: term.coefficient for term in formula_terms}
+    evidence_values: dict[FinancialCategory, list[Decimal]] = {}
+    evidence_counts: dict[FinancialCategory, int] = {}
+    for evidence, record in evidence_rows:
+        if (
+            record.import_id != source_import_id
+            or record.row_status != "accepted"
+            or record.transaction_date is None
+            or not row.period_start <= record.transaction_date <= row.period_end
+            or record.currency_code != row.currency_code
+        ):
+            raise _integrity_error()
+        if measure == "cash_flow":
+            if evidence.formula_coefficient != 1 or record.signed_amount is None:
+                raise _integrity_error()
+            try:
+                source_amount = parse_output_decimal_text(record.signed_amount)
+                contribution = parse_output_decimal_text(evidence.contribution_amount)
+            except ValueError:
+                raise _integrity_error() from None
+            if contribution != source_amount:
+                raise _integrity_error()
+            continue
+        if (
+            record.category is None
+            or record.category not in coefficient_by_category
+            or record.signed_amount is None
+        ):
+            raise _integrity_error()
+        category = record.category
+        coefficient = coefficient_by_category[category]
+        if evidence.formula_coefficient != coefficient:
+            raise _integrity_error()
+        try:
+            source_amount = parse_output_decimal_text(record.signed_amount)
+            contribution = parse_output_decimal_text(evidence.contribution_amount)
+        except ValueError:
+            raise _integrity_error() from None
+        expected_contribution = source_amount if coefficient == 1 else source_amount.copy_negate()
+        if contribution != expected_contribution:
+            raise _integrity_error()
+        evidence_values.setdefault(category, []).append(contribution)
+        evidence_counts[category] = evidence_counts.get(category, 0) + 1
+    category_contributions = {
+        category: exact_decimal_sum(values) for category, values in evidence_values.items()
+    }
+    evidence_url = (
+        f"/api/v1/tenants/{tenant_id}/core-financials/runs/{row.id}/evidence?metric={measure}"
+    )
+    reference = CoreFinancialComparisonRunReference(
+        run_id=row.id,
+        measure=measure,
+        run_url=f"/api/v1/tenants/{tenant_id}/core-financials/runs/{row.id}",
+        evidence_url=evidence_url,
+        metric_status=metric.status,
+        exact_value=metric.exact_value,
+        reported_value=metric.reported_value,
+        period_start=run_response.period_start,
+        period_end=run_response.period_end,
+        currency_code=run_response.currency_code,
+        basis=metric.basis,
+        run_state=run_response.state,
+        engine_version=run_response.engine_version,
+        policy_id=run_response.policy_id,
+        policy_version=run_response.policy_version,
+        policy_hash=run_response.policy_hash,
+        input_hash=run_response.input_hash,
+        result_hash=run_response.result_hash,
+        trace_hash=run_response.trace_hash,
+        evidence_count=len(evidence_rows),
+        source_import=source,
+        category_totals=metric.category_totals,
+        formula_terms=formula_terms,
+        reason_codes=metric.reason_codes,
+    )
+    return ComparisonRunData(
+        reference=reference,
+        policy=policy_definition,
+        category_contributions=category_contributions,
+        category_evidence_counts=evidence_counts,
+    )
+
+
 def get_core_financial_overview(
     session: Session,
     user: UserAccount,
@@ -2129,32 +2372,7 @@ def get_core_financial_overview(
                 or import_row.policy_hash != row.policy_hash
             ):
                 raise _integrity_error()
-            source = CoreFinancialOverviewSource(
-                id=import_row.id,
-                source_key=import_row.source_key,
-                source_type=import_row.source_type,
-                file_name=import_row.file_name,
-                file_hash=import_row.file_hash,
-                input_hash=import_row.input_hash,
-                result_hash=import_row.result_hash,
-                mapping_version=import_row.mapping_version,
-                mapping_hash=import_row.mapping_hash,
-                policy_id=import_row.policy_id,
-                policy_version=import_row.policy_version,
-                policy_hash=import_row.policy_hash,
-                period_start=import_row.period_start,
-                period_end=import_row.period_end,
-                period_completeness=cast(
-                    Literal["complete", "partial", "unknown"], import_row.period_completeness
-                ),
-                completeness_authority="caller_asserted_not_verified",
-                quality_status=cast(Literal["passed", "incomplete"], import_row.quality_status),
-                total_rows=import_row.total_rows,
-                accepted_rows=import_row.accepted_rows,
-                rejected_rows=import_row.rejected_rows,
-                duplicate_rows=import_row.duplicate_rows,
-                import_url=(f"/api/v1/tenants/{tenant_id}/core-financials/imports/{import_row.id}"),
-            )
+            source = _overview_source_from_import(tenant_id, import_row)
             source_cache[source_import_id] = source
 
         evidence_rows = _verify_run_record(session, row)
@@ -2250,6 +2468,66 @@ def get_core_financial_overview(
             "No missing measure is imputed, no expense category is assumed to be cost of sales, "
             "and no cross-period or cross-currency arithmetic is performed.",
         ),
+    )
+
+
+def compare_core_financial_periods(
+    session: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    request: CoreFinancialComparisonRequest,
+    *,
+    settings: Settings,
+) -> CoreFinancialComparisonResponse:
+    """Analyze exact period selections from tenant-scoped persisted runs; never recalculate them."""
+    ensure_core_financials_enabled(settings)
+    access = require_company_context_access(session, user, tenant_id, "finance:read")
+    filters = (
+        CoreFinancialRun.tenant_id == tenant_id,
+        CoreFinancialRun.company_id == access.company.id,
+    )
+    requested_measure = CoreFinancialRun.input_snapshot["request"]["measure"].as_string()
+    source_cache: dict[UUID, tuple[CoreFinancialImport, CoreFinancialOverviewSource]] = {}
+    policy_cache: dict[UUID, tuple[CoreFinancialPolicy, CoreFinancialPolicyCreateRequest]] = {}
+    comparison_sides: tuple[Literal["prior", "current"], ...] = ("prior", "current")
+    selected_runs: dict[
+        tuple[Literal["prior", "current"], FinancialMeasure], ComparisonRunData | None
+    ] = {(side, measure): None for side in comparison_sides for measure in FINANCIAL_MEASURES}
+    period_selections: tuple[
+        tuple[Literal["prior", "current"], CoreFinancialPeriodSelection], ...
+    ] = (
+        ("prior", request.prior_period),
+        ("current", request.current_period),
+    )
+    for side, period in period_selections:
+        for measure in FINANCIAL_MEASURES:
+            row = session.scalar(
+                select(CoreFinancialRun)
+                .where(
+                    *filters,
+                    CoreFinancialRun.period_start == period.period_start,
+                    CoreFinancialRun.period_end == period.period_end,
+                    requested_measure == measure,
+                )
+                .order_by(CoreFinancialRun.created_at.desc(), CoreFinancialRun.id.desc())
+                .limit(1)
+            )
+            if row is not None:
+                selected_runs[(side, measure)] = _load_comparison_run_data(
+                    session,
+                    tenant_id=tenant_id,
+                    company_id=access.company.id,
+                    row=row,
+                    measure=measure,
+                    source_cache=source_cache,
+                    policy_cache=policy_cache,
+                )
+    return build_period_comparison(
+        tenant_id=tenant_id,
+        company_id=access.company.id,
+        prior_period=request.prior_period,
+        current_period=request.current_period,
+        runs=selected_runs,
     )
 
 
@@ -2379,6 +2657,7 @@ def list_core_financial_run_evidence(
     limit: int,
     offset: int,
     metric: FinancialMeasure | None,
+    category: FinancialCategory | None,
     settings: Settings,
 ) -> CoreFinancialRunEvidencePage:
     ensure_core_financials_enabled(settings)
@@ -2397,8 +2676,20 @@ def list_core_financial_run_evidence(
     ]
     if metric is not None:
         filters.append(CoreFinancialRunEvidence.metric == metric)
+    if category is not None:
+        filters.append(CoreFinancialRecord.category == category)
+    record_join = (
+        (CoreFinancialRecord.id == CoreFinancialRunEvidence.record_id)
+        & (CoreFinancialRecord.tenant_id == CoreFinancialRunEvidence.tenant_id)
+        & (CoreFinancialRecord.company_id == CoreFinancialRunEvidence.company_id)
+    )
     total = (
-        session.scalar(select(func.count()).select_from(CoreFinancialRunEvidence).where(*filters))
+        session.scalar(
+            select(func.count())
+            .select_from(CoreFinancialRunEvidence)
+            .join(CoreFinancialRecord, record_join)
+            .where(*filters)
+        )
         or 0
     )
     evidence_rows = list(

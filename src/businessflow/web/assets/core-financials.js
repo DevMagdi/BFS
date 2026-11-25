@@ -56,6 +56,7 @@
     evidenceItems: [],
     evidenceTotal: 0,
     evidenceOffset: 0,
+    comparisonRequestId: 0,
     controlFile: null,
     importIdempotencyKey: null,
     messageTimer: null,
@@ -1074,6 +1075,315 @@
     }
   }
 
+  function comparisonReasonText(code) {
+    const known = {
+      period_length_mismatch: "The selected periods have incompatible lengths or calendar-month shapes.",
+      prior_run_unavailable: "No saved run exists for this measure in the prior period.",
+      current_run_unavailable: "No saved run exists for this measure in the current period.",
+      currency_mismatch_no_fx: "Currencies differ; no FX conversion is applied.",
+      reporting_basis_mismatch: "Reporting bases differ.",
+      policy_version_mismatch: "Immutable policy versions differ.",
+      calculation_engine_version_mismatch: "Calculation-engine versions differ.",
+      source_type_mismatch: "The source adapter does not match this measure.",
+      prior_measure_incomplete: "The prior-period measure is incomplete or has no exact value.",
+      current_measure_incomplete: "The current-period measure is incomplete or has no exact value.",
+      prior_source_period_completeness_not_asserted: "Prior source completeness was not asserted as complete.",
+      current_source_period_completeness_not_asserted: "Current source completeness was not asserted as complete.",
+      prior_source_quality_incomplete: "Prior source contains rejected or duplicate rows.",
+      current_source_quality_incomplete: "Current source contains rejected or duplicate rows.",
+      zero_prior_value_percentage_unavailable: "Prior value is zero; percentage variance is undefined.",
+      percentage_variance_exceeds_supported_output: "Percentage variance exceeds the supported output range.",
+      comparison_not_comparable: "The comparison is abstained.",
+      profit_measure_not_comparable: "The profit comparison is abstained; margins are unavailable.",
+      prior_revenue_run_unavailable_for_margin: "A compatible prior Revenue run is unavailable for the margin.",
+      current_revenue_run_unavailable_for_margin: "A compatible current Revenue run is unavailable for the margin.",
+      prior_zero_revenue_margin_denominator: "Prior Revenue is zero; prior margin is undefined.",
+      current_zero_revenue_margin_denominator: "Current Revenue is zero; current margin is undefined.",
+      prior_margin_context_mismatch: "Prior Revenue and profit runs do not share the same source and policy context.",
+      current_margin_context_mismatch: "Current Revenue and profit runs do not share the same source and policy context.",
+      margin_revenue_period_comparison_incompatible: "Revenue runs are not comparable for margin analysis.",
+      negative_revenue_prior_denominator: "Prior margin uses negative Revenue; interpret cautiously.",
+      negative_revenue_current_denominator: "Current margin uses negative Revenue; interpret cautiously.",
+      margin_exceeds_supported_output: "Margin exceeds the supported output range.",
+      category_level_evidence_unavailable: "Category contributors are withheld because evidence is unavailable.",
+      category_coverage_not_complete: "Category contributors are withheld because policy coverage is not complete.",
+      category_evidence_totals_mismatch: "Persisted line evidence does not reconcile to the saved category total.",
+      category_totals_formula_mismatch: "Formula-signed category totals do not reconcile to the exact saved measure value.",
+      cash_flow_category_contributors_not_supported: "Cash Flow is net observed bank movement, not a formal cash flow statement; no P&L category contributors are inferred.",
+    };
+    if (known[code]) return known[code];
+    if (code.startsWith("category_coverage_not_complete:")) {
+      return `Policy coverage for ${code.split(":")[1].replaceAll("_", " ")} is not complete.`;
+    }
+    if (code.startsWith("category_evidence_totals_mismatch:")) {
+      return `Persisted evidence does not reconcile for ${code.split(":")[1].replaceAll("_", " ")}.`;
+    }
+    if (code.startsWith("category_level_evidence_missing:")) {
+      return `Category evidence is missing for ${code.split(":")[1].replaceAll("_", " ")}.`;
+    }
+    if (code.startsWith("prior_metric_reason:")) {
+      return `Prior run reason: ${code.split(":")[1].replaceAll("_", " ")}.`;
+    }
+    if (code.startsWith("current_metric_reason:")) {
+      return `Current run reason: ${code.split(":")[1].replaceAll("_", " ")}.`;
+    }
+    return statusText(code);
+  }
+
+  async function revealComparisonEvidence(root, runId, measure, category, side, button) {
+    button.setAttribute("aria-disabled", "true");
+    try {
+      const params = new URLSearchParams({
+        metric: measure,
+        category,
+        limit: String(PAGE_SIZE),
+        offset: "0",
+      });
+      const { data } = await request(
+        `${coreBase()}/runs/${encodeURIComponent(runId)}/evidence?${params}`,
+      );
+      const items = data.items || [];
+      const rows = items.map((item) => [
+        { value: item.source_row_number, className: "cf-mono" },
+        { value: item.source_record_id, className: "cf-break" },
+        { value: item.transaction_date },
+        { value: item.account_code || "—" },
+        { value: item.category || "—" },
+        { value: item.source_signed_amount, className: "cf-mono" },
+        { value: item.formula_coefficient, className: "cf-mono" },
+        { value: item.contribution_amount, className: "cf-mono" },
+        { value: item.source_file_hash, className: "cf-break cf-mono" },
+        { value: item.source_row_hash, className: "cf-break cf-mono" },
+      ]);
+      root.replaceChildren(
+        node("p", "fine-print", `Persisted ${side.toLowerCase()} ${category.replaceAll("_", " ")} evidence · ${items.length} of ${data.total || 0} rows`),
+        table(["Source row", "Record ID", "Date", "Account", "Category", "Signed amount", "Coefficient", "Contribution", "File hash", "Row hash"], rows),
+      );
+      if ((data.total || 0) > items.length) {
+        root.append(node("p", "fine-print", "Evidence is paginated; this view shows the first 100 rows."));
+      }
+    } catch (error) {
+      root.replaceChildren(node("p", "cf-status is-error", error.message || "Category evidence could not be loaded."));
+      handleError(error);
+    } finally {
+      button.removeAttribute("aria-disabled");
+    }
+  }
+
+  function appendComparisonRunTrace(card, side, run) {
+    if (!run) return;
+    const details = node("details", "cf-comparison-section");
+    details.append(node("summary", "", `${side} saved-run trace`));
+    const content = node("div", "cf-comparison-run");
+    const source = run.source_import;
+    content.append(
+      node("p", "", `Run ${run.run_id} · ${run.measure} · ${run.period_start} to ${run.period_end} inclusive`),
+      node("p", "", `Currency ${run.currency_code} · basis ${run.basis} · engine ${run.engine_version} · state ${run.run_state}`),
+      node("p", "", `Policy ${run.policy_id} · version ${run.policy_version} · hash ${run.policy_hash}`),
+      node("p", "", `Source import ${source.id} · ${source.source_type} · ${source.source_key} · ${source.period_completeness} completeness (${source.completeness_authority}) · ${source.quality_status}`),
+      node("p", "cf-hash", `Input ${run.input_hash} · result ${run.result_hash} · trace ${run.trace_hash}`),
+    );
+    const links = node("div", "cf-comparison-links");
+    addOverviewLink(links, "Inspect saved run", "#run-title", () => openOverviewRun(run.run_id));
+    const evidenceLink = node("a", "", `View source evidence (${run.evidence_count})`);
+    evidenceLink.href = "#comparison-title";
+    const evidenceRoot = node("div", "cf-comparison-evidence");
+    evidenceLink.addEventListener("click", (event) => {
+      event.preventDefault();
+      void revealOverviewEvidence(evidenceRoot, run.run_id, run.measure, evidenceLink);
+    });
+    links.append(evidenceLink);
+    content.append(links, evidenceRoot);
+    appendList(
+      content,
+      "Saved measure reason codes",
+      (run.reason_codes || []).map(comparisonReasonText),
+    );
+    appendList(content, "Source import hashes", [
+      `File SHA-256 ${source.file_hash}`,
+      `Import input ${source.input_hash} · result ${source.result_hash}`,
+      `Mapping version ${source.mapping_version} · hash ${source.mapping_hash}`,
+      `Accepted ${source.accepted_rows}/${source.total_rows} · rejected ${source.rejected_rows} · duplicate ${source.duplicate_rows}`,
+    ]);
+    details.append(content);
+    card.append(details);
+  }
+
+  function renderComparisonFinding(finding) {
+    const card = node("article", `cf-comparison-card is-${finding.disposition}`);
+    const heading = node("div", "cf-comparison-card-header");
+    heading.append(
+      node("h3", "", measureLabel(finding.measure)),
+      node("span", `cf-comparison-badge is-${finding.disposition}`, statusText(finding.disposition)),
+    );
+    card.append(heading);
+
+    const values = node("div", "cf-comparison-values");
+    for (const [label, run] of [["Prior exact value", finding.prior_run], ["Current exact value", finding.current_run]]) {
+      const value = node("div", "cf-comparison-value");
+      const text = !run
+        ? "No saved run"
+        : run.exact_value !== null
+          ? `${run.exact_value} ${run.currency_code}`
+          : `Unavailable · ${statusText(run.metric_status)}`;
+      value.append(node("span", "", label), node("strong", "", text));
+      values.append(value);
+    }
+    card.append(values);
+
+    if (finding.disposition === "calculated") {
+      const currency = finding.current_run?.currency_code || finding.prior_run?.currency_code || "";
+      const variance = node("p", "cf-comparison-variance");
+      variance.append(node("strong", "", `Absolute variance (current − prior) · ${finding.absolute_variance ?? "not available"} ${currency}`));
+      variance.append(document.createTextNode(` · direction ${statusText(finding.direction)}`));
+      card.append(variance);
+      if (finding.percentage_variance_status === "calculated") {
+        card.append(node("p", "", `Percentage variance · ${finding.percentage_variance}% (six decimal places)`));
+      } else {
+        card.append(node("p", "", `Percentage variance abstained · ${(finding.percentage_variance_reason_codes || []).map(comparisonReasonText).join(" ")}`));
+      }
+    }
+    if (finding.reasons?.length) {
+      const reasons = node("ul", "cf-comparison-reasons");
+      for (const reason of finding.reasons) reasons.append(node("li", "", reason));
+      card.append(reasons);
+    }
+
+    if (finding.margin_status !== "not_applicable") {
+      const section = node("section", "cf-comparison-section");
+      section.append(node("h4", "", "Profit margins"));
+      section.append(node(
+        "p",
+        "",
+        `Prior ${finding.prior_margin ?? "unavailable"}% · current ${finding.current_margin ?? "unavailable"}% · `
+          + `change ${finding.margin_variance_percentage_points ?? "unavailable"} percentage points · ${statusText(finding.margin_status)}`,
+      ));
+      if (finding.margin_reason_codes?.length) {
+        section.append(node("p", "", finding.margin_reason_codes.map(comparisonReasonText).join(" ")));
+      }
+      if (finding.margin_caution_codes?.length) {
+        section.append(node("p", "cf-inline-note", finding.margin_caution_codes.map(comparisonReasonText).join(" ")));
+      }
+      card.append(section);
+    }
+
+    if (finding.contributors_status !== "not_applicable") {
+      const section = node("section", "cf-comparison-section");
+      section.append(node("h4", "", "Evidence-backed category contribution changes · not causal explanations"));
+      if (finding.contributors_status === "abstained") {
+        section.append(node("p", "", `Category analysis abstained · ${(finding.contributors_reason_codes || []).map(comparisonReasonText).join(" ")}`));
+      } else if (!finding.contributors?.length) {
+        section.append(node("p", "", "Category evidence was checked; no non-zero category contribution changes were found."));
+      } else {
+        for (const contributor of finding.contributors) {
+          const item = node("div", "cf-comparison-run");
+          item.append(
+            node("strong", "", contributor.category.replaceAll("_", " ")),
+            node("p", "", `Prior contribution ${contributor.prior_contribution} · current ${contributor.current_contribution} · change ${contributor.absolute_variance} · ${statusText(contributor.direction)}`),
+          );
+          const evidenceLinks = node("div", "cf-comparison-links");
+          const evidenceRoot = node("div", "cf-comparison-evidence");
+          const evidenceSides = [
+            ["Prior", finding.prior_run, contributor.prior_evidence_count],
+            ["Current", finding.current_run, contributor.current_evidence_count],
+          ];
+          for (const [side, run, count] of evidenceSides) {
+            if (!run) continue;
+            const link = node("a", "", `${side} category evidence (${count})`);
+            link.href = "#comparison-title";
+            link.addEventListener("click", (event) => {
+              event.preventDefault();
+              void revealComparisonEvidence(
+                evidenceRoot,
+                run.run_id,
+                finding.measure,
+                contributor.category,
+                side,
+                link,
+              );
+            });
+            evidenceLinks.append(link);
+          }
+          item.append(evidenceLinks, evidenceRoot);
+          section.append(item);
+        }
+      }
+      card.append(section);
+    }
+
+    appendComparisonRunTrace(card, "Prior", finding.prior_run);
+    appendComparisonRunTrace(card, "Current", finding.current_run);
+    return card;
+  }
+
+  function renderComparison(data) {
+    const root = $("#comparison-results");
+    root.replaceChildren();
+    const summary = node("article", `cf-comparison-summary${data.period_alignment ? "" : " is-warning"}`);
+    summary.append(
+      node("h3", "", data.period_alignment
+        ? `Period windows align · ${statusText(data.period_alignment)}`
+        : "Period windows are not comparable"),
+      node("p", "", `Prior ${data.prior_period.period_start} to ${data.prior_period.period_end} inclusive · current ${data.current_period.period_start} to ${data.current_period.period_end} inclusive.`),
+      node("p", "", "Saved-run selection: latest exact-period run per measure. Values use exact saved amounts; percentage variance uses the absolute prior value as its denominator."),
+      node("p", "", "Cash Flow means net observed bank movement, not a formal cash flow statement. Category contribution changes are not causal explanations."),
+    );
+    if (data.period_reason_codes?.length) {
+      summary.append(node("p", "", data.period_reason_codes.map(comparisonReasonText).join(" ")));
+    }
+    root.append(summary);
+    const grid = node("div", "cf-comparison-grid");
+    let calculated = 0;
+    for (const finding of data.findings || []) {
+      if (finding.disposition === "calculated") calculated += 1;
+      grid.append(renderComparisonFinding(finding));
+    }
+    root.append(grid);
+    appendList(root, "Assumptions and calculation conventions", data.assumptions || []);
+    appendList(root, "Limitations", data.limitations || []);
+    setStatus(
+      "#comparison-status",
+      `${calculated} of 6 measure variances calculated from saved runs; the rest are explicitly abstained.`,
+      calculated === 6 ? "is-success" : "muted",
+    );
+  }
+
+  async function compareSelectedPeriods() {
+    if (!state.tenant) return;
+    const periodValues = {
+      prior_start: $("#prior-period-start").value,
+      prior_end: $("#prior-period-end").value,
+      current_start: $("#current-period-start").value,
+      current_end: $("#current-period-end").value,
+    };
+    if (Object.values(periodValues).some((value) => !value)) {
+      setStatus("#comparison-status", "Choose all four dates before analyzing.", "is-error");
+      return;
+    }
+    const requestId = ++state.comparisonRequestId;
+    const tenantId = state.tenant.id;
+    const button = $("#compare-periods-button");
+    button.disabled = true;
+    setStatus("#comparison-status", "Checking saved runs and compatible period contexts…", "muted");
+    try {
+      const { data } = await request(`${coreBase()}/comparisons`, {
+        method: "POST",
+        body: {
+          prior_period: { period_start: periodValues.prior_start, period_end: periodValues.prior_end },
+          current_period: { period_start: periodValues.current_start, period_end: periodValues.current_end },
+        },
+      });
+      if (requestId !== state.comparisonRequestId || state.tenant?.id !== tenantId) return;
+      renderComparison(data);
+    } catch (error) {
+      if (requestId !== state.comparisonRequestId || state.tenant?.id !== tenantId) return;
+      setStatus("#comparison-status", error?.message || "The period comparison could not be loaded.", "is-error");
+      handleError(error);
+    } finally {
+      if (requestId === state.comparisonRequestId) button.disabled = false;
+    }
+  }
+
   async function renderRun(run) {
     const root = $("#run-result");
     root.replaceChildren();
@@ -1268,8 +1578,46 @@
     }
   }
 
+  function suggestComparisonPeriods(runs) {
+    const byPeriod = new Map();
+    for (const run of runs) {
+      const key = `${run.period_start}/${run.period_end}`;
+      if (!byPeriod.has(key)) byPeriod.set(key, { start: run.period_start, end: run.period_end });
+    }
+    const periods = Array.from(byPeriod.values()).sort((left, right) =>
+      right.end.localeCompare(left.end) || right.start.localeCompare(left.start),
+    );
+    const current = periods[0];
+    if (current && !$("#current-period-start").value && !$("#current-period-end").value) {
+      $("#current-period-start").value = current.start;
+      $("#current-period-end").value = current.end;
+    }
+    if (!$("#prior-period-start").value && !$("#prior-period-end").value && current) {
+      const prior = periods.find((item) => item.end < current.start);
+      if (prior) {
+        $("#prior-period-start").value = prior.start;
+        $("#prior-period-end").value = prior.end;
+      }
+    }
+    if (periods.length) {
+      setStatus(
+        "#comparison-status",
+        "Suggested dates use the newest and nearest earlier exact saved windows in this Company's recent run history. Review or change them before analyzing.",
+        "muted",
+      );
+    }
+  }
+
   async function loadHistory() {
     if (!state.tenant || !state.template) return;
+    state.comparisonRequestId += 1;
+    $("#compare-periods-button").disabled = false;
+    $("#comparison-results").replaceChildren();
+    setStatus(
+      "#comparison-status",
+      "Saved run history is refreshing; analyze again to refresh the latest saved-run selection.",
+      "muted",
+    );
     try {
       const [importsResponse, runsResponse] = await Promise.all([
         request(`${coreBase()}/imports?limit=100&offset=0`),
@@ -1278,6 +1626,7 @@
       state.importHistoryItems = importsResponse.data?.items || [];
       state.importHistoryTotal = importsResponse.data?.total || 0;
       const runs = runsResponse.data?.items || [];
+      suggestComparisonPeriods(runs);
       renderImportHistory();
       const selector = $("#run-history");
       selector.replaceChildren(new Option("Choose a saved measure run", ""));
@@ -1337,6 +1686,8 @@
   }
 
   async function loadCompany() {
+    state.comparisonRequestId += 1;
+    $("#compare-periods-button").disabled = false;
     state.policy = null;
     state.mapping = null;
     state.file = null;
@@ -1349,6 +1700,12 @@
     state.importHistoryTotal = 0;
     state.run = null;
     state.template = null;
+    $("#prior-period-start").value = "";
+    $("#prior-period-end").value = "";
+    $("#current-period-start").value = "";
+    $("#current-period-end").value = "";
+    $("#comparison-results").replaceChildren();
+    setStatus("#comparison-status", "Load saved runs or enter two exact period windows to analyze.", "muted");
     $("#overview-measures").replaceChildren();
     $("#overview-checks").replaceChildren();
     $("#overview-limitations").replaceChildren();
@@ -1501,6 +1858,20 @@
     $("#load-more-evidence").addEventListener("click", () => loadEvidence(false).catch(handleError));
     $("#reload-history-button").addEventListener("click", loadHistory);
     $("#reload-overview-button").addEventListener("click", loadOverview);
+    for (const selector of [
+      "#prior-period-start",
+      "#prior-period-end",
+      "#current-period-start",
+      "#current-period-end",
+    ]) {
+      $(selector).addEventListener("input", () => {
+        state.comparisonRequestId += 1;
+        $("#compare-periods-button").disabled = false;
+        $("#comparison-results").replaceChildren();
+        setStatus("#comparison-status", "Period dates changed. Analyze again to refresh the saved-run comparison.", "muted");
+      });
+    }
+    $("#compare-periods-button").addEventListener("click", compareSelectedPeriods);
     $("#load-more-imports").addEventListener("click", loadMoreImports);
     $("#run-history").addEventListener("change", () => {
       $("#load-run-button").disabled = !$("#run-history").value;

@@ -19,6 +19,7 @@ from businessflow.core_financials.calculations import calculate_financial_metric
 from businessflow.core_financials.catalog import LEGACY_CORE_FINANCIAL_ENGINE_VERSION
 from businessflow.core_financials.contracts import (
     BANK_FIELDS,
+    FINANCIAL_MEASURES,
     LEDGER_FIELDS,
     CoreFinancialRunCreateRequest,
 )
@@ -827,6 +828,267 @@ def test_six_measure_workflow_binds_ledger_and_bank_lineage_and_replays(client):
         replay = client.post(f"{_base(tenant['id'])}/runs/{run['id']}/verify", headers=headers)
         assert replay.status_code == 200, replay.text
         assert replay.json()["passed"] is True, f"{measure}: {replay.text}"
+
+
+def test_persisted_period_comparison_reports_variances_margins_contributors_and_traceability(
+    client,
+):
+    owner = register_user(client, f"core-financials-comparison-{uuid4().hex}@example.com")
+    headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="Core Financials Comparison Test",
+        company_name="Synthetic Comparison Company",
+        key=f"core-financials-comparison-{uuid4().hex}",
+    )
+    policy = _create_complete_policy(client, tenant["id"], headers)
+    ledger_mapping = _create_mapping(client, tenant["id"], headers, source_key="comparison-ledger")
+    bank_mapping = _create_bank_mapping(client, tenant["id"], headers, source_key="comparison-bank")
+    periods = (
+        ("2026-10-01", "2026-10-31", "prior"),
+        ("2026-11-01", "2026-11-30", "current"),
+    )
+
+    ledger_headers = (
+        "record_id",
+        "transaction_date",
+        "account_code",
+        "debit",
+        "credit",
+        "currency",
+        "event_type",
+        "reversal_of",
+    )
+    bank_headers = (
+        "record_id",
+        "transaction_date",
+        "bank_account_id",
+        "cash_in",
+        "cash_out",
+        "currency",
+        "event_type",
+        "reversal_of",
+    )
+    ledger_rows = {
+        "prior": [
+            "prior-sale,2026-10-10,4000,0,1000,USD,normal,",
+            "prior-refund,2026-10-18,4090,100,0,USD,refund,",
+            "prior-cost,2026-10-25,5000,300,0,USD,normal,",
+            "prior-opex,2026-10-26,6000,200,0,USD,normal,",
+            "prior-nonop-income,2026-10-27,7000,0,50,USD,normal,",
+            "prior-nonop-expense,2026-10-28,7100,10,0,USD,normal,",
+            "prior-tax,2026-10-29,8000,20,0,USD,normal,",
+        ],
+        "current": [
+            "current-sale,2026-11-10,4000,0,1200,USD,normal,",
+            "current-refund,2026-11-18,4090,100,0,USD,refund,",
+            "current-cost,2026-11-25,5000,350,0,USD,normal,",
+            "current-opex,2026-11-26,6000,250,0,USD,normal,",
+            "current-nonop-income,2026-11-27,7000,0,50,USD,normal,",
+            "current-nonop-expense,2026-11-28,7100,10,0,USD,normal,",
+            "current-tax,2026-11-29,8000,20,0,USD,normal,",
+        ],
+    }
+    bank_rows = {
+        "prior": [
+            "prior-bank-in,2026-10-10,operating-1,750,0,USD,normal,",
+            "prior-bank-out,2026-10-12,operating-1,0,100,USD,normal,",
+            "prior-transfer,2026-10-15,operating-1,0,50,USD,transfer,",
+        ],
+        "current": [
+            "current-bank-in,2026-11-10,operating-1,1000,0,USD,normal,",
+            "current-bank-out,2026-11-12,operating-1,0,150,USD,normal,",
+            "current-transfer,2026-11-15,operating-1,0,20,USD,transfer,",
+        ],
+    }
+
+    imports: dict[str, dict[str, dict[str, object]]] = {"ledger": {}, "bank": {}}
+    for start, end, key in periods:
+        for source_name, source_type, mapping, csv_headers, rows in (
+            ("ledger", "general_ledger", ledger_mapping, ledger_headers, ledger_rows[key]),
+            ("bank", "bank_activity", bank_mapping, bank_headers, bank_rows[key]),
+        ):
+            metadata = {
+                "source_key": f"comparison-{source_name}",
+                "source_type": source_type,
+                "mapping_id": mapping["id"],
+                "policy_id": policy["id"],
+                "period_start": start,
+                "period_end": end,
+                "period_completeness": "complete",
+            }
+            content = (",".join(csv_headers) + "\n" + "\n".join(rows) + "\n").encode("utf-8")
+            response = client.post(
+                f"{_base(tenant['id'])}/imports",
+                data={"metadata_json": json.dumps(metadata)},
+                files={"file": (f"{key}-{source_name}.csv", content, "text/csv")},
+                headers={
+                    **headers,
+                    "Idempotency-Key": f"comparison-{key}-{source_name}-{uuid4().hex}",
+                },
+            )
+            assert response.status_code == 201, response.text
+            imports[source_name][key] = response.json()
+
+    expected = {
+        "prior": {
+            "revenue": "900",
+            "expenses": "530",
+            "gross_profit": "600",
+            "operating_profit": "400",
+            "net_profit": "420",
+            "cash_flow": "650",
+        },
+        "current": {
+            "revenue": "1100",
+            "expenses": "630",
+            "gross_profit": "750",
+            "operating_profit": "500",
+            "net_profit": "520",
+            "cash_flow": "850",
+        },
+    }
+    runs: dict[str, dict[str, dict[str, object]]] = {"prior": {}, "current": {}}
+    for start, end, key in periods:
+        for measure in FINANCIAL_MEASURES:
+            source_name = "bank" if measure == "cash_flow" else "ledger"
+            import_row = imports[source_name][key]
+            run_request = {
+                "policy_id": policy["id"],
+                "measure": measure,
+                "ledger_import_id": import_row["id"] if source_name == "ledger" else None,
+                "bank_import_id": import_row["id"] if source_name == "bank" else None,
+                "period_start": start,
+                "period_end": end,
+                "currency_code": "USD",
+            }
+            response = client.post(f"{_base(tenant['id'])}/runs", json=run_request, headers=headers)
+            assert response.status_code == 201, response.text
+            run = response.json()
+            assert run["metrics"][0]["exact_value"] == expected[key][measure]
+            runs[key][measure] = run
+
+    repeated_cash_flow = client.post(
+        f"{_base(tenant['id'])}/runs",
+        json={
+            "policy_id": policy["id"],
+            "measure": "cash_flow",
+            "bank_import_id": imports["bank"]["current"]["id"],
+            "period_start": "2026-11-01",
+            "period_end": "2026-11-30",
+            "currency_code": "USD",
+        },
+        headers=headers,
+    )
+    assert repeated_cash_flow.status_code == 201, repeated_cash_flow.text
+    latest_cash_flow = max(
+        (runs["current"]["cash_flow"], repeated_cash_flow.json()),
+        key=lambda saved_run: (saved_run["created_at"], saved_run["id"]),
+    )
+
+    request_body = {
+        "prior_period": {"period_start": "2026-10-01", "period_end": "2026-10-31"},
+        "current_period": {"period_start": "2026-11-01", "period_end": "2026-11-30"},
+    }
+    response = client.post(f"{_base(tenant['id'])}/comparisons", json=request_body, headers=headers)
+    assert response.status_code == 200, response.text
+    comparison = response.json()
+    findings = {item["measure"]: item for item in comparison["findings"]}
+    assert comparison["period_alignment"] == "equal_calendar_month_count"
+    assert [item["measure"] for item in comparison["findings"]] == list(FINANCIAL_MEASURES)
+    assert all(item["disposition"] == "calculated" for item in comparison["findings"])
+    assert findings["revenue"]["absolute_variance"] == "200"
+    assert findings["revenue"]["percentage_variance"] == "22.222222"
+    assert findings["revenue"]["direction"] == "increase"
+    assert findings["expenses"]["absolute_variance"] == "100"
+    assert findings["expenses"]["percentage_variance"] == "18.867925"
+    assert findings["gross_profit"]["absolute_variance"] == "150"
+    assert findings["gross_profit"]["prior_margin"] == "66.666667"
+    assert findings["gross_profit"]["current_margin"] == "68.181818"
+    assert findings["gross_profit"]["margin_variance_percentage_points"] == "1.515151"
+    assert findings["operating_profit"]["margin_variance_percentage_points"] == "1.010101"
+    assert findings["net_profit"]["margin_variance_percentage_points"] == "0.606060"
+    assert findings["cash_flow"]["absolute_variance"] == "200"
+    assert findings["cash_flow"]["percentage_variance"] == "30.769231"
+    assert findings["cash_flow"]["current_run"]["run_id"] == latest_cash_flow["id"]
+    assert findings["cash_flow"]["contributors_status"] == "not_applicable"
+    assert (
+        "cash_flow_category_contributors_not_supported"
+        in findings["cash_flow"]["contributors_reason_codes"]
+    )
+
+    expense_contributors = {item["category"]: item for item in findings["expenses"]["contributors"]}
+    assert expense_contributors["cost_of_sales"]["absolute_variance"] == "50"
+    assert expense_contributors["operating_expense"]["absolute_variance"] == "50"
+    assert "tax_expense" not in expense_contributors
+    net_contributors = {item["category"]: item for item in findings["net_profit"]["contributors"]}
+    assert net_contributors["cost_of_sales"]["absolute_variance"] == "-50"
+    assert findings["net_profit"]["prior_run"]["run_id"] == runs["prior"]["net_profit"]["id"]
+    assert (
+        findings["net_profit"]["current_run"]["trace_hash"]
+        == runs["current"]["net_profit"]["trace_hash"]
+    )
+    assert (
+        findings["net_profit"]["prior_run"]["source_import"]["id"]
+        == imports["ledger"]["prior"]["id"]
+    )
+
+    category_evidence = client.get(
+        expense_contributors["cost_of_sales"]["current_evidence_url"] + "&limit=100&offset=0",
+        headers=headers,
+    )
+    assert category_evidence.status_code == 200, category_evidence.text
+    assert category_evidence.json()["total"] == 1
+    assert category_evidence.json()["items"][0]["category"] == "cost_of_sales"
+
+    unavailable_prior_body = {
+        "prior_period": {"period_start": "2025-10-01", "period_end": "2025-10-31"},
+        "current_period": request_body["current_period"],
+    }
+    unavailable = client.post(
+        f"{_base(tenant['id'])}/comparisons", json=unavailable_prior_body, headers=headers
+    )
+    assert unavailable.status_code == 200, unavailable.text
+    missing_revenue = next(
+        item for item in unavailable.json()["findings"] if item["measure"] == "revenue"
+    )
+    assert missing_revenue["disposition"] == "abstained"
+    assert "prior_run_unavailable" in missing_revenue["reason_codes"]
+    assert missing_revenue["absolute_variance"] is None
+
+    other_owner = register_user(
+        client, f"core-financials-comparison-other-{uuid4().hex}@example.com"
+    )
+    other_tenant = create_tenant(
+        client,
+        other_owner,
+        name="Other Comparison Workspace",
+        company_name="Unrelated Company",
+        key=f"core-financials-comparison-other-{uuid4().hex}",
+    )
+    denied = client.post(
+        f"{_base(tenant['id'])}/comparisons",
+        json=request_body,
+        headers=auth_headers(other_owner),
+    )
+    assert denied.status_code in (403, 404)
+    isolated = client.post(
+        f"{_base(other_tenant['id'])}/comparisons",
+        json=request_body,
+        headers=auth_headers(other_owner),
+    )
+    assert isolated.status_code == 200, isolated.text
+    assert all(
+        item["prior_run"] is None and item["current_run"] is None
+        for item in isolated.json()["findings"]
+    )
+    cross_company_evidence = client.get(
+        f"{_base(other_tenant['id'])}/runs/{runs['current']['net_profit']['id']}/evidence"
+        "?metric=net_profit&category=cost_of_sales",
+        headers=auth_headers(other_owner),
+    )
+    assert cross_company_evidence.status_code == 404
 
 
 def test_legacy_v2_mixed_currency_import_and_run_remain_replay_verifiable(

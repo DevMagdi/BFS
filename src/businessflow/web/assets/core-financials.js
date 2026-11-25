@@ -780,6 +780,300 @@
     return `${stateText}${expected ? ` · expected ${expected} ${metric.currency_code}` : ""}${variance !== null && variance !== undefined ? ` · variance ${variance} ${metric.currency_code}` : ""}${reasons.length ? ` · ${reasons.join(", ")}` : ""}`;
   }
 
+  function appendList(parent, title, items) {
+    if (!Array.isArray(items) || !items.length) return;
+    const details = node("details");
+    const list = node("ul");
+    for (const item of items) list.append(node("li", "", item));
+    details.append(node("summary", "", title), list);
+    parent.append(details);
+  }
+
+  function addOverviewLink(parent, label, href, onClick) {
+    const link = node("a", "", label);
+    link.href = href;
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      onClick();
+    });
+    parent.append(link);
+    return link;
+  }
+
+  function statusText(value) {
+    return String(value || "unknown").replaceAll("_", " ");
+  }
+
+  async function openOverviewRun(runId) {
+    try {
+      const { data } = await request(`${coreBase()}/runs/${encodeURIComponent(runId)}`);
+      const selector = $("#run-history");
+      if (!Array.from(selector.options).some((option) => option.value === runId)) {
+        const metric = data.metrics?.[0];
+        selector.append(new Option(
+          `${measureLabel(metric?.metric)} · ${data.period_start} to ${data.period_end} · ${shortHash(runId)}`,
+          runId,
+        ));
+      }
+      selector.value = runId;
+      $("#load-run-button").disabled = !selector.value;
+      state.run = data;
+      await renderRun(data);
+      $("#run-title").scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (error) {
+      handleError(error);
+    }
+  }
+
+  async function revealOverviewEvidence(root, runId, measure, button) {
+    button.disabled = true;
+    try {
+      const query = new URLSearchParams({ metric: measure, limit: "100", offset: "0" });
+      const { data } = await request(`${coreBase()}/runs/${encodeURIComponent(runId)}/evidence?${query}`);
+      const items = data.items || [];
+      const evidenceRows = items.map((item) => [
+        { value: item.source_row_number, className: "cf-mono" },
+        { value: item.source_record_id, className: "cf-break" },
+        { value: item.transaction_date },
+        { value: item.account_code || "—" },
+        { value: item.category || "—" },
+        { value: item.source_signed_amount, className: "cf-mono" },
+        { value: item.contribution_amount, className: "cf-mono" },
+      ]);
+      const section = node("section", "cf-overview-evidence");
+      section.append(
+        node("p", "fine-print", `Persisted evidence · ${items.length} of ${data.total || 0} rows`),
+        table(["Source row", "Record ID", "Date", "Account", "Category", "Signed amount", "Contribution"], evidenceRows),
+      );
+      if ((data.total || 0) > items.length) {
+        section.append(node("p", "fine-print", "The evidence endpoint is paginated; this view shows the first 100 rows."));
+      }
+      root.replaceChildren(section);
+    } catch (error) {
+      handleError(error);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function renderOverviewMeasure(measure) {
+    const card = node("article", `cf-overview-card is-${measure.status}`);
+    const header = node("div", "cf-overview-card-header");
+    const status = node("span", `cf-overview-status is-${measure.status}`, statusText(measure.status));
+    header.append(node("h3", "", measure.label), status);
+    card.append(header);
+
+    const valueText = measure.status === "available"
+      ? `${measure.reported_value} ${measure.currency_code}`
+      : measure.status === "missing"
+        ? "No saved run yet"
+        : `${statusText(measure.status)} · value not reported`;
+    card.append(node("p", `cf-overview-value${measure.status === "available" ? "" : " is-unavailable"}`, valueText));
+    card.append(node(
+      "p",
+      "",
+      measure.period_start && measure.period_end
+        ? `Reporting period · ${measure.period_start} to ${measure.period_end} inclusive · ${measure.currency_code} · ${measure.basis}`
+        : "Reporting period and currency · not available",
+    ));
+
+    if (measure.run_id) {
+      card.append(node(
+        "p",
+        "",
+        `Calculation ${measure.engine_version} · policy v${measure.policy_version} · `
+          + `${measure.policy_authority || "policy status unavailable"} · ${measure.accounting_policy_status || ""}`,
+      ));
+      if (measure.exact_value !== null && measure.exact_value !== undefined) {
+        card.append(node("p", "", `Exact value · ${measure.exact_value} ${measure.currency_code}`));
+      }
+      card.append(node(
+        "p",
+        "",
+        `Evidence · ${measure.evidence_count} row(s), ${statusText(measure.evidence_status)} · `
+          + `reconciliation ${measure.reconciliation?.state || "not available"}`,
+      ));
+      const links = node("div", "cf-overview-links");
+      addOverviewLink(links, "Inspect saved run", "#run-title", () => openOverviewRun(measure.run_id));
+      const evidenceButton = node("a", "", `View evidence (${measure.evidence_count})`);
+      evidenceButton.href = "#overview-checks";
+      evidenceButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        const evidenceRoot = node("div", "cf-overview-evidence-root");
+        const existing = card.querySelector(".cf-overview-evidence-root");
+        if (existing) existing.remove();
+        card.append(evidenceRoot);
+        void revealOverviewEvidence(evidenceRoot, measure.run_id, measure.measure, evidenceButton);
+      });
+      links.append(evidenceButton);
+      card.append(links);
+      for (const source of measure.source_imports || []) {
+        card.append(node(
+          "p",
+          "",
+          `Source · ${source.source_type} · ${source.source_key} · ${source.period_start} to ${source.period_end} · `
+            + `${source.period_completeness} completeness (caller asserted) · ${source.quality_status} · `
+            + `${source.accepted_rows}/${source.total_rows} accepted · ${source.rejected_rows} rejected · `
+            + `${source.duplicate_rows} duplicates`,
+        ));
+        appendList(card, "Source import lineage", [
+          `Import ID ${source.id} · ${source.file_name} · SHA-256 ${source.file_hash}`,
+          `Import snapshot hashes · input ${source.input_hash} · result ${source.result_hash}`,
+          `Mapping v${source.mapping_version} · ${source.mapping_hash}`,
+          `Import policy v${source.policy_version} · ${source.policy_hash}`,
+          `Completeness ${source.period_completeness} (${source.completeness_authority}) · quality ${source.quality_status}`,
+        ]);
+        const sourceLinkRow = node("div", "cf-overview-links");
+        addOverviewLink(sourceLinkRow, `Inspect source import ${shortHash(source.id)}`, "#source-title", () => {
+          void selectSavedImport(source.id);
+          $("#source-title").scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        card.append(sourceLinkRow);
+      }
+      if (measure.formula_terms?.length) {
+        const formula = measure.formula_terms.map((term) => `${term.coefficient > 0 ? "+" : "−"} ${term.category}`).join(" ");
+        card.append(node("p", "", `Saved formula terms · ${formula}`));
+        const coverage = Object.entries(measure.category_coverage || {})
+          .map(([category, status]) => `${category}: ${status}`)
+          .join(" · ");
+        if (coverage) card.append(node("p", "", `Saved policy category coverage · ${coverage}`));
+      } else if (measure.measure === "cash_flow" && measure.cash_flow_policy) {
+        card.append(node("p", "", "Saved policy · net observed bank movement; not a cash-flow statement."));
+      }
+      card.append(node(
+        "p",
+        "",
+        `Reason codes · ${(measure.reason_codes || []).join(", ") || "none"} · exact-value status ${measure.metric_status || "missing"}`,
+      ));
+      card.append(node(
+        "p",
+        "cf-hash",
+        `Run ${measure.run_id} · policy ${measure.policy_id} v${measure.policy_version} · `
+          + `policy hash ${measure.policy_hash} · reconciliation ${reconciliationLabel({
+            reconciliation: measure.reconciliation,
+            currency_code: measure.currency_code,
+          })}`,
+      ));
+    } else {
+      card.append(node("p", "", "No value was inferred or imputed. Create and persist a source-backed run to populate this measure."));
+    }
+    appendList(card, "Limitations", measure.limitations || []);
+    appendList(card, "Assumptions", measure.assumptions || []);
+    return card;
+  }
+
+  function renderOverviewCheck(check) {
+    const card = node("article", `cf-overview-check is-${check.status}`);
+    const header = node("div", "cf-overview-check-header");
+    header.append(
+      node("h4", "", check.label),
+      node("span", `cf-overview-status is-${check.status}`, statusText(check.status)),
+    );
+    card.append(header);
+    card.append(node("p", "cf-overview-check-equation", check.equation));
+    card.append(node(
+      "p",
+      "",
+      check.variance !== null && check.variance !== undefined
+        ? `Exact residual · ${check.variance}${check.currency_code ? ` ${check.currency_code}` : ""}`
+        : `No residual reported · ${check.reason_codes.map(statusText).join(" · ") || "comparison unavailable"}`,
+    ));
+    if (check.policy_relation_supported === true) {
+      card.append(node("p", "", "The saved policy formula supports this relationship."));
+    } else if (check.policy_relation_supported === false) {
+      card.append(node("p", "", "The saved policy does not support this relationship; no expense-to-COGS assumption is made."));
+    }
+    const terms = Object.entries(check.policy_difference_terms || {}).map(([category, coefficient]) =>
+      `${coefficient > 0 ? "+" : "−"} ${Math.abs(coefficient) === 1 ? "" : `${Math.abs(coefficient)} × `}${category}`,
+    );
+    if (terms.length) card.append(node("p", "", `Policy category adjustment / remainder · ${terms.join(" ")}`));
+    if (check.period_start && check.period_end) {
+      card.append(node("p", "", `Comparable context · ${check.period_start} to ${check.period_end} · ${check.currency_code} · ${check.basis}`));
+    }
+    if (check.reason_codes?.length) {
+      card.append(node("p", "", `Why not comparable or verifiable · ${check.reason_codes.join(", ")}`));
+    }
+    if (check.run_references?.length) {
+      const refs = node("ul");
+      for (const reference of check.run_references) {
+        const item = node("li");
+        const source = reference.source_imports?.[0];
+        item.append(node(
+          "span",
+          "",
+          `${measureLabel(reference.measure)} · ${reference.reported_value ?? reference.status} · `
+            + `${reference.period_start} to ${reference.period_end} ${reference.currency_code} · `
+            + `${source ? `${source.source_type} ${source.source_key}` : "source unavailable"} · `
+            + `${reference.engine_version} · policy v${reference.policy_version} · `
+            + `evidence ${reference.evidence_count} · reconciliation ${reference.reconciliation.state}`,
+        ));
+        const links = node("span", "cf-overview-links");
+        addOverviewLink(links, `Run ${shortHash(reference.run_id)}`, "#run-title", () => openOverviewRun(reference.run_id));
+        const evidenceLink = node("a", "", "Evidence");
+        evidenceLink.href = "#overview-checks";
+        evidenceLink.addEventListener("click", (event) => {
+          event.preventDefault();
+          const evidenceRoot = node("div", "cf-overview-evidence-root");
+          const existing = card.querySelector(".cf-overview-evidence-root");
+          if (existing) existing.remove();
+          card.append(evidenceRoot);
+          void revealOverviewEvidence(evidenceRoot, reference.run_id, reference.measure, evidenceLink);
+        });
+        links.append(evidenceLink);
+        item.append(links);
+        appendList(item, "Run and policy versions", [
+          `Run ID ${reference.run_id}`,
+          `Calculation engine ${reference.engine_version}`,
+          `Policy ID ${reference.policy_id} · version ${reference.policy_version} · hash ${reference.policy_hash}`,
+        ]);
+        if (source) {
+          appendList(item, "Source import lineage", [
+            `Import ID ${source.id} · ${source.file_name} · SHA-256 ${source.file_hash}`,
+            `Import snapshot hashes · input ${source.input_hash} · result ${source.result_hash}`,
+            `Mapping v${source.mapping_version} · ${source.mapping_hash}`,
+            `Completeness ${source.period_completeness} (${source.completeness_authority}) · quality ${source.quality_status}`,
+          ]);
+        }
+        appendList(item, "Run limitations", reference.limitations || []);
+        appendList(item, "Run assumptions", reference.assumptions || []);
+        refs.append(item);
+      }
+      card.append(refs);
+    }
+    appendList(card, "Limitations", check.limitations || []);
+    appendList(card, "Assumptions", check.assumptions || []);
+    return card;
+  }
+
+  function renderOverview(data) {
+    const measuresRoot = $("#overview-measures");
+    const checksRoot = $("#overview-checks");
+    measuresRoot.replaceChildren();
+    checksRoot.replaceChildren();
+    for (const measure of data.measures || []) measuresRoot.append(renderOverviewMeasure(measure));
+    for (const check of data.checks || []) checksRoot.append(renderOverviewCheck(check));
+    const limitations = $("#overview-limitations");
+    limitations.replaceChildren();
+    for (const item of data.limitations || []) limitations.append(node("li", "", item));
+    setStatus("#overview-status", "Latest saved run per measure loaded. Each period and currency is shown separately.", "is-success");
+  }
+
+  async function loadOverview() {
+    if (!state.tenant || !state.template) return;
+    const button = $("#reload-overview-button");
+    button.disabled = true;
+    setStatus("#overview-status", "Loading the latest saved runs and checking comparable policy relationships…", "muted");
+    try {
+      const { data } = await request(`${coreBase()}/overview`);
+      renderOverview(data);
+    } catch (error) {
+      if (error?.code === "core_financials_disabled") setFeatureDisabled(error.message);
+      setStatus("#overview-status", error?.message || "The integrated overview could not be loaded.", "is-error");
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   async function renderRun(run) {
     const root = $("#run-result");
     root.replaceChildren();
@@ -997,6 +1291,7 @@
       }
       $("#load-run-button").disabled = !selector.value;
       $("#workflow-status").replaceChildren();
+      await loadOverview();
     } catch (error) {
       if (error.code === "core_financials_disabled") setFeatureDisabled(error.message);
       else showMessage(error.message || "Company-scoped financial history could not be loaded.");
@@ -1054,6 +1349,10 @@
     state.importHistoryTotal = 0;
     state.run = null;
     state.template = null;
+    $("#overview-measures").replaceChildren();
+    $("#overview-checks").replaceChildren();
+    $("#overview-limitations").replaceChildren();
+    setStatus("#overview-status", "Loading the selected Company overview…", "muted");
     $("#run-history").replaceChildren(new Option("Choose a saved measure run", ""));
     $("#load-run-button").disabled = true;
     renderImportHistory();
@@ -1201,6 +1500,7 @@
     $("#load-more-records").addEventListener("click", () => loadRecords(false).catch(handleError));
     $("#load-more-evidence").addEventListener("click", () => loadEvidence(false).catch(handleError));
     $("#reload-history-button").addEventListener("click", loadHistory);
+    $("#reload-overview-button").addEventListener("click", loadOverview);
     $("#load-more-imports").addEventListener("click", loadMoreImports);
     $("#run-history").addEventListener("change", () => {
       $("#load-run-button").disabled = !$("#run-history").value;

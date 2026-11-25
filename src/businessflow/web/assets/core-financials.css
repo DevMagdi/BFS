@@ -73,3 +73,44 @@
   .cf-section-heading { align-items: flex-start; }
   .cf-ignored-row { grid-template-columns: 1fr; }
 }
+
+.cf-overview-panel { border-color: #cbded2; background: linear-gradient(180deg, #fbfdfb 0%, #fff 48%); }
+.cf-overview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; margin-top: 14px; }
+.cf-overview-card { min-width: 0; padding: 13px; border: 1px solid #dce7df; border-radius: 12px; background: #fbfdfb; }
+.cf-overview-card.is-incomplete, .cf-overview-card.is-withheld { border-color: #e7d4a5; background: #fffaf0; }
+.cf-overview-card.is-missing { border-color: #e5e8e5; background: #f8f9f8; }
+.cf-overview-card-header, .cf-overview-check-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.cf-overview-card h3, .cf-overview-check h4 { margin: 0; color: #294b40; font-size: 15px; line-height: 1.35; }
+.cf-overview-value { margin: 10px 0 8px; color: #183f35; font-size: 22px; font-weight: 800; letter-spacing: -.03em; overflow-wrap: anywhere; }
+.cf-overview-value.is-unavailable { color: #786439; font-size: 15px; letter-spacing: 0; }
+.cf-overview-card p, .cf-overview-check p { margin: 4px 0; color: var(--muted); font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
+.cf-overview-status { flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; color: #315b4d; background: #e4f1e9; font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.cf-overview-status.is-incomplete, .cf-overview-status.is-withheld { color: #795c1e; background: #f7edcf; }
+.cf-overview-status.is-missing { color: #687570; background: #e9eeea; }
+.cf-overview-links { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 8px; font-size: 10px; }
+.cf-overview-card a, .cf-overview-check a { color: #1c6554; font-weight: 750; text-decoration-thickness: 1px; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.cf-overview-card details, .cf-overview-check details { margin-top: 9px; padding-top: 7px; border-top: 1px solid #e6ece7; }
+.cf-overview-card summary, .cf-overview-check summary { color: #52645d; cursor: pointer; font-size: 10px; font-weight: 750; }
+.cf-overview-card ul, .cf-overview-check ul { margin: 6px 0 0; padding-left: 16px; }
+.cf-overview-card li, .cf-overview-check li { margin: 3px 0; color: var(--muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.cf-overview-check-section { margin-top: 20px; padding-top: 15px; border-top: 1px solid #dfe8e2; }
+.cf-overview-check-section h3 { margin: 0 0 4px; color: #2c4b41; font-size: 18px; }
+.cf-overview-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 11px; }
+.cf-overview-check { min-width: 0; padding: 12px; border: 1px solid #dfe7e2; border-radius: 11px; background: #fff; }
+.cf-overview-check.is-inconsistent { border-color: #e4b7b3; background: #fff8f7; }
+.cf-overview-check.is-unverifiable { border-color: #ead9ad; background: #fffaf1; }
+.cf-overview-check.is-non_comparable { border-color: #d8dfea; background: #f8faff; }
+.cf-overview-check .cf-overview-status.is-consistent { color: #315b4d; background: #e4f1e9; }
+.cf-overview-check .cf-overview-status.is-inconsistent { color: #873b35; background: #f8e2df; }
+.cf-overview-check .cf-overview-status.is-unverifiable { color: #795c1e; background: #f7edcf; }
+.cf-overview-check .cf-overview-status.is-non_comparable { color: #405674; background: #e8edf5; }
+.cf-overview-check-equation { margin: 8px 0 6px !important; color: #314d43 !important; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px !important; font-weight: 700; }
+.cf-overview-limitations { display: grid; gap: 4px; margin: 14px 0 0; padding: 11px 12px 11px 28px; border-radius: 10px; background: #f4f7f5; }
+.cf-overview-limitations li { color: #60716b; font-size: 10px; line-height: 1.5; }
+@media (max-width: 1000px) {
+  .cf-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .cf-overview-grid, .cf-overview-checks { grid-template-columns: 1fr; }
+  .cf-overview-card-header, .cf-overview-check-header { align-items: center; }
+}

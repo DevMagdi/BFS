@@ -1036,6 +1036,46 @@ def test_core_financials_authorization_and_company_scope_are_enforced(client):
     imported, _content = _import_revenue_ledger(
         client, tenant["id"], owner_headers, policy, mapping
     )
+    revenue_run = client.post(
+        f"{_base(tenant['id'])}/runs",
+        json={
+            "policy_id": policy["id"],
+            "measure": "revenue",
+            "ledger_import_id": imported["id"],
+            "period_start": "2026-11-01",
+            "period_end": "2026-11-30",
+            "currency_code": "USD",
+        },
+        headers=owner_headers,
+    )
+    assert revenue_run.status_code == 201, revenue_run.text
+
+    overview = client.get(f"{_base(tenant['id'])}/overview", headers=owner_headers)
+    assert overview.status_code == 200, overview.text
+    overview_data = overview.json()
+    assert [item["measure"] for item in overview_data["measures"]] == [
+        "revenue",
+        "expenses",
+        "gross_profit",
+        "operating_profit",
+        "net_profit",
+        "cash_flow",
+    ]
+    overview_by_measure = {item["measure"]: item for item in overview_data["measures"]}
+    assert overview_by_measure["revenue"]["status"] == "available"
+    assert overview_by_measure["revenue"]["run_id"] == revenue_run.json()["id"]
+    revenue_source = overview_by_measure["revenue"]["source_imports"][0]
+    assert revenue_source["source_type"] == "general_ledger"
+    assert len(revenue_source["file_hash"]) == 64
+    assert len(revenue_source["input_hash"]) == 64
+    assert len(revenue_source["result_hash"]) == 64
+    assert overview_by_measure["revenue"]["evidence_url"].endswith("/evidence?metric=revenue")
+    assert overview_by_measure["cash_flow"]["status"] == "available"
+    assert overview_by_measure["cash_flow"]["source_imports"][0]["source_type"] == "bank_activity"
+    assert all(
+        overview_by_measure[measure]["status"] == "missing"
+        for measure in ("expenses", "gross_profit", "operating_profit", "net_profit")
+    )
 
     member_email = f"core-financials-member-{uuid4().hex}@example.com"
     member = register_user(client, member_email)
@@ -1055,6 +1095,11 @@ def test_core_financials_authorization_and_company_scope_are_enforced(client):
         headers=auth_headers(member),
     )
     assert denied_policy.status_code == 403
+    denied_overview = client.get(
+        f"{_base(tenant['id'])}/overview",
+        headers=auth_headers(member),
+    )
+    assert denied_overview.status_code == 403
 
     other_owner = register_user(client, f"core-financials-other-owner-{uuid4().hex}@example.com")
     other_tenant = create_tenant(
@@ -1086,6 +1131,12 @@ def test_core_financials_authorization_and_company_scope_are_enforced(client):
         headers=auth_headers(other_owner),
     )
     assert hidden_policy.status_code == 404
+    other_overview = client.get(
+        f"{_base(other_tenant['id'])}/overview",
+        headers=other_headers,
+    )
+    assert other_overview.status_code == 200, other_overview.text
+    assert {item["status"] for item in other_overview.json()["measures"]} == {"missing"}
 
 
 def test_core_financial_tables_enforce_company_rls_runtime_grants_and_immutability(

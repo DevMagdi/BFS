@@ -43,6 +43,10 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     assert core_financial_page.status_code == 200
     assert "Trace a financial" in core_financial_page.text
     assert "non-authoritative" in core_financial_page.text
+    assert "INTEGRATED FINANCIAL OVERVIEW" in core_financial_page.text
+    assert "Six measures. One evidence-linked view." in core_financial_page.text
+    assert 'id="overview-measures"' in core_financial_page.text
+    assert 'id="overview-checks"' in core_financial_page.text
     assert "Choose a general-ledger CSV" in core_financial_page.text
     assert "Load synthetic bank example" in core_financial_page.text
     assert "Load synthetic Revenue control example" in core_financial_page.text
@@ -56,6 +60,10 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     assert "Select saved import" in core_financial_script.text
     assert "The synthetic control example is Revenue-only." in core_financial_script.text
     assert "Measure changed. Select a separate control" in core_financial_script.text
+    assert "async function loadOverview()" in core_financial_script.text
+    assert "renderOverviewCheck" in core_financial_script.text
+    assert "View evidence" in core_financial_script.text
+    assert "innerHTML" not in core_financial_script.text
     assert 'id="load-more-imports"' in core_financial_page.text
     assert "async function loadMoreImports()" in core_financial_script.text
     assert "async function selectSavedImport(importId)" in core_financial_script.text
@@ -79,6 +87,7 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     assert "/api/v1/tenants/{tenant_id}/position-reviews/briefs" in paths
     assert "/api/v1/tenants/{tenant_id}/position-reviews/briefs/{review_id}/dispositions" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/imports" in paths
+    assert "/api/v1/tenants/{tenant_id}/core-financials/overview" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/policies/{policy_id}" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/runs" in paths
     run_request_schema = schema["components"]["schemas"]["CoreFinancialRunCreateRequest"]

@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from businessflow.api.auth_routes import router as auth_router
 from businessflow.api.company_context_routes import router as company_context_router
 from businessflow.api.company_data_routes import router as company_data_router
+from businessflow.api.core_financial_routes import router as core_financial_router
 from businessflow.api.data_import_routes import router as data_import_router
 from businessflow.api.direct_cash_forecast_routes import router as direct_cash_forecast_router
 from businessflow.api.finance_source_routes import router as finance_source_router
@@ -94,7 +95,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["X-Request-ID"] = str(request.state.request_id)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        if request.url.path == "/" or request.url.path.startswith("/assets/"):
+        if (
+            request.url.path == "/"
+            or request.url.path == "/core-financials.html"
+            or request.url.path.startswith("/assets/")
+        ):
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; base-uri 'self'; object-src 'none'; "
                 "frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; "
@@ -152,6 +157,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(tenant_router, prefix="/api/v1")
     application.include_router(company_context_router, prefix="/api/v1")
     application.include_router(company_data_router, prefix="/api/v1")
+    application.include_router(core_financial_router, prefix="/api/v1")
     application.include_router(data_import_router, prefix="/api/v1")
     application.include_router(metrics_router, prefix="/api/v1")
     application.include_router(project_assessment_router, prefix="/api/v1")

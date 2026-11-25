@@ -61,6 +61,11 @@ def _upload_body_limit(scope: Scope, max_file_bytes: int) -> _UploadBodyLimit | 
                 finance_source_request_body_limit(max_file_bytes),
                 "The finance source intake request exceeds the configured size limit.",
             )
+        if len(parts) == 6 and parts[4:] == ["core-financials", "imports"]:
+            return _UploadBodyLimit(
+                finance_source_request_body_limit(max_file_bytes),
+                "The Core Financials import request exceeds the configured size limit.",
+            )
     return None
 
 

@@ -67,7 +67,7 @@ def migrated_clean_test_database() -> None:
         command.upgrade(config, "head")
         with migration_engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            assert revision == "0015_limit_runtime_users_update"
+            assert revision == "0016_core_financials"
     finally:
         migration_engine.dispose()
         admin_engine.dispose()
@@ -88,6 +88,7 @@ def settings() -> Settings:
         finance_source_intake_enabled=True,
         financial_calculations_enabled=True,
         direct_cash_forecasts_enabled=True,
+        core_financials_enabled=True,
         db_pool_size=5,
         db_max_overflow=5,
     )

@@ -4,6 +4,7 @@ import hashlib
 import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from itertools import pairwise
 from pathlib import PurePosixPath
 from typing import BinaryIO, Literal, cast
 from uuid import UUID, uuid4
@@ -50,6 +51,8 @@ from businessflow.core_financials.contracts import (
     CoreFinancialImportMetadata,
     CoreFinancialImportPage,
     CoreFinancialImportResponse,
+    CoreFinancialInsightRequest,
+    CoreFinancialInsightsResponse,
     CoreFinancialMappingCreateRequest,
     CoreFinancialMappingPage,
     CoreFinancialMappingResponse,
@@ -75,6 +78,7 @@ from businessflow.core_financials.contracts import (
     FormulaTerm,
     SourceType,
 )
+from businessflow.core_financials.insights import build_core_financial_insights
 from businessflow.core_financials.models import (
     CoreFinancialImport,
     CoreFinancialMapping,
@@ -2471,35 +2475,27 @@ def get_core_financial_overview(
     )
 
 
-def compare_core_financial_periods(
+def _build_selected_period_comparisons(
     session: Session,
-    user: UserAccount,
-    tenant_id: UUID,
-    request: CoreFinancialComparisonRequest,
     *,
-    settings: Settings,
-) -> CoreFinancialComparisonResponse:
-    """Analyze exact period selections from tenant-scoped persisted runs; never recalculate them."""
-    ensure_core_financials_enabled(settings)
-    access = require_company_context_access(session, user, tenant_id, "finance:read")
+    tenant_id: UUID,
+    company_id: UUID,
+    periods: tuple[CoreFinancialPeriodSelection, ...],
+) -> tuple[CoreFinancialComparisonResponse, ...]:
+    """Build adjacent comparisons from the latest exact-period persisted runs and saved evidence."""
     filters = (
         CoreFinancialRun.tenant_id == tenant_id,
-        CoreFinancialRun.company_id == access.company.id,
+        CoreFinancialRun.company_id == company_id,
     )
     requested_measure = CoreFinancialRun.input_snapshot["request"]["measure"].as_string()
     source_cache: dict[UUID, tuple[CoreFinancialImport, CoreFinancialOverviewSource]] = {}
     policy_cache: dict[UUID, tuple[CoreFinancialPolicy, CoreFinancialPolicyCreateRequest]] = {}
-    comparison_sides: tuple[Literal["prior", "current"], ...] = ("prior", "current")
-    selected_runs: dict[
-        tuple[Literal["prior", "current"], FinancialMeasure], ComparisonRunData | None
-    ] = {(side, measure): None for side in comparison_sides for measure in FINANCIAL_MEASURES}
-    period_selections: tuple[
-        tuple[Literal["prior", "current"], CoreFinancialPeriodSelection], ...
-    ] = (
-        ("prior", request.prior_period),
-        ("current", request.current_period),
-    )
-    for side, period in period_selections:
+    selected_runs: dict[tuple[int, FinancialMeasure], ComparisonRunData | None] = {
+        (period_index, measure): None
+        for period_index in range(len(periods))
+        for measure in FINANCIAL_MEASURES
+    }
+    for period_index, period in enumerate(periods):
         for measure in FINANCIAL_MEASURES:
             row = session.scalar(
                 select(CoreFinancialRun)
@@ -2513,21 +2509,78 @@ def compare_core_financial_periods(
                 .limit(1)
             )
             if row is not None:
-                selected_runs[(side, measure)] = _load_comparison_run_data(
+                selected_runs[(period_index, measure)] = _load_comparison_run_data(
                     session,
                     tenant_id=tenant_id,
-                    company_id=access.company.id,
+                    company_id=company_id,
                     row=row,
                     measure=measure,
                     source_cache=source_cache,
                     policy_cache=policy_cache,
                 )
-    return build_period_comparison(
+
+    comparisons: list[CoreFinancialComparisonResponse] = []
+    for period_index, (prior_period, current_period) in enumerate(pairwise(periods)):
+        pair_runs: dict[
+            tuple[Literal["prior", "current"], FinancialMeasure], ComparisonRunData | None
+        ] = {}
+        for measure in FINANCIAL_MEASURES:
+            pair_runs[("prior", measure)] = selected_runs[(period_index, measure)]
+            pair_runs[("current", measure)] = selected_runs[(period_index + 1, measure)]
+        comparisons.append(
+            build_period_comparison(
+                tenant_id=tenant_id,
+                company_id=company_id,
+                prior_period=prior_period,
+                current_period=current_period,
+                runs=pair_runs,
+            )
+        )
+    return tuple(comparisons)
+
+
+def compare_core_financial_periods(
+    session: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    request: CoreFinancialComparisonRequest,
+    *,
+    settings: Settings,
+) -> CoreFinancialComparisonResponse:
+    """Analyze exact period selections from tenant-scoped persisted runs; never recalculate them."""
+    ensure_core_financials_enabled(settings)
+    access = require_company_context_access(session, user, tenant_id, "finance:read")
+    comparisons = _build_selected_period_comparisons(
+        session,
         tenant_id=tenant_id,
         company_id=access.company.id,
-        prior_period=request.prior_period,
-        current_period=request.current_period,
-        runs=selected_runs,
+        periods=(request.prior_period, request.current_period),
+    )
+    return comparisons[0]
+
+
+def analyze_core_financial_insights(
+    session: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    request: CoreFinancialInsightRequest,
+    *,
+    settings: Settings,
+) -> CoreFinancialInsightsResponse:
+    """Analyze selected periods and derive insights only from scoped persisted M14 comparisons."""
+    ensure_core_financials_enabled(settings)
+    access = require_company_context_access(session, user, tenant_id, "finance:read")
+    comparisons = _build_selected_period_comparisons(
+        session,
+        tenant_id=tenant_id,
+        company_id=access.company.id,
+        periods=request.periods,
+    )
+    return build_core_financial_insights(
+        tenant_id=tenant_id,
+        company_id=access.company.id,
+        request=request,
+        comparisons=comparisons,
     )
 
 

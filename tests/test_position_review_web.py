@@ -63,9 +63,19 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     assert "async function loadOverview()" in core_financial_script.text
     assert "renderOverviewCheck" in core_financial_script.text
     assert 'id="compare-periods-button"' in core_financial_page.text
+    assert 'id="generate-insights-button"' in core_financial_page.text
+    assert 'id="add-insight-period-button"' in core_financial_page.text
+    assert 'id="attention-threshold-percent"' in core_financial_page.text
     assert 'id="prior-period-start"' in core_financial_page.text
     assert 'id="current-period-end"' in core_financial_page.text
     assert "async function compareSelectedPeriods()" in core_financial_script.text
+    assert "async function generateSelectedInsights()" in core_financial_script.text
+    assert "function renderInsightCard(insight)" in core_financial_script.text
+    assert "renderInsightEvidence" in core_financial_script.text
+    assert (
+        "No causal root cause or expected impact is asserted without supporting evidence."
+        in core_financial_script.text
+    )
     assert "renderComparisonFinding" in core_financial_script.text
     assert "revealComparisonEvidence" in core_financial_script.text
     assert "Period dates changed. Analyze again to refresh" in core_financial_script.text
@@ -108,6 +118,7 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     assert "/api/v1/tenants/{tenant_id}/core-financials/imports" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/overview" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/comparisons" in paths
+    assert "/api/v1/tenants/{tenant_id}/core-financials/insights" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/policies/{policy_id}" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/runs" in paths
     evidence_path = "/api/v1/tenants/{tenant_id}/core-financials/runs/{run_id}/evidence"
@@ -117,6 +128,11 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     comparison_request_schema = schema["components"]["schemas"]["CoreFinancialComparisonRequest"]
     assert "prior_period" in comparison_request_schema["properties"]
     assert "current_period" in comparison_request_schema["properties"]
+    insight_request_schema = schema["components"]["schemas"]["CoreFinancialInsightRequest"]
+    assert "periods" in insight_request_schema["properties"]
+    assert insight_request_schema["properties"]["periods"]["minItems"] == 2
+    assert insight_request_schema["properties"]["periods"]["maxItems"] == 6
+    assert "attention_threshold_percent" in insight_request_schema["properties"]
     run_request_schema = schema["components"]["schemas"]["CoreFinancialRunCreateRequest"]
     assert run_request_schema["properties"]["measure"]["enum"] == [
         "revenue",

@@ -161,3 +161,27 @@
   .cf-comparison-values { grid-template-columns: 1fr 1fr; }
   .cf-comparison-card-header { align-items: center; }
 }
+
+.cf-insight-controls { align-items: end; }
+.cf-attention-threshold { width: min(100%, 260px); margin: 0; }
+.cf-attention-threshold input { width: 100%; }
+.cf-insight-results { display: grid; gap: 12px; margin-top: 14px; }
+.cf-insight-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+.cf-insight-card { min-width: 0; padding: 14px; border: 1px solid #dce7df; border-radius: 12px; background: #fff; }
+.cf-insight-section { margin-top: 11px; padding-top: 9px; border-top: 1px solid #e6ece7; }
+.cf-insight-section h4 { margin: 0 0 6px; color: #35574c; font-size: 12px; }
+.cf-insight-statement { padding: 8px 0; }
+.cf-insight-statement > p { margin: 4px 0 7px; color: #40574d; font-size: 11px; line-height: 1.55; }
+.cf-insight-evidence-item { padding: 6px 8px; border-radius: 8px; background: #f7f9f7; }
+.cf-insight-assessments, .cf-insight-comparisons { padding: 11px 13px; border: 1px solid #e0e8e2; border-radius: 11px; background: #fff; }
+.cf-insight-assessments > summary, .cf-insight-comparisons > summary { color: #31594d; font-size: 12px; font-weight: 800; cursor: pointer; }
+.cf-insight-assessments li { margin: 8px 0; }
+.cf-insight-assessments li > p { margin: 4px 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.cf-insight-period-comparison { margin-top: 9px; padding: 9px; border-radius: 9px; background: #f7f9f7; }
+.cf-insight-period-comparison > summary { color: #35574c; font-size: 11px; font-weight: 750; cursor: pointer; }
+.cf-insight-empty { margin: 0; padding: 13px; border: 1px dashed #cfded3; border-radius: 10px; color: var(--muted); background: #f8fbf9; font-size: 11px; }
+.cf-additional-period legend { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+.cf-remove-period { padding: 3px 7px; border: 0; border-radius: 6px; color: #6b5a35; background: #f8efd8; font-size: 9px; font-weight: 750; cursor: pointer; }
+@media (max-width: 720px) {
+  .cf-insight-grid { grid-template-columns: 1fr; }
+}

@@ -16,6 +16,8 @@ from businessflow.core_financials.contracts import (
     CoreFinancialImportMetadata,
     CoreFinancialImportPage,
     CoreFinancialImportResponse,
+    CoreFinancialInsightRequest,
+    CoreFinancialInsightsResponse,
     CoreFinancialMappingCreateRequest,
     CoreFinancialMappingPage,
     CoreFinancialMappingResponse,
@@ -35,6 +37,7 @@ from businessflow.core_financials.contracts import (
     SourceType,
 )
 from businessflow.core_financials.service import (
+    analyze_core_financial_insights,
     compare_core_financial_periods,
     create_core_financial_import,
     create_core_financial_mapping,
@@ -396,6 +399,27 @@ def compare_core_financial_run_periods(
     settings: Settings = Depends(get_settings),
 ) -> CoreFinancialComparisonResponse:
     return compare_core_financial_periods(session, user, tenant_id, body, settings=settings)
+
+
+@router.post(
+    "/insights",
+    response_model=CoreFinancialInsightsResponse,
+    summary="Analyze profitability, evidence-backed drivers, movements, and potential outliers",
+    description=(
+        "Select two to six ordered, non-overlapping periods. The endpoint reuses M14's latest "
+        "exact-period persisted runs, scoped evidence verification, and Decimal-safe comparisons. "
+        "It separates observed facts, deterministic calculations, hypotheses, and recommendations; "
+        "it does not invent root causes, forecast, budget, or estimate unsupported impact."
+    ),
+)
+def read_core_financial_insights(
+    tenant_id: UUID,
+    body: CoreFinancialInsightRequest,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CoreFinancialInsightsResponse:
+    return analyze_core_financial_insights(session, user, tenant_id, body, settings=settings)
 
 
 @router.get("/runs/{run_id}", response_model=CoreFinancialRunResponse)

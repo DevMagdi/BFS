@@ -57,6 +57,8 @@
     evidenceTotal: 0,
     evidenceOffset: 0,
     comparisonRequestId: 0,
+    insightsRequestId: 0,
+    insightPeriodSequence: 3,
     controlFile: null,
     importIdempotencyKey: null,
     messageTimer: null,
@@ -1110,6 +1112,21 @@
       category_evidence_totals_mismatch: "Persisted line evidence does not reconcile to the saved category total.",
       category_totals_formula_mismatch: "Formula-signed category totals do not reconcile to the exact saved measure value.",
       cash_flow_category_contributors_not_supported: "Cash Flow is net observed bank movement, not a formal cash flow statement; no P&L category contributors are inferred.",
+      insufficient_history: "Potential-outlier review needs at least four selected periods.",
+      non_contiguous_history: "Potential-outlier review needs contiguous selected periods.",
+      zero_historical_movement_baseline: "Earlier comparable movements are all zero, so an outlier ratio is undefined.",
+      within_three_times_historical_maximum: "The latest movement is within three times the largest earlier movement.",
+      priority_limit_reached: "A higher-priority insight was selected for display; this assessment remains available.",
+      below_attention_threshold: "The percentage movement is below the configured attention threshold.",
+      no_absolute_movement: "No absolute movement was observed.",
+      no_net_measure_movement: "No net measure movement was observed.",
+      no_category_contribution_meets_attention_threshold: "No category contribution met the configured attention threshold.",
+      category_materiality_exceeds_supported_precision: "Category materiality exceeds the supported Decimal output range.",
+      category_coverage_not_complete: "Saved category coverage is not complete; category drivers are withheld.",
+      category_level_evidence_unavailable: "Persisted category-level evidence is unavailable.",
+      historical_variance_unavailable: "A selected historical variance is unavailable.",
+      comparison_evidence_reference_unavailable: "Persisted comparison evidence could not be linked.",
+      category_evidence_reference_unavailable: "Persisted category evidence could not be linked.",
     };
     if (known[code]) return known[code];
     if (code.startsWith("category_coverage_not_complete:")) {
@@ -1384,6 +1401,285 @@
     }
   }
 
+  function insightKindLabel(kind) {
+    return {
+      profitability_analysis: "Profitability analysis",
+      revenue_driver: "Revenue formula driver",
+      expense_driver: "Expense formula driver",
+      attention_movement: "Material movement",
+      potential_outlier: "Potential outlier",
+    }[kind] || statusText(kind);
+  }
+
+  function renderInsightEvidence(parent, references) {
+    for (const reference of references || []) {
+      const entry = node("div", "cf-insight-evidence-item");
+      const links = node("div", "cf-comparison-links");
+      const period = `${reference.period_start} to ${reference.period_end}`;
+      const category = reference.category ? ` · ${reference.category.replaceAll("_", " ")}` : "";
+      addOverviewLink(
+        links,
+        `Inspect ${measureLabel(reference.measure)} run · ${period}`,
+        "#run-title",
+        () => openOverviewRun(reference.run_id),
+      );
+      const evidenceLink = node("a", "", `View persisted evidence (${reference.evidence_count})${category}`);
+      evidenceLink.href = "#comparison-title";
+      const evidenceRoot = node("div", "cf-comparison-evidence");
+      evidenceLink.addEventListener("click", (event) => {
+        event.preventDefault();
+        if (reference.category) {
+          void revealComparisonEvidence(
+            evidenceRoot,
+            reference.run_id,
+            reference.measure,
+            reference.category,
+            "Persisted",
+            evidenceLink,
+          );
+        } else {
+          void revealOverviewEvidence(evidenceRoot, reference.run_id, reference.measure, evidenceLink);
+        }
+      });
+      links.append(evidenceLink);
+      entry.append(
+        links,
+        node("p", "cf-hash", `Run ${reference.run_id} · input ${reference.run_input_hash} · result ${reference.run_result_hash} · trace ${reference.run_trace_hash}`),
+        node("p", "cf-hash", `Import ${reference.source_import_id} · source file SHA-256 ${reference.source_file_hash}`),
+        evidenceRoot,
+      );
+      parent.append(entry);
+    }
+  }
+
+  function renderInsightStatements(parent, heading, statements) {
+    const section = node("section", "cf-insight-section");
+    section.append(node("h4", "", heading));
+    if (!statements?.length) {
+      section.append(node("p", "cf-inline-note", "None stated; the persisted evidence does not establish an operational cause."));
+    } else {
+      for (const statement of statements) {
+        const item = node("article", "cf-insight-statement");
+        item.append(node("p", "", statement.text));
+        renderInsightEvidence(item, statement.evidence);
+        section.append(item);
+      }
+    }
+    parent.append(section);
+  }
+
+  function renderInsightCard(insight) {
+    const card = node("article", "cf-insight-card");
+    const header = node("div", "cf-comparison-card-header");
+    header.append(
+      node("h3", "", insight.title),
+      node("span", "cf-comparison-badge", insightKindLabel(insight.kind)),
+    );
+    card.append(header);
+    renderInsightStatements(card, "Observed facts", insight.observed_facts);
+    renderInsightStatements(card, "Deterministic calculations", insight.calculations);
+    renderInsightStatements(card, "Hypotheses", insight.hypotheses);
+    renderInsightStatements(card, "Recommended review action", insight.recommendations);
+    card.append(node(
+      "p",
+      "cf-inline-note",
+      insight.expected_impact_status === "calculated"
+        ? `Expected impact · ${insight.expected_impact}`
+        : `Expected impact not estimated · ${(insight.expected_impact_reason_codes || []).map(comparisonReasonText).join(" ")}`,
+    ));
+    return card;
+  }
+
+  function renderInsightAssessments(root, assessments) {
+    const details = node("details", "cf-insight-assessments");
+    details.append(node("summary", "", "Analysis coverage, abstentions, and prioritization"));
+    const list = node("ul");
+    for (const assessment of assessments || []) {
+      const item = node("li");
+      const reasonText = (assessment.reason_codes || []).map(comparisonReasonText).join(" ");
+      item.append(node(
+        "p",
+        "",
+        `${insightKindLabel(assessment.kind)} · ${measureLabel(assessment.measure)} · ${statusText(assessment.status)}${reasonText ? ` · ${reasonText}` : ""}`,
+      ));
+      if (assessment.evidence?.length) renderInsightEvidence(item, assessment.evidence);
+      list.append(item);
+    }
+    details.append(list);
+    root.append(details);
+  }
+
+  function renderInsightComparisons(root, comparisons) {
+    const details = node("details", "cf-insight-comparisons");
+    details.append(node("summary", "", "Adjacent persisted period comparisons (M14 evidence and calculations)"));
+    for (const comparison of comparisons || []) {
+      const pair = node("details", "cf-insight-period-comparison");
+      pair.append(node(
+        "summary",
+        "",
+        `${comparison.prior_period.period_start} to ${comparison.prior_period.period_end} → ${comparison.current_period.period_start} to ${comparison.current_period.period_end}`,
+      ));
+      const grid = node("div", "cf-comparison-grid");
+      for (const finding of comparison.findings || []) grid.append(renderComparisonFinding(finding));
+      pair.append(grid);
+      appendList(pair, "Comparison assumptions", comparison.assumptions || []);
+      appendList(pair, "Comparison limitations", comparison.limitations || []);
+      details.append(pair);
+    }
+    root.append(details);
+  }
+
+  function renderInsights(data) {
+    const root = $("#insight-results");
+    root.replaceChildren();
+    const summary = node("article", "cf-comparison-summary");
+    const periodLabels = data.periods.map((period) => `${period.period_start} to ${period.period_end}`).join(" · ");
+    summary.append(
+      node("h3", "", `${data.insights.length} prioritized evidence-backed insight${data.insights.length === 1 ? "" : "s"}`),
+      node("p", "", `Selected periods · ${periodLabels}`),
+      node("p", "", `Saved-run rule · ${statusText(data.selection_rule)} · attention threshold ${data.attention_threshold_percent}%`),
+      node("p", "", "Observed facts and calculations are separate from recommendations. No causal root cause or expected impact is asserted without supporting evidence."),
+    );
+    root.append(summary);
+    if (data.insights?.length) {
+      const grid = node("div", "cf-insight-grid");
+      for (const insight of data.insights) grid.append(renderInsightCard(insight));
+      root.append(grid);
+    } else {
+      root.append(node("p", "cf-insight-empty", "No insight crossed the deterministic evidence and materiality rules. Review the explicit abstentions and saved comparisons below."));
+    }
+    renderInsightAssessments(root, data.assessments || []);
+    appendList(root, "Insight assumptions", data.assumptions || []);
+    appendList(root, "Insight limitations", data.limitations || []);
+    renderInsightComparisons(root, data.comparisons || []);
+    setStatus(
+      "#insights-status",
+      `${data.insights.length} prioritized insight(s); all other checks are marked not triggered or abstained with reasons.`,
+      data.insights.length ? "is-success" : "muted",
+    );
+  }
+
+  function getSelectedInsightPeriods() {
+    const periods = [];
+    for (const fieldset of $("#additional-insight-periods").querySelectorAll("fieldset[data-insight-period]")) {
+      periods.push({
+        period_start: $("[data-period-role='start']", fieldset).value,
+        period_end: $("[data-period-role='end']", fieldset).value,
+      });
+    }
+    periods.push(
+      { period_start: $("#prior-period-start").value, period_end: $("#prior-period-end").value },
+      { period_start: $("#current-period-start").value, period_end: $("#current-period-end").value },
+    );
+    return periods;
+  }
+
+  function updateInsightPeriodLabels() {
+    const fieldsets = $("#additional-insight-periods").querySelectorAll("fieldset[data-insight-period]");
+    fieldsets.forEach((fieldset, index) => {
+      const label = $("[data-period-label]", fieldset);
+      if (label) label.textContent = `Period ${index + 1} · earlier`;
+    });
+    $("#prior-period-label").textContent = `Period ${fieldsets.length + 1} · oldest base`;
+    $("#current-period-label").textContent = `Period ${fieldsets.length + 2}`;
+    $("#add-insight-period-button").disabled = getSelectedInsightPeriods().length >= 6;
+  }
+
+  function invalidateInsights(message = "Period selection changed. Generate insights again to refresh persisted-run analysis.") {
+    state.insightsRequestId += 1;
+    $("#generate-insights-button").disabled = false;
+    $("#insight-results").replaceChildren();
+    setStatus("#insights-status", message, "muted");
+  }
+
+  function addInsightPeriod() {
+    const periods = getSelectedInsightPeriods();
+    if (periods.length >= 6) return;
+    const sequence = state.insightPeriodSequence++;
+    const periodNumber = periods.length + 1;
+    const fieldset = node("fieldset", "cf-period-fieldset cf-additional-period");
+    fieldset.dataset.insightPeriod = String(sequence);
+    const legend = node("legend");
+    const label = node("span", "", `Period ${periodNumber}`);
+    label.dataset.periodLabel = "true";
+    const remove = node("button", "cf-remove-period", "Remove");
+    remove.type = "button";
+    remove.addEventListener("click", () => {
+      fieldset.remove();
+      updateInsightPeriodLabels();
+      invalidateInsights("Selected periods changed. Generate insights again to refresh persisted-run analysis.");
+    });
+    legend.append(label, remove);
+    fieldset.append(legend);
+    for (const [role, labelText] of [["start", "Starts"], ["end", "Ends"]]) {
+      const wrapper = node("label", "field");
+      wrapper.append(node("span", "", labelText));
+      const input = node("input");
+      input.type = "date";
+      input.required = true;
+      input.id = `insight-period-${sequence}-${role}`;
+      input.dataset.periodRole = role;
+      input.addEventListener("input", () => invalidateInsights());
+      wrapper.append(input);
+      fieldset.append(wrapper);
+    }
+    $("#additional-insight-periods").append(fieldset);
+    updateInsightPeriodLabels();
+    invalidateInsights("Period added. Enter its exact inclusive dates before generating insights.");
+  }
+
+  function validateSelectedInsightPeriods() {
+    const periods = getSelectedInsightPeriods();
+    if (periods.some((period) => !period.period_start || !period.period_end)) {
+      throw new Error("Choose start and end dates for every selected insight period.");
+    }
+    for (let index = 0; index < periods.length; index += 1) {
+      const period = periods[index];
+      if (period.period_end < period.period_start) {
+        throw new Error(`Period ${index + 1} end date must not precede its start date.`);
+      }
+      if (index > 0 && periods[index - 1].period_end >= period.period_start) {
+        throw new Error("Selected periods must be oldest first, ordered, and non-overlapping.");
+      }
+    }
+    return periods;
+  }
+
+  async function generateSelectedInsights() {
+    if (!state.tenant) return;
+    let periods;
+    try {
+      periods = validateSelectedInsightPeriods();
+    } catch (error) {
+      setStatus("#insights-status", error.message, "is-error");
+      return;
+    }
+    const threshold = $("#attention-threshold-percent").value.trim();
+    if (!threshold) {
+      setStatus("#insights-status", "Enter an attention threshold between 0 and 100 percent.", "is-error");
+      return;
+    }
+    const requestId = ++state.insightsRequestId;
+    const tenantId = state.tenant.id;
+    const button = $("#generate-insights-button");
+    button.disabled = true;
+    setStatus("#insights-status", "Verifying selected persisted runs, evidence, and comparison contexts…", "muted");
+    try {
+      const { data } = await request(`${coreBase()}/insights`, {
+        method: "POST",
+        body: { periods, attention_threshold_percent: threshold },
+      });
+      if (requestId !== state.insightsRequestId || state.tenant?.id !== tenantId) return;
+      renderInsights(data);
+    } catch (error) {
+      if (requestId !== state.insightsRequestId || state.tenant?.id !== tenantId) return;
+      setStatus("#insights-status", error?.message || "Evidence-backed insights could not be generated.", "is-error");
+      handleError(error);
+    } finally {
+      if (requestId === state.insightsRequestId) button.disabled = false;
+    }
+  }
+
   async function renderRun(run) {
     const root = $("#run-result");
     root.replaceChildren();
@@ -1613,6 +1909,7 @@
     state.comparisonRequestId += 1;
     $("#compare-periods-button").disabled = false;
     $("#comparison-results").replaceChildren();
+    invalidateInsights("Saved run history is refreshing; generate insights again after the latest persisted-run selection loads.");
     setStatus(
       "#comparison-status",
       "Saved run history is refreshing; analyze again to refresh the latest saved-run selection.",
@@ -1687,7 +1984,9 @@
 
   async function loadCompany() {
     state.comparisonRequestId += 1;
+    state.insightsRequestId += 1;
     $("#compare-periods-button").disabled = false;
+    $("#generate-insights-button").disabled = false;
     state.policy = null;
     state.mapping = null;
     state.file = null;
@@ -1704,8 +2003,14 @@
     $("#prior-period-end").value = "";
     $("#current-period-start").value = "";
     $("#current-period-end").value = "";
+    $("#additional-insight-periods").replaceChildren();
+    state.insightPeriodSequence = 3;
+    $("#attention-threshold-percent").value = "10";
     $("#comparison-results").replaceChildren();
+    $("#insight-results").replaceChildren();
+    updateInsightPeriodLabels();
     setStatus("#comparison-status", "Load saved runs or enter two exact period windows to analyze.", "muted");
+    setStatus("#insights-status", "Select two to six periods to review profitability, drivers, movements, and history.", "muted");
     $("#overview-measures").replaceChildren();
     $("#overview-checks").replaceChildren();
     $("#overview-limitations").replaceChildren();
@@ -1869,9 +2174,13 @@
         $("#compare-periods-button").disabled = false;
         $("#comparison-results").replaceChildren();
         setStatus("#comparison-status", "Period dates changed. Analyze again to refresh the saved-run comparison.", "muted");
+        invalidateInsights();
       });
     }
     $("#compare-periods-button").addEventListener("click", compareSelectedPeriods);
+    $("#add-insight-period-button").addEventListener("click", addInsightPeriod);
+    $("#generate-insights-button").addEventListener("click", generateSelectedInsights);
+    $("#attention-threshold-percent").addEventListener("input", () => invalidateInsights("Attention threshold changed. Generate insights again to refresh materiality checks."));
     $("#load-more-imports").addEventListener("click", loadMoreImports);
     $("#run-history").addEventListener("change", () => {
       $("#load-run-button").disabled = !$("#run-history").value;

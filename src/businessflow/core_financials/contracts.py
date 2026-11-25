@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 from datetime import date, datetime
+from itertools import pairwise
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -600,6 +601,26 @@ class CoreFinancialComparisonRequest(StrictModel):
         return self
 
 
+class CoreFinancialInsightRequest(StrictModel):
+    periods: tuple[CoreFinancialPeriodSelection, ...] = Field(min_length=2, max_length=6)
+    attention_threshold_percent: MoneyText = "10"
+
+    @field_validator("attention_threshold_percent")
+    @classmethod
+    def validate_attention_threshold(cls, value: str) -> str:
+        threshold = parse_decimal_text(value)
+        if threshold < 0 or threshold > 100:
+            raise ValueError("attention_threshold_percent must be between 0 and 100")
+        return value
+
+    @model_validator(mode="after")
+    def validate_chronological_periods(self) -> CoreFinancialInsightRequest:
+        for previous, current in pairwise(self.periods):
+            if previous.period_end >= current.period_start:
+                raise ValueError("periods must be ordered, non-overlapping, and oldest first")
+        return self
+
+
 class CoreFinancialOverviewSource(StrictModel):
     id: UUID
     source_key: str
@@ -851,6 +872,121 @@ class CoreFinancialComparisonResponse(StrictModel):
     def require_all_measures_in_catalog_order(self) -> CoreFinancialComparisonResponse:
         if tuple(item.measure for item in self.findings) != FINANCIAL_MEASURES:
             raise ValueError("a period comparison must contain all six measures in catalog order")
+        return self
+
+
+CoreFinancialInsightKind = Literal[
+    "profitability_analysis",
+    "revenue_driver",
+    "expense_driver",
+    "attention_movement",
+    "potential_outlier",
+]
+
+
+class CoreFinancialInsightEvidenceReference(StrictModel):
+    measure: FinancialMeasure
+    period_start: date
+    period_end: date
+    currency_code: CurrencyCode
+    run_id: UUID
+    run_url: str
+    run_input_hash: HashText
+    run_result_hash: HashText
+    run_trace_hash: HashText
+    evidence_url: str
+    source_import_id: UUID
+    source_file_hash: HashText
+    evidence_count: int = Field(ge=0)
+    category: FinancialCategory | None = None
+
+
+class CoreFinancialInsightStatement(StrictModel):
+    text: str = Field(min_length=1, max_length=1000)
+    evidence: tuple[CoreFinancialInsightEvidenceReference, ...] = Field(min_length=1)
+
+
+class CoreFinancialInsight(StrictModel):
+    kind: CoreFinancialInsightKind
+    measure: FinancialMeasure
+    title: str = Field(min_length=1, max_length=200)
+    observed_facts: tuple[CoreFinancialInsightStatement, ...] = Field(min_length=1)
+    calculations: tuple[CoreFinancialInsightStatement, ...] = ()
+    hypotheses: tuple[CoreFinancialInsightStatement, ...] = ()
+    recommendations: tuple[CoreFinancialInsightStatement, ...] = Field(min_length=1)
+    expected_impact: OutputMoneyText | None = None
+    expected_impact_status: Literal["calculated", "not_estimated"]
+    expected_impact_reason_codes: tuple[str, ...] = ()
+    evidence: tuple[CoreFinancialInsightEvidenceReference, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def expected_impact_must_be_explicit(self) -> CoreFinancialInsight:
+        if (self.expected_impact_status == "calculated") != (self.expected_impact is not None):
+            raise ValueError("expected impact status must match whether an amount is reported")
+        if self.expected_impact_status == "not_estimated" and not self.expected_impact_reason_codes:
+            raise ValueError("unestimated expected impact requires a reason code")
+        return self
+
+
+class CoreFinancialInsightAssessment(StrictModel):
+    kind: CoreFinancialInsightKind
+    measure: FinancialMeasure
+    status: Literal["insight_generated", "not_triggered", "abstained", "not_selected"]
+    period_start: date | None = None
+    period_end: date | None = None
+    reason_codes: tuple[str, ...] = ()
+    evidence: tuple[CoreFinancialInsightEvidenceReference, ...] = ()
+
+    @model_validator(mode="after")
+    def assessment_status_must_be_explained(self) -> CoreFinancialInsightAssessment:
+        if self.status != "insight_generated" and not self.reason_codes:
+            raise ValueError("a non-generated insight assessment requires a reason code")
+        if (self.period_start is None) != (self.period_end is None):
+            raise ValueError("assessment period_start and period_end must be supplied together")
+        if (
+            self.period_start is not None
+            and self.period_end is not None
+            and self.period_end < self.period_start
+        ):
+            raise ValueError("assessment period_end must not precede period_start")
+        return self
+
+
+class CoreFinancialInsightsResponse(StrictModel):
+    tenant_id: UUID
+    company_id: UUID
+    selection_rule: Literal["latest_persisted_run_per_measure_exact_selected_period"]
+    periods: tuple[CoreFinancialPeriodSelection, ...] = Field(min_length=2, max_length=6)
+    attention_threshold_percent: MoneyText
+    comparisons: tuple[CoreFinancialComparisonResponse, ...]
+    insights: tuple[CoreFinancialInsight, ...] = ()
+    assessments: tuple[CoreFinancialInsightAssessment, ...] = ()
+    limitations: tuple[str, ...] = ()
+    assumptions: tuple[str, ...] = ()
+
+    @field_validator("attention_threshold_percent")
+    @classmethod
+    def validate_response_attention_threshold(cls, value: str) -> str:
+        threshold = parse_decimal_text(value)
+        if threshold < 0 or threshold > 100:
+            raise ValueError("attention_threshold_percent must be between 0 and 100")
+        return value
+
+    @model_validator(mode="after")
+    def comparisons_must_cover_selected_adjacent_periods(self) -> CoreFinancialInsightsResponse:
+        for previous, current in pairwise(self.periods):
+            if previous.period_end >= current.period_start:
+                raise ValueError("periods must be ordered, non-overlapping, and oldest first")
+        if len(self.comparisons) != len(self.periods) - 1:
+            raise ValueError("insight response must compare each adjacent selected period pair")
+        for index, comparison in enumerate(self.comparisons):
+            if (
+                comparison.prior_period != self.periods[index]
+                or comparison.current_period != self.periods[index + 1]
+                or comparison.tenant_id != self.tenant_id
+                or comparison.company_id != self.company_id
+            ):
+                raise ValueError("insight comparisons must match the selected periods and scope")
         return self
 
 

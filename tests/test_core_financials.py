@@ -1042,6 +1042,41 @@ def test_persisted_period_comparison_reports_variances_margins_contributors_and_
     assert category_evidence.json()["total"] == 1
     assert category_evidence.json()["items"][0]["category"] == "cost_of_sales"
 
+    insight_response = client.post(
+        f"{_base(tenant['id'])}/insights",
+        json={
+            "periods": [request_body["prior_period"], request_body["current_period"]],
+            "attention_threshold_percent": "10",
+        },
+        headers=headers,
+    )
+    assert insight_response.status_code == 200, insight_response.text
+    insights = insight_response.json()
+    assert insights["tenant_id"] == tenant["id"]
+    assert insights["company_id"] == tenant["company"]["id"]
+    assert insights["selection_rule"] == "latest_persisted_run_per_measure_exact_selected_period"
+    assert len(insights["comparisons"]) == 1
+    assert len(insights["periods"]) == 2
+    generated_kinds = {item["kind"] for item in insights["insights"]}
+    assert "profitability_analysis" in generated_kinds
+    assert "revenue_driver" in generated_kinds
+    assert "expense_driver" in generated_kinds
+    revenue_driver = next(item for item in insights["insights"] if item["kind"] == "revenue_driver")
+    assert all(reference["category"] is not None for reference in revenue_driver["evidence"])
+    assert all("category=" in reference["evidence_url"] for reference in revenue_driver["evidence"])
+    assert all(item["hypotheses"] == [] for item in insights["insights"])
+    assert all(
+        item["expected_impact_status"] == "not_estimated" and item["expected_impact"] is None
+        for item in insights["insights"]
+    )
+    limited_history = next(
+        item
+        for item in insights["assessments"]
+        if item["kind"] == "potential_outlier" and item["measure"] == "revenue"
+    )
+    assert limited_history["status"] == "abstained"
+    assert "insufficient_history" in limited_history["reason_codes"]
+
     unavailable_prior_body = {
         "prior_period": {"period_start": "2025-10-01", "period_end": "2025-10-31"},
         "current_period": request_body["current_period"],
@@ -1082,6 +1117,28 @@ def test_persisted_period_comparison_reports_variances_margins_contributors_and_
     assert all(
         item["prior_run"] is None and item["current_run"] is None
         for item in isolated.json()["findings"]
+    )
+    insight_request_body = {
+        "periods": [request_body["prior_period"], request_body["current_period"]],
+        "attention_threshold_percent": "10",
+    }
+    denied_insights = client.post(
+        f"{_base(tenant['id'])}/insights",
+        json=insight_request_body,
+        headers=auth_headers(other_owner),
+    )
+    assert denied_insights.status_code in (403, 404)
+    isolated_insights = client.post(
+        f"{_base(other_tenant['id'])}/insights",
+        json=insight_request_body,
+        headers=auth_headers(other_owner),
+    )
+    assert isolated_insights.status_code == 200, isolated_insights.text
+    assert isolated_insights.json()["insights"] == []
+    assert all(
+        finding["prior_run"] is None and finding["current_run"] is None
+        for comparison_result in isolated_insights.json()["comparisons"]
+        for finding in comparison_result["findings"]
     )
     cross_company_evidence = client.get(
         f"{_base(other_tenant['id'])}/runs/{runs['current']['net_profit']['id']}/evidence"

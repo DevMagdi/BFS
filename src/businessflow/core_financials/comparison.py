@@ -40,7 +40,7 @@ _PROFITABILITY_MEASURES: frozenset[FinancialMeasure] = frozenset(
     {"gross_profit", "operating_profit", "net_profit"}
 )
 _CONTRIBUTOR_MEASURES: frozenset[FinancialMeasure] = frozenset(
-    {"expenses", "gross_profit", "operating_profit", "net_profit"}
+    {"revenue", "expenses", "gross_profit", "operating_profit", "net_profit"}
 )
 _EXPECTED_SOURCE_TYPE = {
     "revenue": "general_ledger",

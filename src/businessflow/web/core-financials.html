@@ -84,29 +84,38 @@
             <section class="panel cf-panel cf-comparison-panel" aria-labelledby="comparison-title">
               <div class="cf-section-heading">
                 <div>
-                  <p class="eyebrow">M14 · PERSISTED PERIOD COMPARISON</p>
-                  <h2 id="comparison-title">Compare two selected periods.</h2>
+                  <p class="eyebrow">M15 · FINANCIAL INSIGHTS &amp; ROOT-CAUSE ANALYSIS</p>
+                  <h2 id="comparison-title">Review supported movements and persisted evidence.</h2>
                 </div>
               </div>
-              <p class="muted">Choose two non-overlapping inclusive periods. For each measure, the latest saved run with that exact period is selected and linked below. Matching whole calendar-month counts or matching custom-window day counts are required; incompatible currencies, bases, policies, engines, incomplete sources, or missing runs abstain without imputation.</p>
-              <p class="cf-inline-note">Revenue, Expenses, Gross Profit, Operating Profit, Net Profit, and Cash Flow are compared independently. Cash Flow means net observed bank movement, not a formal cash flow statement. Category changes are evidence-backed formula contributions, not causal explanations.</p>
+              <p class="muted">Choose two to six oldest-first, non-overlapping periods. The workflow reuses the latest persisted exact-period runs and M14 comparisons; no amounts are recalculated or imputed. Period/context incompatibilities and incomplete sources abstain explicitly.</p>
+              <p class="cf-inline-note">Facts, Decimal-safe calculations, cautious hypotheses, and review actions stay separate. Category changes are saved-formula contributions, not proof of operational cause. No root cause, forecast, budget, or unsupported impact is invented. Cash Flow means net observed bank movement, not a formal cash flow statement.</p>
+              <div id="additional-insight-periods" class="cf-period-grid" aria-label="Earlier insight periods"></div>
               <div class="cf-period-grid">
                 <fieldset class="cf-period-fieldset">
-                  <legend>Prior period</legend>
+                  <legend><span id="prior-period-label">Period 1 · oldest</span></legend>
                   <label class="field"><span>Starts</span><input id="prior-period-start" type="date" required></label>
                   <label class="field"><span>Ends</span><input id="prior-period-end" type="date" required></label>
                 </fieldset>
                 <fieldset class="cf-period-fieldset">
-                  <legend>Current period</legend>
+                  <legend><span id="current-period-label">Period 2</span></legend>
                   <label class="field"><span>Starts</span><input id="current-period-start" type="date" required></label>
                   <label class="field"><span>Ends</span><input id="current-period-end" type="date" required></label>
                 </fieldset>
               </div>
+              <div class="cf-actions cf-insight-controls">
+                <button id="add-insight-period-button" class="button button-quiet" type="button">Add an earlier period</button>
+                <label class="field cf-attention-threshold"><span>Attention threshold (%)</span><input id="attention-threshold-percent" type="text" inputmode="decimal" maxlength="64" value="10" aria-describedby="attention-threshold-help"></label>
+                <span id="attention-threshold-help" class="fine-print">Material movement threshold; potential-outlier checks require at least four contiguous periods.</span>
+              </div>
               <div class="cf-actions">
-                <button id="compare-periods-button" class="button button-primary" type="button">Analyze selected periods</button>
+                <button id="compare-periods-button" class="button button-primary" type="button">Compare the two base periods</button>
+                <button id="generate-insights-button" class="button button-secondary" type="button">Generate evidence-backed insights</button>
               </div>
               <p id="comparison-status" class="cf-status muted" role="status" aria-live="polite">Load saved runs or enter two exact period windows to analyze.</p>
               <div id="comparison-results" class="cf-comparison-results" aria-live="polite"></div>
+              <p id="insights-status" class="cf-status muted" role="status" aria-live="polite">Select two to six periods to review profitability, drivers, movements, and history.</p>
+              <div id="insight-results" class="cf-insight-results" aria-live="polite"></div>
             </section>
 
             <section class="panel cf-panel" aria-labelledby="policy-title">

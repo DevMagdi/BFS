@@ -35,6 +35,7 @@ from businessflow.core_financials.catalog import (
 )
 from businessflow.core_financials.contracts import (
     BANK_FIELDS,
+    FINANCIAL_MEASURES,
     LEDGER_FIELDS,
     CoreFinancialAnalysisStatement,
     CoreFinancialImportMetadata,
@@ -44,6 +45,9 @@ from businessflow.core_financials.contracts import (
     CoreFinancialMappingPage,
     CoreFinancialMappingResponse,
     CoreFinancialMetricResult,
+    CoreFinancialOverviewMeasure,
+    CoreFinancialOverviewResponse,
+    CoreFinancialOverviewSource,
     CoreFinancialPolicyCreateRequest,
     CoreFinancialPolicyPage,
     CoreFinancialPolicyResponse,
@@ -68,6 +72,7 @@ from businessflow.core_financials.models import (
     CoreFinancialRun,
     CoreFinancialRunEvidence,
 )
+from businessflow.core_financials.overview import build_overview_checks
 from businessflow.data_imports.parsers import (
     ImportFileError,
     parse_file,
@@ -1967,6 +1972,284 @@ def list_core_financial_runs(
     )
     return CoreFinancialRunPage(
         items=[_run_response(session, row) for row in rows], total=total, limit=limit, offset=offset
+    )
+
+
+def _overview_label(measure: FinancialMeasure) -> str:
+    return {
+        "revenue": "Revenue",
+        "expenses": "Expenses",
+        "gross_profit": "Gross Profit",
+        "operating_profit": "Operating Profit",
+        "net_profit": "Net Profit",
+        "cash_flow": "Cash Flow — net observed bank movement",
+    }[measure]
+
+
+def _missing_overview_measure(measure: FinancialMeasure) -> CoreFinancialOverviewMeasure:
+    return CoreFinancialOverviewMeasure(
+        measure=measure,
+        label=_overview_label(measure),
+        status="missing",
+        metric_status=None,
+        reported_value=None,
+        exact_value=None,
+        currency_code=None,
+        basis=None,
+        period_start=None,
+        period_end=None,
+        period_rule=None,
+        fx_policy=None,
+        run_id=None,
+        run_url=None,
+        evidence_url=None,
+        evidence_status="not_available",
+        evidence_count=0,
+        run_state=None,
+        engine_version=None,
+        policy_id=None,
+        policy_version=None,
+        policy_hash=None,
+        policy_url=None,
+        policy_authority=None,
+        reporting_framework=None,
+        accounting_policy_status=None,
+        source_imports=(),
+        reconciliation=None,
+        reason_codes=("no_persisted_run",),
+        limitations=(
+            "No persisted run exists for this measure in the selected Company workspace.",
+        ),
+        assumptions=(),
+    )
+
+
+def get_core_financial_overview(
+    session: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    *,
+    settings: Settings,
+) -> CoreFinancialOverviewResponse:
+    """Return the latest immutable run per measure and policy-scoped comparison checks."""
+    ensure_core_financials_enabled(settings)
+    access = require_company_context_access(session, user, tenant_id, "finance:read")
+    filters = (
+        CoreFinancialRun.tenant_id == tenant_id,
+        CoreFinancialRun.company_id == access.company.id,
+    )
+    requested_measure = CoreFinancialRun.input_snapshot["request"]["measure"].as_string()
+    latest_rows: dict[FinancialMeasure, CoreFinancialRun | None] = {}
+    for measure in FINANCIAL_MEASURES:
+        latest_rows[measure] = session.scalar(
+            select(CoreFinancialRun)
+            .where(*filters, requested_measure == measure)
+            .order_by(CoreFinancialRun.created_at.desc(), CoreFinancialRun.id.desc())
+            .limit(1)
+        )
+
+    source_cache: dict[UUID, CoreFinancialOverviewSource] = {}
+    measures: list[CoreFinancialOverviewMeasure] = []
+    for measure in FINANCIAL_MEASURES:
+        row = latest_rows[measure]
+        if row is None:
+            measures.append(_missing_overview_measure(measure))
+            continue
+
+        run_response = _run_response(session, row)
+        request_payload = row.input_snapshot.get("request")
+        if not isinstance(request_payload, dict):
+            raise _integrity_error()
+        try:
+            saved_request = CoreFinancialRunCreateRequest.model_validate(request_payload)
+        except ValidationError:
+            raise _integrity_error() from None
+        if (
+            saved_request.measure != measure
+            or saved_request.policy_id != row.policy_id
+            or saved_request.ledger_import_id != row.ledger_import_id
+            or saved_request.bank_import_id != row.bank_import_id
+            or saved_request.period_start != row.period_start
+            or saved_request.period_end != row.period_end
+            or saved_request.currency_code != row.currency_code
+            or len(run_response.metrics) != 1
+            or run_response.metrics[0].metric != measure
+        ):
+            raise _integrity_error()
+        metric = run_response.metrics[0]
+        if (metric.status == "calculated") != (run_response.state == "calculated"):
+            raise _integrity_error()
+        if metric.status == "calculated":
+            if metric.exact_value is None or metric.reported_value is None:
+                raise _integrity_error()
+        elif metric.exact_value is not None or metric.reported_value is not None:
+            raise _integrity_error()
+
+        policy_row = _get_scoped_policy(
+            session,
+            tenant_id=tenant_id,
+            company_id=access.company.id,
+            policy_id=row.policy_id,
+        )
+        policy_definition = _verify_policy(policy_row)
+        if (
+            policy_row.version != row.policy_version
+            or policy_row.definition_hash != row.policy_hash
+        ):
+            raise _integrity_error()
+
+        if measure == "cash_flow":
+            source_import_id = row.bank_import_id
+            expected_source_type: SourceType = "bank_activity"
+            if row.ledger_import_id is not None:
+                raise _integrity_error()
+        else:
+            source_import_id = row.ledger_import_id
+            expected_source_type = "general_ledger"
+            if row.bank_import_id is not None:
+                raise _integrity_error()
+        if source_import_id is None:
+            raise _integrity_error()
+        if metric.source_import_ids and metric.source_import_ids != (source_import_id,):
+            raise _integrity_error()
+
+        source = source_cache.get(source_import_id)
+        if source is None:
+            import_row = _get_scoped_import(
+                session,
+                tenant_id=tenant_id,
+                company_id=access.company.id,
+                import_id=source_import_id,
+            )
+            _verify_import_integrity(session, import_row)
+            if (
+                import_row.source_type != expected_source_type
+                or import_row.policy_id != row.policy_id
+                or import_row.policy_version != row.policy_version
+                or import_row.policy_hash != row.policy_hash
+            ):
+                raise _integrity_error()
+            source = CoreFinancialOverviewSource(
+                id=import_row.id,
+                source_key=import_row.source_key,
+                source_type=import_row.source_type,
+                file_name=import_row.file_name,
+                file_hash=import_row.file_hash,
+                input_hash=import_row.input_hash,
+                result_hash=import_row.result_hash,
+                mapping_version=import_row.mapping_version,
+                mapping_hash=import_row.mapping_hash,
+                policy_id=import_row.policy_id,
+                policy_version=import_row.policy_version,
+                policy_hash=import_row.policy_hash,
+                period_start=import_row.period_start,
+                period_end=import_row.period_end,
+                period_completeness=cast(
+                    Literal["complete", "partial", "unknown"], import_row.period_completeness
+                ),
+                completeness_authority="caller_asserted_not_verified",
+                quality_status=cast(Literal["passed", "incomplete"], import_row.quality_status),
+                total_rows=import_row.total_rows,
+                accepted_rows=import_row.accepted_rows,
+                rejected_rows=import_row.rejected_rows,
+                duplicate_rows=import_row.duplicate_rows,
+                import_url=(f"/api/v1/tenants/{tenant_id}/core-financials/imports/{import_row.id}"),
+            )
+            source_cache[source_import_id] = source
+
+        evidence_rows = _verify_run_record(session, row)
+        evidence_count = sum(item.metric == measure for item in evidence_rows)
+        policy_formulas = {
+            policy_measure: formula.terms
+            for policy_measure, formula in policy_definition.metric_formulas.items()
+        }
+        formula_terms = (
+            policy_definition.metric_formulas[measure].terms if measure != "cash_flow" else ()
+        )
+        limitations = tuple(
+            statement.text
+            for statement in run_response.analysis
+            if statement.kind == "limitation" and statement.metric in (None, measure)
+        )
+        assumptions = (
+            "The saved policy is caller-supplied illustrative management reporting; accounting "
+            "approval and GAAP/IFRS treatment are not established.",
+            "Source identity and period completeness are caller assertions and are not "
+            "independently authenticated or verified against a source system.",
+            f"The run reports {run_response.currency_code} only; no FX conversion or consolidation "
+            "is performed.",
+            "The reporting window is inclusive by transaction date; no fiscal calendar is "
+            "inferred.",
+        )
+        status: Literal["available", "incomplete", "withheld", "missing"] = (
+            "available"
+            if metric.status == "calculated"
+            else "incomplete"
+            if metric.status == "incomplete"
+            else "withheld"
+        )
+        measures.append(
+            CoreFinancialOverviewMeasure(
+                measure=measure,
+                label=_overview_label(measure),
+                status=status,
+                metric_status=metric.status,
+                reported_value=metric.reported_value,
+                exact_value=metric.exact_value,
+                currency_code=metric.currency_code,
+                basis=metric.basis,
+                period_start=run_response.period_start,
+                period_end=run_response.period_end,
+                period_rule=run_response.period_rule,
+                fx_policy=run_response.fx_policy,
+                run_id=run_response.id,
+                run_url=(f"/api/v1/tenants/{tenant_id}/core-financials/runs/{run_response.id}"),
+                evidence_url=(
+                    f"/api/v1/tenants/{tenant_id}/core-financials/runs/{run_response.id}"
+                    f"/evidence?metric={measure}"
+                ),
+                evidence_status="available" if evidence_count else "empty",
+                evidence_count=evidence_count,
+                run_state=run_response.state,
+                engine_version=run_response.engine_version,
+                policy_id=run_response.policy_id,
+                policy_version=run_response.policy_version,
+                policy_hash=run_response.policy_hash,
+                policy_url=(
+                    f"/api/v1/tenants/{tenant_id}/core-financials/policies/{run_response.policy_id}"
+                ),
+                policy_authority=run_response.authority,
+                reporting_framework=run_response.reporting_framework,
+                accounting_policy_status=run_response.accounting_policy_status,
+                source_imports=(source,),
+                reconciliation=metric.reconciliation,
+                required_categories=metric.required_categories,
+                category_totals=metric.category_totals,
+                formula_terms=formula_terms,
+                policy_formulas=policy_formulas,
+                category_coverage=policy_definition.category_coverage,
+                cash_flow_policy=policy_definition.cash_flow_policy,
+                reason_codes=metric.reason_codes,
+                limitations=limitations,
+                assumptions=assumptions,
+            )
+        )
+
+    measure_tuple = tuple(measures)
+    return CoreFinancialOverviewResponse(
+        tenant_id=tenant_id,
+        company_id=access.company.id,
+        selection_rule="latest_saved_run_per_measure",
+        measures=measure_tuple,
+        checks=build_overview_checks(measure_tuple),
+        limitations=(
+            "The overview selects the latest saved run for each measure independently; their "
+            "reporting periods, currencies, sources, policies, or calculation versions may differ.",
+            "Cross-measure checks abstain when saved formulas or run contexts do not support a "
+            "comparison. A consistent result is not an accounting conclusion or audit opinion.",
+            "No missing measure is imputed, no expense category is assumed to be cost of sales, "
+            "and no cross-period or cross-currency arithmetic is performed.",
+        ),
     )
 
 

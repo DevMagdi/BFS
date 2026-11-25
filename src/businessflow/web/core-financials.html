@@ -62,6 +62,25 @@
           </section>
 
           <div id="workflow" class="cf-workflow" hidden>
+            <section class="panel cf-panel cf-overview-panel" aria-labelledby="overview-title">
+              <div class="cf-section-heading">
+                <div>
+                  <p class="eyebrow">M13 · INTEGRATED FINANCIAL OVERVIEW</p>
+                  <h2 id="overview-title">Six measures. One evidence-linked view.</h2>
+                </div>
+                <button id="reload-overview-button" class="button button-quiet" type="button">Refresh overview</button>
+              </div>
+              <p class="muted">The latest persisted run for each measure is shown independently. Periods, currencies, sources, policies, and calculation versions can differ; comparisons abstain rather than convert currencies or cross reporting windows.</p>
+              <p id="overview-status" class="cf-status muted" role="status" aria-live="polite">Loading the latest saved runs for all six measures…</p>
+              <div id="overview-measures" class="cf-overview-grid" aria-live="polite"></div>
+              <div class="cf-overview-check-section">
+                <h3>Policy-supported consistency checks</h3>
+                <p class="fine-print">A consistent result only means the saved illustrative formulas and compatible persisted run contexts agree. It is not an accounting conclusion or independent audit. Expenses are not treated as cost of sales unless the saved formula proves that relationship.</p>
+                <div id="overview-checks" class="cf-overview-checks" aria-live="polite"></div>
+              </div>
+              <ul id="overview-limitations" class="cf-overview-limitations"></ul>
+            </section>
+
             <section class="panel cf-panel" aria-labelledby="policy-title">
               <div class="cf-section-heading">
                 <div>

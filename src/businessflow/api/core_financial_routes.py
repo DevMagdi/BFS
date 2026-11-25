@@ -17,6 +17,7 @@ from businessflow.core_financials.contracts import (
     CoreFinancialMappingCreateRequest,
     CoreFinancialMappingPage,
     CoreFinancialMappingResponse,
+    CoreFinancialOverviewResponse,
     CoreFinancialPolicyCreateRequest,
     CoreFinancialPolicyPage,
     CoreFinancialPolicyResponse,
@@ -37,6 +38,7 @@ from businessflow.core_financials.service import (
     create_core_financial_run,
     ensure_core_financials_enabled,
     get_core_financial_import,
+    get_core_financial_overview,
     get_core_financial_policy,
     get_core_financial_run,
     get_core_financial_template,
@@ -349,6 +351,26 @@ def read_core_financial_runs(
         offset=offset,
         settings=settings,
     )
+
+
+@router.get(
+    "/overview",
+    response_model=CoreFinancialOverviewResponse,
+    summary="Show all six measures and policy-supported cross-measure consistency checks",
+    description=(
+        "Returns the latest persisted run for each measure. It preserves each run's independent "
+        "period, currency, source, policy and evidence context, and abstains from arithmetic when "
+        "the saved formulas or run scopes do not support a comparison. Results remain illustrative "
+        "and non-authoritative."
+    ),
+)
+def read_core_financial_overview(
+    tenant_id: UUID,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CoreFinancialOverviewResponse:
+    return get_core_financial_overview(session, user, tenant_id, settings=settings)
 
 
 @router.get("/runs/{run_id}", response_model=CoreFinancialRunResponse)

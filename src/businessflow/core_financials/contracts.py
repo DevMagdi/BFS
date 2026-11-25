@@ -543,6 +543,140 @@ class CoreFinancialRunPage(StrictModel):
     offset: int
 
 
+class CoreFinancialOverviewSource(StrictModel):
+    id: UUID
+    source_key: str
+    source_type: SourceType
+    file_name: str
+    file_hash: HashText
+    input_hash: HashText
+    result_hash: HashText
+    mapping_version: int
+    mapping_hash: HashText
+    policy_id: UUID
+    policy_version: int
+    policy_hash: HashText
+    period_start: date
+    period_end: date
+    period_completeness: PeriodCompleteness
+    completeness_authority: Literal["caller_asserted_not_verified"]
+    quality_status: Literal["passed", "incomplete"]
+    total_rows: int
+    accepted_rows: int
+    rejected_rows: int
+    duplicate_rows: int
+    import_url: str
+
+
+class CoreFinancialOverviewMeasure(StrictModel):
+    measure: FinancialMeasure
+    label: str
+    status: Literal["available", "incomplete", "withheld", "missing"]
+    metric_status: Literal["calculated", "incomplete", "missing_source"] | None
+    reported_value: OutputMoneyText | None
+    exact_value: OutputMoneyText | None
+    currency_code: CurrencyCode | None
+    basis: Literal["accrual", "cash", "cash_movement"] | None
+    period_start: date | None
+    period_end: date | None
+    period_rule: Literal["inclusive_transaction_date"] | None
+    fx_policy: Literal["one_currency_no_fx"] | None
+    run_id: UUID | None
+    run_url: str | None
+    evidence_url: str | None
+    evidence_status: Literal["available", "empty", "not_available"]
+    evidence_count: int = Field(ge=0)
+    run_state: Literal["calculated", "incomplete"] | None
+    engine_version: str | None
+    policy_id: UUID | None
+    policy_version: int | None
+    policy_hash: HashText | None
+    policy_url: str | None
+    policy_authority: Literal["illustrative_not_authoritative"] | None
+    reporting_framework: Literal["management_reporting"] | None
+    accounting_policy_status: Literal["not_established"] | None
+    source_imports: tuple[CoreFinancialOverviewSource, ...] = ()
+    reconciliation: MetricReconciliation | None
+    required_categories: tuple[FinancialCategory, ...] = ()
+    category_totals: dict[str, OutputMoneyText] = Field(default_factory=dict)
+    formula_terms: tuple[FormulaTerm, ...] = ()
+    policy_formulas: dict[ProfitAndLossMeasure, tuple[FormulaTerm, ...]] = Field(
+        default_factory=dict
+    )
+    category_coverage: dict[FinancialCategory, CategoryCoverage] = Field(default_factory=dict)
+    cash_flow_policy: CashFlowPolicyDefinition | None = None
+    reason_codes: tuple[str, ...] = ()
+    limitations: tuple[str, ...] = ()
+    assumptions: tuple[str, ...] = ()
+
+
+class CoreFinancialOverviewRunReference(StrictModel):
+    measure: FinancialMeasure
+    run_id: UUID
+    run_url: str
+    evidence_url: str
+    reported_value: OutputMoneyText | None
+    exact_value: OutputMoneyText | None
+    status: Literal["available", "incomplete", "withheld"]
+    metric_status: Literal["calculated", "incomplete", "missing_source"]
+    period_start: date
+    period_end: date
+    currency_code: CurrencyCode
+    basis: Literal["accrual", "cash", "cash_movement"]
+    engine_version: str
+    policy_id: UUID
+    policy_version: int
+    policy_hash: HashText
+    policy_url: str
+    source_imports: tuple[CoreFinancialOverviewSource, ...]
+    evidence_status: Literal["available", "empty"]
+    evidence_count: int = Field(ge=0)
+    reconciliation: MetricReconciliation
+    limitations: tuple[str, ...] = ()
+    assumptions: tuple[str, ...] = ()
+
+
+class CoreFinancialOverviewCheck(StrictModel):
+    key: Literal[
+        "gross_profit_bridge",
+        "revenue_expenses_gross_profit",
+        "operating_profit_bridge",
+        "net_profit_bridge",
+    ]
+    label: str
+    equation: str
+    status: Literal["consistent", "inconsistent", "unverifiable", "non_comparable"]
+    policy_relation_supported: bool | None
+    policy_difference_terms: dict[str, int] = Field(default_factory=dict)
+    required_measures: tuple[FinancialMeasure, ...]
+    run_references: tuple[CoreFinancialOverviewRunReference, ...] = ()
+    period_start: date | None = None
+    period_end: date | None = None
+    currency_code: CurrencyCode | None = None
+    basis: Literal["accrual", "cash", "cash_movement"] | None = None
+    variance: OutputMoneyText | None = None
+    reason_codes: tuple[str, ...] = ()
+    limitations: tuple[str, ...] = ()
+    assumptions: tuple[str, ...] = ()
+
+
+class CoreFinancialOverviewResponse(StrictModel):
+    tenant_id: UUID
+    company_id: UUID
+    selection_rule: Literal["latest_saved_run_per_measure"]
+    measures: tuple[CoreFinancialOverviewMeasure, ...]
+    checks: tuple[CoreFinancialOverviewCheck, ...]
+    limitations: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def require_all_measures_in_catalog_order(self) -> CoreFinancialOverviewResponse:
+        if tuple(item.measure for item in self.measures) != FINANCIAL_MEASURES:
+            raise ValueError(
+                "the integrated overview must contain all six measures in catalog order"
+            )
+        return self
+
+
 class CoreFinancialRunVerificationResponse(StrictModel):
     run_id: UUID
     passed: bool

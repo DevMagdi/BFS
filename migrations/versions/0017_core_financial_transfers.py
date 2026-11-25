@@ -1,6 +1,6 @@
 """Support explicitly marked bank transfers in Core Financials imports.
 
-Revision ID: 0017_core_financial_cash_transfers
+Revision ID: 0017_core_financial_transfers
 Revises: 0016_core_financials
 Create Date: 2026-11-21
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0017_core_financial_cash_transfers"
+revision = "0017_core_financial_transfers"
 down_revision = "0016_core_financials"
 branch_labels = None
 depends_on = None

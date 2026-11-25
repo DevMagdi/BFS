@@ -81,6 +81,34 @@
               <ul id="overview-limitations" class="cf-overview-limitations"></ul>
             </section>
 
+            <section class="panel cf-panel cf-comparison-panel" aria-labelledby="comparison-title">
+              <div class="cf-section-heading">
+                <div>
+                  <p class="eyebrow">M14 · PERSISTED PERIOD COMPARISON</p>
+                  <h2 id="comparison-title">Compare two selected periods.</h2>
+                </div>
+              </div>
+              <p class="muted">Choose two non-overlapping inclusive periods. For each measure, the latest saved run with that exact period is selected and linked below. Matching whole calendar-month counts or matching custom-window day counts are required; incompatible currencies, bases, policies, engines, incomplete sources, or missing runs abstain without imputation.</p>
+              <p class="cf-inline-note">Revenue, Expenses, Gross Profit, Operating Profit, Net Profit, and Cash Flow are compared independently. Cash Flow means net observed bank movement, not a formal cash flow statement. Category changes are evidence-backed formula contributions, not causal explanations.</p>
+              <div class="cf-period-grid">
+                <fieldset class="cf-period-fieldset">
+                  <legend>Prior period</legend>
+                  <label class="field"><span>Starts</span><input id="prior-period-start" type="date" required></label>
+                  <label class="field"><span>Ends</span><input id="prior-period-end" type="date" required></label>
+                </fieldset>
+                <fieldset class="cf-period-fieldset">
+                  <legend>Current period</legend>
+                  <label class="field"><span>Starts</span><input id="current-period-start" type="date" required></label>
+                  <label class="field"><span>Ends</span><input id="current-period-end" type="date" required></label>
+                </fieldset>
+              </div>
+              <div class="cf-actions">
+                <button id="compare-periods-button" class="button button-primary" type="button">Analyze selected periods</button>
+              </div>
+              <p id="comparison-status" class="cf-status muted" role="status" aria-live="polite">Load saved runs or enter two exact period windows to analyze.</p>
+              <div id="comparison-results" class="cf-comparison-results" aria-live="polite"></div>
+            </section>
+
             <section class="panel cf-panel" aria-labelledby="policy-title">
               <div class="cf-section-heading">
                 <div>

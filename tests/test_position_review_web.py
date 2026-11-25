@@ -62,6 +62,25 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     assert "Measure changed. Select a separate control" in core_financial_script.text
     assert "async function loadOverview()" in core_financial_script.text
     assert "renderOverviewCheck" in core_financial_script.text
+    assert 'id="compare-periods-button"' in core_financial_page.text
+    assert 'id="prior-period-start"' in core_financial_page.text
+    assert 'id="current-period-end"' in core_financial_page.text
+    assert "async function compareSelectedPeriods()" in core_financial_script.text
+    assert "renderComparisonFinding" in core_financial_script.text
+    assert "revealComparisonEvidence" in core_financial_script.text
+    assert "Period dates changed. Analyze again to refresh" in core_financial_script.text
+    assert "Saved run history is refreshing; analyze again" in core_financial_script.text
+    assert (
+        "Company changed. The API will load only the selected Company's records."
+        in core_financial_script.text
+    )
+    assert "await loadCompany();" in core_financial_script.text
+    assert "state.comparisonRequestId += 1;" in core_financial_script.text
+    assert (
+        "requestId !== state.comparisonRequestId || state.tenant?.id !== tenantId"
+        in core_financial_script.text
+    )
+    assert '$("#comparison-results").replaceChildren();' in core_financial_script.text
     assert "View evidence" in core_financial_script.text
     assert "innerHTML" not in core_financial_script.text
     assert 'id="load-more-imports"' in core_financial_page.text
@@ -88,8 +107,16 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     assert "/api/v1/tenants/{tenant_id}/position-reviews/briefs/{review_id}/dispositions" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/imports" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/overview" in paths
+    assert "/api/v1/tenants/{tenant_id}/core-financials/comparisons" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/policies/{policy_id}" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/runs" in paths
+    evidence_path = "/api/v1/tenants/{tenant_id}/core-financials/runs/{run_id}/evidence"
+    assert any(
+        parameter["name"] == "category" for parameter in paths[evidence_path]["get"]["parameters"]
+    )
+    comparison_request_schema = schema["components"]["schemas"]["CoreFinancialComparisonRequest"]
+    assert "prior_period" in comparison_request_schema["properties"]
+    assert "current_period" in comparison_request_schema["properties"]
     run_request_schema = schema["components"]["schemas"]["CoreFinancialRunCreateRequest"]
     assert run_request_schema["properties"]["measure"]["enum"] == [
         "revenue",

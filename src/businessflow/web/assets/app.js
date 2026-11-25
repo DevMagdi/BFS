@@ -165,6 +165,7 @@
     setVisible($("#workspace"), authenticated && state.tenants.length > 0 && Boolean(state.tenant));
     setVisible($("#user-label"), authenticated);
     setVisible($("#logout-button"), authenticated);
+    setVisible($("#capacity-workspace-link"), authenticated && Boolean(state.tenant));
     setVisible($("#core-financials-link"), authenticated && Boolean(state.tenant));
     $("#user-label").textContent = state.user ? state.user.display_name : "";
   }

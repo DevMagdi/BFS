@@ -95,11 +95,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["X-Request-ID"] = str(request.state.request_id)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        if (
-            request.url.path == "/"
-            or request.url.path == "/core-financials.html"
-            or request.url.path.startswith("/assets/")
-        ):
+        if request.url.path in {
+            "/",
+            "/core-financials.html",
+            "/capacity-workspace.html",
+        } or request.url.path.startswith("/assets/"):
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; base-uri 'self'; object-src 'none'; "
                 "frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; "

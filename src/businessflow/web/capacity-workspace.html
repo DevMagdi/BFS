@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="description" content="Evidence-backed weekly team-capacity planning and human decision review.">
+    <title>Capacity Decision Workspace · BusinessFlow</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <link rel="stylesheet" href="/assets/capacity-workspace.css">
+    <script src="/assets/api_client.js" defer></script>
+    <script src="/assets/capacity-workspace.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="wordmark" href="/" aria-label="BusinessFlow home">
+          <span class="mark" aria-hidden="true">B</span>
+          <span>business<span class="wordmark-light">flow</span></span>
+        </a>
+        <div class="topbar-right">
+          <span class="demo-stamp">M4–M7 · CAPACITY ONLY</span>
+          <span id="user-label" class="user-label" hidden></span>
+          <a class="button button-quiet button-small" href="/">Main workspace</a>
+        </div>
+      </header>
+
+      <main>
+        <section id="auth-required" class="panel cw-gate" aria-labelledby="auth-title" hidden>
+          <p class="eyebrow">AUTHENTICATION REQUIRED</p>
+          <h1 id="auth-title">Sign in to review capacity.</h1>
+          <p class="lede">Use your existing BusinessFlow account and active Company membership.</p>
+          <a class="button button-primary" href="/">Return to sign in <span aria-hidden="true">→</span></a>
+        </section>
+
+        <section id="empty-workspace" class="panel cw-gate" aria-labelledby="empty-title" hidden>
+          <p class="eyebrow">NO COMPANY WORKSPACE</p>
+          <h1 id="empty-title">Choose a Company workspace first.</h1>
+          <p class="lede">Create or join a tenant in the main workspace, then come back here.</p>
+          <a class="button button-primary" href="/">Open the main workspace <span aria-hidden="true">→</span></a>
+        </section>
+
+        <section id="capacity-workspace" hidden>
+          <div class="workspace-heading cw-heading">
+            <div>
+              <p class="eyebrow">EVIDENCE-BACKED CAPACITY DECISION WORKSPACE</p>
+              <h1>Plan the work.<br><em>Review the evidence.</em></h1>
+              <p id="company-caption" class="lede"></p>
+            </div>
+            <div class="cw-heading-actions">
+              <label id="company-picker-wrap" class="company-picker" hidden>
+                <span>Company workspace</span>
+                <select id="company-picker" aria-label="Choose a Company workspace"></select>
+              </label>
+              <button id="refresh-workspace-button" class="button button-quiet" type="button">Refresh workspace</button>
+            </div>
+          </div>
+
+          <div class="notice notice-demo cw-boundary" role="note">
+            <span class="notice-symbol" aria-hidden="true">!</span>
+            <p><strong>Capacity-stage evidence only.</strong> The workflow compares explicitly distributed proposed team-hours with M5 company-aggregate recorded capacity and commitments. Planned hours are not actual work or utilization; aggregate capacity is not employee allocation or skills matching; capacity status is not financial or overall business feasibility. Missing, estimated, conflicting, and unattested values stay visible. File hashes and import lineage do not authenticate a source or prove currentness.</p>
+          </div>
+
+          <div id="role-notice" class="cw-role-notice" role="status" hidden></div>
+          <div id="synthetic-notice" class="cw-synthetic-notice" role="note" hidden></div>
+          <div id="workspace-status" class="cw-workspace-status" role="status" aria-live="polite"></div>
+
+          <nav class="cw-step-nav" aria-label="Capacity decision workflow">
+            <a href="#imports-panel"><span>01</span> Operational data</a>
+            <a href="#demand-panel"><span>02</span> Weekly demand &amp; assessment</a>
+            <a href="#decision-panel"><span>03</span> Decision &amp; approval</a>
+          </nav>
+
+          <section id="imports-panel" class="panel cw-panel" aria-labelledby="imports-title">
+            <div class="cw-section-heading">
+              <div>
+                <p class="eyebrow">STEP 01 · M4 OPERATIONAL DATA</p>
+                <h2 id="imports-title">Import, map, validate, apply.</h2>
+              </div>
+              <button id="refresh-imports-button" class="button button-quiet" type="button">Refresh imports</button>
+            </div>
+            <p class="cw-intro">Use the existing M4 staged import lifecycle for employees, skills, employee skills, weekly capacity, projects, or resource assignments. Every source column must be mapped or explicitly ignored. M4 retains validation and row-hash evidence, but an imported file is not independent proof that its source was authoritative or current.</p>
+
+            <div id="fixture-toolbar" class="cw-fixture-toolbar" hidden>
+              <div>
+                <span class="cw-fixture-stamp">SYNTHETIC FIXTURES · NOT COMPANY FACTS</span>
+                <p>These downloads are the exact, date-bound M10 demo CSVs for this already-seeded synthetic workspace. The M10 API will reject altered or non-fixture uploads. Never relabel fixture rows as real company data.</p>
+              </div>
+              <div id="fixture-links" class="cw-fixture-links"></div>
+            </div>
+
+            <div class="cw-import-layout">
+              <div class="cw-import-main">
+                <form id="upload-form" class="cw-upload-form">
+                  <label class="field" for="operational-file">
+                    <span>Operational CSV or XLSX</span>
+                    <input id="operational-file" type="file" accept=".csv,.xlsx" required>
+                    <small>Upload is staged for this Company only. Staged rows expire under the existing M4 retention policy.</small>
+                  </label>
+                  <button id="upload-button" class="button button-primary" type="submit">Upload and inspect file</button>
+                </form>
+
+                <section id="staged-import-panel" class="cw-subpanel" aria-labelledby="staged-title" hidden>
+                  <div class="cw-subpanel-heading">
+                    <div>
+                      <p class="eyebrow">STAGED SOURCE</p>
+                      <h3 id="staged-title">Choose what this worksheet contains.</h3>
+                    </div>
+                    <span id="staged-status" class="cw-badge"></span>
+                  </div>
+                  <div id="inspection-summary" class="cw-inspection-summary"></div>
+                  <div class="cw-form-row">
+                    <label class="field" for="dataset-select"><span>Canonical M4 dataset</span><select id="dataset-select"></select></label>
+                    <label class="field" for="worksheet-select"><span>Worksheet</span><select id="worksheet-select"></select></label>
+                    <button id="load-mapping-button" class="button button-secondary" type="button">Review column mapping</button>
+                  </div>
+                </section>
+
+                <section id="mapping-panel" class="cw-subpanel" aria-labelledby="mapping-title" hidden>
+                  <div class="cw-subpanel-heading">
+                    <div>
+                      <p class="eyebrow">M4 MAPPING</p>
+                      <h3 id="mapping-title">Account for every source column.</h3>
+                    </div>
+                    <span id="mapping-version" class="cw-badge"></span>
+                  </div>
+                  <p class="fine-print">Choose one canonical field for each mapped column, or explicitly mark it as ignored. The server checks required and mutually exclusive fields and rejects duplicate mappings.</p>
+                  <div id="mapping-editor" class="cw-mapping-editor"></div>
+                  <div class="cw-actions">
+                    <button id="save-mapping-button" class="button button-secondary" type="button">Save mapping</button>
+                    <button id="validate-import-button" class="button button-primary" type="button" disabled>Validate mapped rows</button>
+                  </div>
+                </section>
+
+                <section id="validation-panel" class="cw-subpanel" aria-labelledby="validation-title" hidden>
+                  <div class="cw-subpanel-heading">
+                    <div>
+                      <p class="eyebrow">SERVER VALIDATION · ROW EVIDENCE</p>
+                      <h3 id="validation-title">Review the M4 report before applying.</h3>
+                    </div>
+                    <span id="validation-status" class="cw-badge"></span>
+                  </div>
+                  <div id="validation-summary" class="cw-validation-summary"></div>
+                  <div id="validation-issues" class="cw-validation-issues"></div>
+                  <div id="validation-preview" class="cw-validation-preview"></div>
+                  <div id="confirmation-controls" class="cw-confirmation-controls" hidden>
+                    <label id="partial-confirm-label" class="cw-check-row" hidden><input id="allow-partial" type="checkbox"><span>Allow partial apply of eligible rows. Invalid rows remain skipped and visible.</span></label>
+                    <label id="warning-confirm-label" class="cw-check-row" hidden><input id="acknowledge-warnings" type="checkbox"><span>I reviewed and acknowledge the warnings in this validation hash.</span></label>
+                    <button id="apply-import-button" class="button button-primary" type="button" disabled>Confirm and apply import</button>
+                  </div>
+                </section>
+
+                <section id="import-report-panel" class="cw-subpanel" aria-labelledby="import-report-title" hidden>
+                  <div class="cw-subpanel-heading">
+                    <div>
+                      <p class="eyebrow">M4 IMPORT EVIDENCE</p>
+                      <h3 id="import-report-title">Saved import report.</h3>
+                    </div>
+                    <button id="close-import-report-button" class="button button-quiet button-small" type="button">Close</button>
+                  </div>
+                  <div id="import-report-content"></div>
+                </section>
+              </div>
+
+              <aside class="cw-history-panel" aria-labelledby="import-history-title">
+                <p class="eyebrow">COMPANY-SCOPED HISTORY</p>
+                <h3 id="import-history-title">Recent operational imports</h3>
+                <div id="import-history" class="cw-import-history" aria-live="polite"><p class="loading">Loading M4 import history…</p></div>
+              </aside>
+            </div>
+          </section>
+
+          <section id="demand-panel" class="panel cw-panel" aria-labelledby="demand-title">
+            <div class="cw-section-heading">
+              <div>
+                <p class="eyebrow">STEP 02 · M6 CAPACITY ASSESSMENT</p>
+                <h2 id="demand-title">Define the proposed weekly workload.</h2>
+              </div>
+              <span id="intake-version-badge" class="cw-badge">No proposal selected</span>
+            </div>
+            <p class="cw-intro">Provide a Monday-based period, a declared total, and any known week-by-week team-hours. The total is not spread across weeks. A blank week stays missing; enter an explicit 0.00 only when that is the declared demand. The backend validates the distribution and performs all M5/M6 calculations.</p>
+
+            <div class="cw-intake-picker-row">
+              <label class="field" for="intake-select"><span>Saved proposals in this Company</span><select id="intake-select"><option value="">＋ New proposed workload</option></select></label>
+              <button id="reload-intakes-button" class="button button-quiet" type="button">Refresh proposals</button>
+            </div>
+
+            <form id="intake-form" class="cw-intake-form">
+              <div class="cw-intake-fields">
+                <label class="field" for="project-code"><span>Proposal code</span><input id="project-code" type="text" maxlength="64" autocomplete="off" required></label>
+                <label class="field" for="project-name"><span>Proposal name</span><input id="project-name" type="text" maxlength="160" required></label>
+                <label class="field" for="start-week"><span>First Monday</span><input id="start-week" type="date" required></label>
+                <label class="field" for="week-count"><span>Number of weeks (1–52)</span><input id="week-count" type="number" min="1" max="52" step="1" value="4" required></label>
+                <label class="field" for="total-demand"><span>Declared total team-hours</span><input id="total-demand" type="number" min="0" max="52000000" step="0.01" inputmode="decimal" required><small>Required by M6, even while the weekly distribution is incomplete.</small></label>
+                <label class="field cw-notes-field" for="proposal-notes"><span>Notes (optional)</span><textarea id="proposal-notes" maxlength="2000" rows="2"></textarea></label>
+              </div>
+              <div class="cw-demand-editor-heading">
+                <div>
+                  <h3>Weekly team-hour distribution</h3>
+                  <p class="fine-print">Each value is a proposal assumption. This is planned demand, not actual work or a resource assignment.</p>
+                </div>
+                <label class="cw-check-row cw-demand-confirm"><input id="distribution-confirmed" type="checkbox"><span>I confirm the weekly distribution is complete and sums to the declared total.</span></label>
+              </div>
+              <div id="weekly-demand-grid" class="cw-weekly-demand-grid"></div>
+              <div class="cw-actions">
+                <button id="save-intake-button" class="button button-primary" type="submit">Create proposal</button>
+                <button id="reset-intake-button" class="button button-quiet" type="button">Start a new proposal</button>
+              </div>
+            </form>
+
+            <section class="cw-assessment-controls" aria-labelledby="assessment-controls-title">
+              <div class="cw-subpanel-heading">
+                <div>
+                  <p class="eyebrow">HUMAN ATTESTATIONS REQUIRED BY M6</p>
+                  <h3 id="assessment-controls-title">Make source assumptions explicit.</h3>
+                </div>
+                <button id="run-assessment-button" class="button button-primary" type="button" disabled>Run capacity comparison</button>
+              </div>
+              <p class="fine-print">Leaving an attestation off does not block a run: M6 must return an incomplete result rather than infer currentness or completeness. These are requester assertions, not authenticated source facts.</p>
+              <div class="cw-assumption-grid">
+                <label class="cw-check-row"><input id="capacity-current-confirmed" type="checkbox"><span>I confirm the recorded capacity data is current for the requested weeks. M6 does not infer a freshness window.</span></label>
+                <label class="cw-check-row"><input id="commitments-complete-confirmed" type="checkbox"><span>I confirm all existing committed assignments are represented. If none are recorded, only this explicit attestation allows M6 to use zero recorded commitments.</span></label>
+              </div>
+            </section>
+
+            <section class="cw-results-area" aria-labelledby="assessment-result-title">
+              <div class="cw-result-toolbar">
+                <div>
+                  <p class="eyebrow">IMMUTABLE ASSESSMENT HISTORY</p>
+                  <h3 id="assessment-result-title">Review the week-by-week evidence.</h3>
+                </div>
+                <label class="field" for="assessment-select"><span>Saved M6 assessment</span><select id="assessment-select" disabled><option value="">No assessment yet</option></select></label>
+              </div>
+              <div id="assessment-result" class="cw-assessment-result" aria-live="polite"><p class="cw-empty-state">Save a proposal and run M6 to create a capacity-only assessment.</p></div>
+            </section>
+          </section>
+
+          <section id="decision-panel" class="panel cw-panel" aria-labelledby="decision-title">
+            <div class="cw-section-heading">
+              <div>
+                <p class="eyebrow">STEP 03 · M7 HUMAN DECISION &amp; APPROVAL</p>
+                <h2 id="decision-title">Record a capacity-stage decision.</h2>
+              </div>
+              <span id="decision-scope-badge" class="cw-badge">No decision selected</span>
+            </div>
+            <div class="cw-decision-boundary">
+              <strong>This is not a project acceptance, commercial verdict, or financial analysis.</strong>
+              <p>“Proceed to financial evaluation” is only the recorded human capacity-stage outcome. This workspace does not run that evaluation or trigger an external action. An authorized different owner/admin must review the exact submitted decision and its evidence hashes.</p>
+            </div>
+
+            <section id="decision-entry-panel" class="cw-decision-entry" hidden>
+              <form id="decision-form" class="cw-decision-form">
+                <div class="cw-decision-fields">
+                  <label class="field" for="decision-outcome"><span>Capacity-stage outcome</span><select id="decision-outcome" required><option value="">Choose an outcome…</option></select></label>
+                  <label class="field" for="decision-rationale"><span>Submitter rationale (minimum 10 characters)</span><textarea id="decision-rationale" minlength="10" maxlength="4000" rows="3" required></textarea></label>
+                  <label id="decision-conditions-wrap" class="field" for="decision-conditions" hidden><span>Conditions (one per line)</span><textarea id="decision-conditions" maxlength="4000" rows="3"></textarea></label>
+                  <label id="decision-info-wrap" class="field" for="decision-requested-info" hidden><span>Information requested (one item per line)</span><textarea id="decision-requested-info" maxlength="4000" rows="3"></textarea></label>
+                  <label id="decision-response-wrap" class="field" for="decision-information-response" hidden><span>Response to the previous information request</span><textarea id="decision-information-response" maxlength="4000" rows="3"></textarea></label>
+                </div>
+                <p id="decision-form-context" class="fine-print"></p>
+                <button id="submit-decision-button" class="button button-primary" type="submit">Submit immutable decision version</button>
+              </form>
+            </section>
+
+            <section id="approval-panel" class="cw-approval-panel" aria-labelledby="approval-title" hidden>
+              <div class="cw-subpanel-heading">
+                <div>
+                  <p class="eyebrow">SEPARATION OF DUTIES</p>
+                  <h3 id="approval-title">Review the exact submitted version.</h3>
+                </div>
+                <span id="approval-eligibility" class="cw-badge"></span>
+              </div>
+              <div id="approval-binding" class="cw-approval-binding"></div>
+              <form id="approval-form" class="cw-approval-form">
+                <label class="field" for="approval-outcome"><span>Review outcome</span><select id="approval-outcome" required><option value="approved">Approve this capacity-stage decision</option><option value="changes_requested">Request changes</option></select></label>
+                <label class="field" for="approval-rationale"><span>Reviewer rationale (minimum 10 characters)</span><textarea id="approval-rationale" minlength="10" maxlength="4000" rows="3" required></textarea></label>
+                <button id="submit-approval-button" class="button button-primary" type="submit">Save immutable review</button>
+              </form>
+              <p id="approval-readonly-note" class="fine-print" hidden></p>
+            </section>
+
+            <section class="cw-decision-history-area" aria-labelledby="decision-history-title">
+              <div class="cw-result-toolbar">
+                <div>
+                  <p class="eyebrow">APPEND-ONLY DECISION HISTORY</p>
+                  <h3 id="decision-history-title">Submission and review records</h3>
+                </div>
+                <button id="refresh-decisions-button" class="button button-quiet" type="button" disabled>Refresh decisions</button>
+              </div>
+              <div id="decision-history" class="cw-decision-history" aria-live="polite"><p class="cw-empty-state">Choose a saved proposal to load its M7 history.</p></div>
+            </section>
+          </section>
+
+          <div id="global-message" class="global-message" role="status" aria-live="polite" hidden></div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <span>Evidence before answers.</span>
+        <span>Capacity-stage planning · Human review · No external actions</span>
+      </footer>
+    </div>
+  </body>
+</html>

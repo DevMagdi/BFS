@@ -90,6 +90,7 @@ def calculate_financial_metrics(
     facts: tuple[CanonicalFinancialFact, ...],
     controls: tuple[MetricControl, ...],
     requested_metrics: tuple[FinancialMeasure, ...] | None = None,
+    legacy_v2_replay: bool = False,
 ) -> tuple[
     tuple[CoreFinancialMetricResult, ...],
     tuple[CoreFinancialAnalysisStatement, ...],
@@ -104,6 +105,8 @@ def calculate_financial_metrics(
         or any(metric not in FINANCIAL_MEASURES for metric in selected_metrics)
     ):
         raise ValueError("requested_metrics must be a non-empty set of supported measures")
+    if legacy_v2_replay and selected_metrics != ("revenue",):
+        raise ValueError("legacy v2 replay is supported only for the Revenue measure")
     control_metrics = [control.metric for control in controls]
     if len(control_metrics) != len(set(control_metrics)):
         raise ValueError("at most one reconciliation control per metric is supported")
@@ -152,8 +155,9 @@ def calculate_financial_metrics(
             kind="limitation",
             code="cash_flow_scope",
             text=(
-                "Cash Flow is the net movement of accepted bank-activity rows only; it is not a "
-                "cash-flow statement and has no inferred opening or closing balance."
+                "Cash Flow is net observed bank movement under the selected versioned movement and "
+                "transfer rules, not a cash-flow statement. Opening and closing balances are not "
+                "reported or inferred because this import contract has no balance fields."
             ),
             metric="cash_flow",
         ),
@@ -206,9 +210,14 @@ def calculate_financial_metrics(
             )
             continue
 
-        quality_reasons = _import_readiness_reasons(
-            source_import, request_period_start, request_period_end
+        expected_source_type: SourceType = (
+            "bank_activity" if metric == "cash_flow" else "general_ledger"
         )
+        quality_reasons = list(
+            _import_readiness_reasons(source_import, request_period_start, request_period_end)
+        )
+        if source_import.source_type != expected_source_type:
+            quality_reasons.append("required_source_type_mismatch")
         if quality_reasons:
             result = _unavailable_metric(
                 metric=metric,
@@ -216,7 +225,7 @@ def calculate_financial_metrics(
                 currency_code=currency_code,
                 required_categories=required_categories,
                 status="incomplete",
-                reason=quality_reasons,
+                reason=tuple(quality_reasons),
                 control=controls_by_metric.get(metric),
                 source_import_id=source_import.id,
             )
@@ -234,6 +243,31 @@ def calculate_financial_metrics(
             )
             continue
 
+        if metric == "cash_flow" and policy.cash_flow_policy is None:
+            result = _unavailable_metric(
+                metric=metric,
+                basis=metric_basis,
+                currency_code=currency_code,
+                required_categories=required_categories,
+                status="incomplete",
+                reason="cash_flow_policy_missing",
+                control=controls_by_metric.get(metric),
+                source_import_id=source_import.id,
+            )
+            results.append(result)
+            analysis.append(
+                CoreFinancialAnalysisStatement(
+                    kind="limitation",
+                    code="cash_flow_policy_missing",
+                    text=(
+                        "Cash Flow was withheld because this policy version does not define "
+                        "movement, refund, adjustment, transfer, and balance rules."
+                    ),
+                    metric=metric,
+                )
+            )
+            continue
+
         import_facts = facts_by_import.get(source_import.id, [])
         in_window = [
             fact
@@ -243,9 +277,40 @@ def calculate_financial_metrics(
         excluded_outside_period_count = len(import_facts) - len(in_window)
         selected = [fact for fact in in_window if fact.currency_code == currency_code]
         excluded_currency_count = len(in_window) - len(selected)
+        # Historical v2 Revenue snapshots calculated in the requested currency and counted
+        # other-currency rows as excluded. Preserve that exact behavior only while replaying
+        # those immutable runs; current v3 runs abstain to avoid silent partial-source results.
+        if excluded_currency_count and not legacy_v2_replay:
+            result = _unavailable_metric(
+                metric=metric,
+                basis=metric_basis,
+                currency_code=currency_code,
+                required_categories=required_categories,
+                status="incomplete",
+                reason="source_currency_mismatch_no_fx",
+                control=controls_by_metric.get(metric),
+                source_import_id=source_import.id,
+                excluded_other_currency_count=excluded_currency_count,
+                excluded_outside_period_count=excluded_outside_period_count,
+            )
+            results.append(result)
+            analysis.append(
+                CoreFinancialAnalysisStatement(
+                    kind="limitation",
+                    code="source_currency_mismatch_no_fx",
+                    text=(
+                        f"{_metric_label(metric)} was withheld because the reporting window "
+                        f"contains rows outside {currency_code} and no FX policy is configured."
+                    ),
+                    metric=metric,
+                )
+            )
+            continue
+
         reasons: list[str] = []
         category_totals: dict[str, str] = {}
         required_coverage: list[FinancialCategory] = []
+        excluded_transfer_count = 0
         if metric != "cash_flow":
             for category, _coefficient in formula_terms:
                 if category not in required_coverage:
@@ -320,15 +385,24 @@ def calculate_financial_metrics(
                         )
             included_count = sum(1 for fact in selected if fact.category in set(required_coverage))
         else:
+            cash_flow_policy = policy.cash_flow_policy
+            if cash_flow_policy is None:
+                raise ValueError("cash_flow_policy must be present after policy validation")
+            movement_facts = (
+                [fact for fact in selected if fact.event_type != "transfer"]
+                if cash_flow_policy.transfer_treatment == "exclude_marked_transfers"
+                else selected
+            )
+            excluded_transfer_count = len(selected) - len(movement_facts)
             exact_value = (
                 exact_decimal_sum(
-                    parse_output_decimal_text(fact.signed_amount) for fact in selected
+                    parse_output_decimal_text(fact.signed_amount) for fact in movement_facts
                 )
-                if selected
+                if movement_facts
                 else Decimal(0)
             )
-            included_count = len(selected)
-            for fact in selected:
+            included_count = len(movement_facts)
+            for fact in movement_facts:
                 lines.append(
                     FinancialRunLine(
                         metric="cash_flow",
@@ -361,6 +435,7 @@ def calculate_financial_metrics(
             included_record_count=included_count,
             excluded_other_currency_count=excluded_currency_count,
             excluded_outside_period_count=excluded_outside_period_count,
+            excluded_transfer_count=excluded_transfer_count,
             required_categories=required_categories,
             category_totals=category_totals,
             reason_codes=(),
@@ -431,6 +506,7 @@ def _unavailable_metric(
     source_import_id: UUID | None = None,
     excluded_other_currency_count: int = 0,
     excluded_outside_period_count: int = 0,
+    excluded_transfer_count: int = 0,
     category_totals: dict[str, str] | None = None,
 ) -> CoreFinancialMetricResult:
     reasons = (reason,) if isinstance(reason, str) else reason
@@ -457,6 +533,7 @@ def _unavailable_metric(
         included_record_count=0,
         excluded_other_currency_count=excluded_other_currency_count,
         excluded_outside_period_count=excluded_outside_period_count,
+        excluded_transfer_count=excluded_transfer_count,
         required_categories=required_categories,
         category_totals=category_totals or {},
         reason_codes=reasons,

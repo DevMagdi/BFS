@@ -58,6 +58,8 @@
 .cf-history-item strong { color: #34574d; }
 .cf-history-grid > div:last-child > .field { margin-bottom: 9px; }
 .cf-history-grid .button { margin-top: 2px; }
+.cf-policy-editor { margin: 12px 0; }
+.cf-policy-editor textarea { width: 100%; min-height: 390px; padding: 12px; border: 1px solid #dfe7e1; border-radius: 10px; color: #263d38; background: #fbfcfb; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 1.5; resize: vertical; }
 
 @media (max-width: 820px) {
   .cf-control-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -41,15 +41,21 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     assert "--teal" in styles.text
     assert "core-financials.html" in page.text
     assert core_financial_page.status_code == 200
-    assert "Trace one" in core_financial_page.text
+    assert "Trace a financial" in core_financial_page.text
     assert "non-authoritative" in core_financial_page.text
-    assert "Choose a ledger CSV" in core_financial_page.text
+    assert "Choose a general-ledger CSV" in core_financial_page.text
+    assert "Load synthetic bank example" in core_financial_page.text
+    assert "Load synthetic Revenue control example" in core_financial_page.text
     assert "Select a saved import to restore" in core_financial_page.text
     assert "Content-Security-Policy" in core_financial_page.headers
     assert "script-src 'self'" in core_financial_page.headers["Content-Security-Policy"]
     assert core_financial_script.status_code == 200
-    assert 'measure: "revenue"' in core_financial_script.text
+    assert "const MEASURE_LABELS" in core_financial_script.text
+    assert "measure," in core_financial_script.text
+    assert "cash_flow" in core_financial_script.text
     assert "Select saved import" in core_financial_script.text
+    assert "The synthetic control example is Revenue-only." in core_financial_script.text
+    assert "Measure changed. Select a separate control" in core_financial_script.text
     assert 'id="load-more-imports"' in core_financial_page.text
     assert "async function loadMoreImports()" in core_financial_script.text
     assert "async function selectSavedImport(importId)" in core_financial_script.text
@@ -59,8 +65,9 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
         "mapping v${imported.mapping_version} · policy v${imported.policy_version}"
         in core_financial_script.text
     )
-    assert "bank_import_id" not in core_financial_script.text
-    assert "/runs/${state.run.id}/evidence?metric=revenue" in core_financial_script.text
+    assert "bank_import_id" in core_financial_script.text
+    assert "metric=${encodeURIComponent(metric)}" in core_financial_script.text
+    assert "policy-definition" in core_financial_script.text
     assert "innerHTML" not in core_financial_script.text
     assert core_financial_styles.status_code == 200
     assert ".cf-workflow" in core_financial_styles.text
@@ -75,8 +82,15 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     assert "/api/v1/tenants/{tenant_id}/core-financials/policies/{policy_id}" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/runs" in paths
     run_request_schema = schema["components"]["schemas"]["CoreFinancialRunCreateRequest"]
-    assert run_request_schema["properties"]["measure"]["const"] == "revenue"
+    assert run_request_schema["properties"]["measure"]["enum"] == [
+        "revenue",
+        "expenses",
+        "gross_profit",
+        "operating_profit",
+        "net_profit",
+        "cash_flow",
+    ]
     assert "ledger_import_id" in run_request_schema["properties"]
-    assert "bank_import_id" not in run_request_schema["properties"]
+    assert "bank_import_id" in run_request_schema["properties"]
     run_response_schema = schema["components"]["schemas"]["CoreFinancialRunResponse"]
-    assert "bank_import_id" not in run_response_schema["properties"]
+    assert "bank_import_id" in run_response_schema["properties"]

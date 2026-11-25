@@ -7,13 +7,27 @@
     refresh: "businessflow.m10.refresh",
     tenant: "businessflow.m10.tenant",
   };
-  const POLICY_KEY = "illustrative.revenue-only";
+  const POLICY_KEY = "illustrative.core-financials";
+  const MEASURE_LABELS = {
+    revenue: "Revenue",
+    expenses: "Expenses",
+    gross_profit: "Gross Profit",
+    operating_profit: "Operating Profit",
+    net_profit: "Net Profit",
+    cash_flow: "Cash Flow — net observed bank movement",
+  };
   const PAGE_SIZE = 100;
   const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
   const LEDGER_SAMPLE = [
     "source_record_id,transaction_date,account_code,debit,credit,currency,event_type,reversal_of_record_id",
     "sale-001,2026-11-10,4000,0,1000,USD,normal,",
     "refund-001,2026-11-18,4090,100,0,USD,refund,",
+  ].join("\n") + "\n";
+  const BANK_SAMPLE = [
+    "source_record_id,transaction_date,bank_account_id,cash_in,cash_out,currency,event_type,reversal_of_record_id",
+    "bank-in-001,2026-11-10,operating-1,750,0,USD,normal,",
+    "bank-out-001,2026-11-12,operating-1,0,100,USD,normal,",
+    "bank-transfer-001,2026-11-15,operating-1,0,50,USD,transfer,",
   ].join("\n") + "\n";
   const CONTROL_SAMPLE = [
     "control_id,expected_revenue,currency_code",
@@ -116,6 +130,18 @@
 
   function shortHash(value) {
     return value ? `${String(value).slice(0, 16)}…` : "Not available";
+  }
+
+  function selectedSourceType() {
+    return $("#source-type").value;
+  }
+
+  function selectedMeasure() {
+    return $("#measure-select").value;
+  }
+
+  function measureLabel(metric) {
+    return MEASURE_LABELS[metric] || metric;
   }
 
   function setTenantCaption() {
@@ -242,14 +268,24 @@
     updateRunButton();
   }
 
-  function policyDefinition() {
+  function defaultPolicyDefinition() {
     const definition = JSON.parse(JSON.stringify(state.template.illustrative_policy));
     definition.policy_key = POLICY_KEY;
-    definition.category_coverage = Object.fromEntries(
-      Object.keys(definition.category_coverage).map((category) => [category, "unknown"]),
-    );
     definition.category_coverage.revenue = "complete";
     definition.category_coverage.revenue_reduction = "complete";
+    return definition;
+  }
+
+  function policyDefinition() {
+    let definition;
+    try {
+      definition = JSON.parse($("#policy-definition").value);
+    } catch (_error) {
+      throw new Error("The policy editor must contain valid JSON before saving a version.");
+    }
+    if (!definition || typeof definition !== "object" || Array.isArray(definition)) {
+      throw new Error("The policy editor must contain one JSON object.");
+    }
     return definition;
   }
 
@@ -266,39 +302,32 @@
       }
       selector.value = policy.id;
       selector.disabled = false;
+      $("#policy-definition").value = JSON.stringify(policy.definition, null, 2);
     }
     const detail = policy
-      ? policy.policy_key === POLICY_KEY
-        ? `Policy ${policy.policy_key} · version ${policy.version} · illustrative, not authoritative.`
-        : `Saved import policy ${policy.policy_key} · version ${policy.version}. This workflow only calculates the illustrative revenue-only policy.`
-      : "No revenue-only policy selected. Create or reuse the explicit example policy first.";
-    const policyStatusKind = !policy
-      ? "muted"
-      : policy.policy_key === POLICY_KEY
-        ? "is-success"
-        : "muted";
-    setStatus("#policy-state", detail, policyStatusKind);
+      ? `Policy ${policy.policy_key} · version ${policy.version} · illustrative and non-authoritative. Unknown or unsupported coverage withholds affected measures.`
+      : "No policy selected. Review the illustrative example, then create or reuse an explicit version.";
+    setStatus("#policy-state", detail, policy ? "is-success" : "muted");
     if (!policy) state.mapping = null;
-    const supportedRevenuePolicy = state.policy?.policy_key === POLICY_KEY;
-    $("#save-mapping-button").disabled = !supportedRevenuePolicy || !state.file;
-    $("#import-button").disabled = !supportedRevenuePolicy || !state.mapping || !state.file;
+    const hasPolicy = Boolean(state.policy);
+    $("#save-mapping-button").disabled = !hasPolicy || !state.file;
+    $("#import-button").disabled = !hasPolicy || !state.mapping || !state.file;
     updateRunButton();
   }
 
   async function loadPolicies() {
     const { data } = await request(`${coreBase()}/policies?limit=100&offset=0`);
     state.policies = Array.isArray(data?.items) ? data.items : [];
-    const revenuePolicies = state.policies.filter((item) => item.policy_key === POLICY_KEY);
     const selector = $("#policy-history");
     selector.replaceChildren(new Option("Choose a saved policy", ""));
-    for (const policy of revenuePolicies) {
+    for (const policy of state.policies) {
       selector.append(new Option(`${policy.policy_key} · v${policy.version} · ${shortHash(policy.definition_hash)}`, policy.id));
     }
     const selected = state.policy
-      ? revenuePolicies.find((item) => item.id === state.policy.id)
-      : revenuePolicies[0];
+      ? state.policies.find((item) => item.id === state.policy.id)
+      : state.policies.find((item) => item.policy_key === POLICY_KEY) || state.policies[0];
     selectPolicy(selected || null);
-    selector.disabled = revenuePolicies.length === 0;
+    selector.disabled = state.policies.length === 0;
   }
 
   async function createPolicy() {
@@ -313,7 +342,7 @@
       invalidateReport("Policy is versioned. Select an import created from this exact version.");
       await loadPolicies();
       selectPolicy(data);
-      showMessage(`Illustrative revenue policy version ${data.version} is ready.`, "success");
+      showMessage(`Illustrative policy version ${data.version} is saved and ready.`, "success");
     } catch (error) {
       handleError(error);
     } finally {
@@ -324,9 +353,14 @@
   function renderMappingEditor() {
     const fields = $("#mapping-fields");
     fields.replaceChildren();
-    const canonicalFields = Array.isArray(state.template?.general_ledger_headers)
-      ? state.template.general_ledger_headers
+    const sourceType = selectedSourceType();
+    const headerKey = sourceType === "bank_activity" ? "bank_activity_headers" : "general_ledger_headers";
+    const canonicalFields = Array.isArray(state.template?.[headerKey])
+      ? state.template[headerKey]
       : [];
+    $("#source-file-label").textContent = sourceType === "bank_activity"
+      ? "Choose a bank-activity CSV"
+      : "Choose a general-ledger CSV";
     for (const canonical of canonicalFields) {
       const row = node("div", "cf-mapping-row");
       const label = node("label", "", canonical.replaceAll("_", " "));
@@ -343,9 +377,9 @@
     }
     refreshIgnoredColumns();
     show($("#mapping-editor"), true);
-    const supportedRevenuePolicy = state.policy?.policy_key === POLICY_KEY;
-    $("#save-mapping-button").disabled = !supportedRevenuePolicy;
-    $("#import-button").disabled = !state.mapping || !supportedRevenuePolicy;
+    const hasPolicy = Boolean(state.policy);
+    $("#save-mapping-button").disabled = !hasPolicy;
+    $("#import-button").disabled = !state.mapping || !hasPolicy;
   }
 
   function refreshIgnoredColumns() {
@@ -378,7 +412,7 @@
       const rationale = node("input");
       rationale.type = "text";
       rationale.maxLength = 500;
-      rationale.value = previous.get(header)?.rationale ?? "Not used in this illustrative revenue calculation";
+      rationale.value = previous.get(header)?.rationale ?? "Not used in this illustrative calculation";
       rationale.setAttribute("aria-label", `Rationale for ignoring ${header}`);
       row.append(label, rationale);
       ignored.append(row);
@@ -408,7 +442,7 @@
     }
     return {
       source_key: $("#source-key").value.trim(),
-      source_type: "general_ledger",
+      source_type: selectedSourceType(),
       field_mapping: fieldMapping,
       ignored_columns: ignoredColumns,
     };
@@ -416,7 +450,7 @@
 
   async function saveMapping() {
     const button = $("#save-mapping-button");
-    if (!state.file || state.policy?.policy_key !== POLICY_KEY) return;
+    if (!state.file || !state.policy) return;
     button.disabled = true;
     try {
       const body = mappingPayload();
@@ -424,10 +458,10 @@
       state.mapping = data;
       invalidateReport("Mapping is saved and versioned. Import the selected CSV to normalize its rows.");
       setStatus("#file-state", `Mapping version ${data.version} saved · ${shortHash(data.mapping_hash)}. Ready to import.`, "is-success");
-      $("#import-button").disabled = !state.mapping || state.policy?.policy_key !== POLICY_KEY;
+      $("#import-button").disabled = !state.mapping || !state.policy;
     } catch (error) {
       handleError(error);
-      button.disabled = !state.file || state.policy?.policy_key !== POLICY_KEY;
+      button.disabled = !state.file || !state.policy;
     }
   }
 
@@ -455,11 +489,24 @@
   }
 
   function loadLedgerExample() {
-    const file = new File([LEDGER_SAMPLE], "illustrative_revenue_ledger.csv", { type: "text/csv" });
+    $("#source-type").value = "general_ledger";
+    $("#source-key").value = "ledger-demo";
+    const file = new File([LEDGER_SAMPLE], "illustrative_financials_ledger.csv", { type: "text/csv" });
+    processLedgerFile(file);
+  }
+
+  function loadBankExample() {
+    $("#source-type").value = "bank_activity";
+    $("#source-key").value = "bank-demo";
+    const file = new File([BANK_SAMPLE], "illustrative_bank_activity.csv", { type: "text/csv" });
     processLedgerFile(file);
   }
 
   function loadControlExample() {
+    if (selectedMeasure() !== "revenue") {
+      showMessage("The synthetic control example is Revenue-only. Select Revenue before loading it.");
+      return;
+    }
     state.controlFile = new File([CONTROL_SAMPLE], "illustrative_revenue_control.csv", { type: "text/csv" });
     $("#control-expected").value = "900";
     $("#control-source-id").value = "illustrative-control-2026-11";
@@ -476,8 +523,14 @@
   }
 
   async function importLedger() {
-    if (!state.file || !state.policy || !state.mapping || state.policy.policy_key !== POLICY_KEY) {
-      showMessage("Select the supported revenue-only policy, a CSV, and its saved mapping before importing.");
+    const sourceType = selectedSourceType();
+    if (
+      !state.file
+      || !state.policy
+      || !state.mapping
+      || state.mapping.source_type !== sourceType
+    ) {
+      showMessage("Select a versioned policy, a source CSV, and a saved mapping for the selected adapter before importing.");
       return;
     }
     const period = selectedImportPeriod();
@@ -497,7 +550,7 @@
       const body = new FormData();
       body.append("metadata_json", JSON.stringify({
         source_key: $("#source-key").value.trim(),
-        source_type: "general_ledger",
+        source_type: sourceType,
         mapping_id: state.mapping.id,
         policy_id: state.policy.id,
         period_start: period.start,
@@ -544,7 +597,7 @@
     );
     root.append(card);
     if (imported.quality_status !== "passed") {
-      card.append(node("p", "cf-row-issues", "Rejected or duplicate source rows block a calculated revenue value. Inspect the row issues below."));
+      card.append(node("p", "cf-row-issues", "Rejected or duplicate source rows block calculated values. Inspect the row issues below."));
     }
   }
 
@@ -610,6 +663,8 @@
 
   function updateRunButton() {
     const imported = state.imported;
+    const measure = selectedMeasure();
+    const expectedSourceType = measure === "cash_flow" ? "bank_activity" : "general_ledger";
     const sourcePeriod = imported
       ? selectedImportPeriod()
       : { start: "", end: "", completeness: "unknown" };
@@ -621,9 +676,9 @@
       && reportEnd >= reportStart;
     const ready = Boolean(
       state.policy
-      && state.policy.policy_key === POLICY_KEY
       && imported
-      && imported.source_type === "general_ledger"
+      && state.policy.id === imported.policy_id
+      && imported.source_type === expectedSourceType
       && imported.quality_status === "passed"
       && imported.period_completeness === "complete"
       && periodCovered
@@ -631,15 +686,23 @@
     );
     $("#create-run-button").disabled = !ready;
     if (!ready && imported) {
-      let message = "A revenue run needs a selected versioned policy and a complete, accepted ledger import.";
-      if (imported.source_type !== "general_ledger") message = "This workflow calculates revenue only from a general-ledger import; other saved source types remain inspectable here.";
-      else if (state.policy && state.policy.policy_key !== POLICY_KEY) message = "This saved import uses a policy outside the revenue-only workflow; its records remain inspectable but are not calculable here.";
-      else if (imported.quality_status !== "passed") message = "Fix rejected or duplicate rows and import a clean ledger before calculating.";
-      else if (imported.period_completeness !== "complete") message = "The source period is not caller-asserted complete; the workflow will not calculate a revenue value.";
-      else if (!periodCovered) message = "The report period must be valid and contained within the imported source period.";
+      let message = `${measureLabel(measure)} needs its matching source, the import's exact policy version, complete caller-asserted coverage, and a fully accepted import.`;
+      if (imported.source_type !== expectedSourceType) {
+        message = measure === "cash_flow"
+          ? "Cash Flow requires a bank-activity import; select or import bank evidence rather than P&L transactions."
+          : `${measureLabel(measure)} requires a general-ledger import.`;
+      } else if (state.policy && state.policy.id !== imported.policy_id) {
+        message = "The selected policy version differs from the import's immutable policy; restore or create an import for the selected version.";
+      } else if (imported.quality_status !== "passed") {
+        message = "Fix rejected or duplicate rows and import a clean source before calculating.";
+      } else if (imported.period_completeness !== "complete") {
+        message = "The source period is not caller-asserted complete; the workflow will withhold the measure.";
+      } else if (!periodCovered) {
+        message = "The report period must be valid and contained within the imported source period.";
+      }
       setStatus("#run-state", message, "muted");
     } else if (ready && !state.run) {
-      setStatus("#run-state", "Ready. The completeness status is caller-asserted and is not verified against a source system.", "is-success");
+      setStatus("#run-state", "Ready. Source identity and completeness are caller assertions; the server does not independently authenticate the export.", "is-success");
     }
   }
 
@@ -653,17 +716,17 @@
     const anyControl = Boolean(file) || inputs.some(Boolean);
     if (!anyControl) return [];
     if (!file || inputs.some((value) => !value)) {
-      throw new Error("For reconciliation, provide the control CSV, expected revenue, source ID, and record locator.");
+      throw new Error("For reconciliation, provide the control CSV, expected measure value, source ID, and record locator.");
     }
     const expected = inputs[0];
-    if (!/^-?(0|[1-9][0-9]*)(\.[0-9]+)?$/.test(expected)) throw new Error("Expected revenue must be plain decimal text.");
+    if (!/^-?(0|[1-9][0-9]*)(\.[0-9]+)?$/.test(expected)) throw new Error("Expected measure value must be plain decimal text.");
     const absolute = $("#control-absolute-tolerance").value.trim() || "0";
     const relative = $("#control-relative-tolerance").value.trim() || "0";
     for (const value of [absolute, relative]) {
       if (!/^(0|[1-9][0-9]*)(\.[0-9]+)?$/.test(value)) throw new Error("Tolerances must be non-negative plain decimal text.");
     }
     return [{
-      metric: "revenue",
+      metric: selectedMeasure(),
       expected_value: expected,
       currency_code: $("#report-currency").value.trim().toUpperCase(),
       absolute_tolerance: absolute,
@@ -677,23 +740,20 @@
   }
 
   async function createRun() {
-    if (
-      !state.imported
-      || !state.policy
-      || state.policy.policy_key !== POLICY_KEY
-      || state.imported.source_type !== "general_ledger"
-    ) return;
+    if (!state.imported || !state.policy) return;
+    const measure = selectedMeasure();
+    const sourceIdField = measure === "cash_flow" ? "bank_import_id" : "ledger_import_id";
     const button = $("#create-run-button");
     button.disabled = true;
-    setStatus("#run-state", "Calculating the single supported measure against the saved canonical rows…", "muted");
+    setStatus("#run-state", `Calculating ${measureLabel(measure)} against the matching accepted source rows…`, "muted");
     try {
       const controls = await buildControls();
       const { data } = await request(`${coreBase()}/runs`, {
         method: "POST",
         body: {
           policy_id: state.policy.id,
-          measure: "revenue",
-          ledger_import_id: state.imported.id,
+          measure,
+          [sourceIdField]: state.imported.id,
           period_start: $("#report-period-start").value,
           period_end: $("#report-period-end").value,
           currency_code: $("#report-currency").value.trim().toUpperCase(),
@@ -703,10 +763,10 @@
       state.run = data;
       await renderRun(data);
       await loadHistory();
-      showMessage("Revenue run persisted with row-level evidence.", "success");
+      showMessage(`${measureLabel(measure)} run persisted with row-level evidence.`, "success");
     } catch (error) {
       handleError(error);
-      setStatus("#run-state", error.message || "The revenue calculation failed.", "is-error");
+      setStatus("#run-state", error.message || "The financial calculation failed.", "is-error");
     } finally {
       updateRunButton();
     }
@@ -723,23 +783,29 @@
   async function renderRun(run) {
     const root = $("#run-result");
     root.replaceChildren();
-    const metric = (run.metrics || []).find((item) => item.metric === "revenue");
-    if (!metric) throw new Error("This saved run does not contain the revenue measure supported by this UI.");
+    const metric = Array.isArray(run.metrics) ? run.metrics[0] : null;
+    if (!metric) throw new Error("This saved run does not contain a supported financial measure.");
+    const categorySummary = Object.entries(metric.category_totals || {})
+      .map(([category, total]) => `${category}: ${total} ${metric.currency_code}`)
+      .join(" · ") || "Bank movement under the saved Cash Flow policy; no P&L rows are used.";
+    const sourceId = run.ledger_import_id || run.bank_import_id || "not available";
     const card = node("article", `cf-summary-card${metric.status === "calculated" ? "" : " is-warning"}`);
     card.append(
-      node("h3", "", metric.status === "calculated" ? `Revenue: ${metric.reported_value} ${metric.currency_code}` : `Revenue ${metric.status}`),
-      node("p", "", `${run.period_start} to ${run.period_end} · ${metric.basis} · ${metric.included_record_count} included canonical rows · ${run.authority}`),
-      node("p", "", `Formula: ${metric.category_totals.revenue || "0"} Revenue − ${metric.category_totals.revenue_reduction || "0"} Revenue reduction = ${metric.exact_value ?? "not calculated"} ${metric.currency_code}.`),
+      node("h3", "", metric.status === "calculated"
+        ? `${measureLabel(metric.metric)}: ${metric.reported_value} ${metric.currency_code}`
+        : `${measureLabel(metric.metric)} ${metric.status}`),
+      node("p", "", `${run.period_start} to ${run.period_end} inclusive · ${metric.basis} · ${metric.included_record_count} included rows · source ${run.ledger_import_id ? "general ledger" : "bank activity"} · ${run.authority}`),
+      node("p", "", `Versioned policy inputs: ${categorySummary}`),
+      node("p", "", `Excluded: ${metric.excluded_outside_period_count} outside period · ${metric.excluded_other_currency_count} other currency · ${metric.excluded_transfer_count} marked transfers. Reasons: ${(metric.reason_codes || []).join(", ") || "none"}`),
       node("p", "", `Reconciliation: ${reconciliationLabel(metric)} · independence ${metric.reconciliation?.source_independence || "caller asserted, not verified"}`),
-      node("p", "", `State: ${run.state} · policy version ${run.policy_version} · input hash ${shortHash(run.input_hash)} · result hash ${shortHash(run.result_hash)}`),
+      node("p", "", `Source import ${sourceId} · run ${run.state} · policy v${run.policy_version} · input ${shortHash(run.input_hash)} · result ${shortHash(run.result_hash)}`),
       node("p", "cf-hash", `Trace hash ${run.trace_hash}`),
     );
     root.append(card);
     for (const statement of run.analysis || []) {
-      const note = node("p", "fine-print", statement.text);
-      root.append(note);
+      root.append(node("p", "fine-print", statement.text));
     }
-    setStatus("#run-state", `Persisted run ${run.id}. The value is illustrative and non-authoritative.`, metric.status === "calculated" ? "is-success" : "is-error");
+    setStatus("#run-state", `Persisted ${measureLabel(metric.metric)} run ${run.id}. The value is illustrative and non-authoritative.`, metric.status === "calculated" ? "is-success" : "is-error");
     show($("#verify-run-button"), true);
     await loadEvidence(true);
   }
@@ -751,7 +817,9 @@
       state.evidenceTotal = 0;
       state.evidenceOffset = 0;
     }
-    const { data } = await request(`${coreBase()}/runs/${state.run.id}/evidence?metric=revenue&limit=${PAGE_SIZE}&offset=${state.evidenceOffset}`);
+    const metric = state.run.metrics?.[0]?.metric;
+    if (!metric) return;
+    const { data } = await request(`${coreBase()}/runs/${state.run.id}/evidence?metric=${encodeURIComponent(metric)}&limit=${PAGE_SIZE}&offset=${state.evidenceOffset}`);
     state.evidenceItems.push(...(data.items || []));
     state.evidenceOffset = state.evidenceItems.length;
     state.evidenceTotal = data.total || 0;
@@ -775,7 +843,7 @@
     ]);
     const section = node("section", "cf-evidence");
     section.append(
-      node("h3", "", `Revenue evidence · ${state.evidenceItems.length} of ${state.evidenceTotal}`),
+      node("h3", "", `${measureLabel(state.run?.metrics?.[0]?.metric)} evidence · ${state.evidenceItems.length} of ${state.evidenceTotal}`),
       node("p", "fine-print", "Each contribution links a persisted report line to its canonical import record, source file hash, CSV row number, and source-row hash."),
       table(["Source row", "Record ID", "Date", "Account", "Category", "Signed amount", "Coefficient", "Contribution", "File hash", "Row hash"], rows),
     );
@@ -861,6 +929,10 @@
       state.mapping = null;
       state.imported = imported;
       state.controlFile = null;
+      $("#source-type").value = imported.source_type;
+      $("#source-file-label").textContent = imported.source_type === "bank_activity"
+        ? "Choose a bank-activity CSV"
+        : "Choose a general-ledger CSV";
       $("#control-file").value = "";
       $("#control-expected").value = "";
       $("#control-source-id").value = "";
@@ -889,7 +961,7 @@
       renderImportHistory();
       updateRunButton();
       showMessage(
-        `Saved import restored · mapping v${imported.mapping_version} · policy v${imported.policy_version}. ${imported.quality_status === "passed" ? "" : "This import is incomplete and cannot produce a revenue value."}`,
+        `Saved import restored · ${imported.source_type} · mapping v${imported.mapping_version} · policy v${imported.policy_version}. ${imported.quality_status === "passed" ? "" : "This import is incomplete and cannot produce a calculated measure."}`,
         imported.quality_status === "passed" ? "success" : "error",
       );
     } catch (error) {
@@ -914,12 +986,12 @@
       const runs = runsResponse.data?.items || [];
       renderImportHistory();
       const selector = $("#run-history");
-      selector.replaceChildren(new Option("Choose a saved revenue run", ""));
+      selector.replaceChildren(new Option("Choose a saved measure run", ""));
       for (const item of runs) {
-        const revenue = (item.metrics || []).find((metric) => metric.metric === "revenue");
-        if (!revenue) continue;
+        const metric = (item.metrics || [])[0];
+        if (!metric) continue;
         selector.append(new Option(
-          `${item.period_start} to ${item.period_end} · ${revenue.reported_value ?? revenue.status} · ${shortHash(item.id)}`,
+          `${measureLabel(metric.metric)} · ${item.period_start} to ${item.period_end} · ${metric.reported_value ?? metric.status} · ${shortHash(item.id)}`,
           item.id,
         ));
       }
@@ -972,12 +1044,17 @@
   async function loadCompany() {
     state.policy = null;
     state.mapping = null;
+    state.file = null;
+    state.headers = [];
     state.imported = null;
+    $("#source-type").value = "general_ledger";
+    $("#source-file").value = "";
+    $("#source-file-label").textContent = "Choose a general-ledger CSV";
     state.importHistoryItems = [];
     state.importHistoryTotal = 0;
     state.run = null;
     state.template = null;
-    $("#run-history").replaceChildren(new Option("Choose a saved revenue run", ""));
+    $("#run-history").replaceChildren(new Option("Choose a saved measure run", ""));
     $("#load-run-button").disabled = true;
     renderImportHistory();
     show($("#disabled-panel"), false);
@@ -987,6 +1064,7 @@
     try {
       const { data } = await request(`${coreBase()}/template`);
       state.template = data;
+      $("#policy-definition").value = JSON.stringify(defaultPolicyDefinition(), null, 2);
       show($("#disabled-panel"), false);
       show($("#workflow"), true);
       $("#create-policy-button").disabled = false;
@@ -1056,9 +1134,23 @@
       }
       selectPolicy(policy);
     });
-    $("#ledger-file").addEventListener("change", (event) => processLedgerFile(event.target.files?.[0] || null));
+    $("#source-file").addEventListener("change", (event) => processLedgerFile(event.target.files?.[0] || null));
+    $("#source-type").addEventListener("change", () => {
+      state.file = null;
+      state.headers = [];
+      state.mapping = null;
+      $("#source-file").value = "";
+      $("#source-file-label").textContent = selectedSourceType() === "bank_activity"
+        ? "Choose a bank-activity CSV"
+        : "Choose a general-ledger CSV";
+      show($("#mapping-editor"), false);
+      setStatus("#file-state", "Choose a CSV and save a mapping for the selected source adapter.", "muted");
+      invalidateReport("Source adapter changed. Map and import rows from the matching source before calculation.");
+    });
     $("#use-ledger-example").addEventListener("click", loadLedgerExample);
-    $("#download-ledger-template").addEventListener("click", () => downloadCsv("illustrative_revenue_ledger.csv", LEDGER_SAMPLE));
+    $("#download-ledger-template").addEventListener("click", () => downloadCsv("illustrative_financials_ledger.csv", LEDGER_SAMPLE));
+    $("#use-bank-example").addEventListener("click", loadBankExample);
+    $("#download-bank-template").addEventListener("click", () => downloadCsv("illustrative_bank_activity.csv", BANK_SAMPLE));
     $("#use-control-example").addEventListener("click", loadControlExample);
     $("#download-control-template").addEventListener("click", () => downloadCsv("illustrative_revenue_control.csv", CONTROL_SAMPLE));
     $("#control-file").addEventListener("change", (event) => {
@@ -1076,6 +1168,23 @@
         if (state.imported) invalidateReport("Import metadata changed. Create a new immutable import to use these assertions.");
       });
     }
+    $("#measure-select").addEventListener("change", () => {
+      state.run = null;
+      state.evidenceItems = [];
+      state.controlFile = null;
+      $("#control-file").value = "";
+      $("#control-expected").value = "";
+      $("#control-source-id").value = "";
+      $("#control-locator").value = "";
+      $("#control-absolute-tolerance").value = "0";
+      $("#control-relative-tolerance").value = "0";
+      setStatus("#control-file-state", "Measure changed. Select a separate control for the newly selected measure, or leave reconciliation not provided.", "muted");
+      $("#run-result").replaceChildren();
+      $("#verification-result").replaceChildren();
+      show($("#verify-run-button"), false);
+      show($("#load-more-evidence"), false);
+      updateRunButton();
+    });
     for (const selector of ["#report-period-start", "#report-period-end", "#report-currency"]) {
       $(selector).addEventListener("input", () => {
         state.run = null;

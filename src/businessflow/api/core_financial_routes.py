@@ -134,7 +134,7 @@ def read_core_financial_policies(
     "/mappings",
     response_model=CoreFinancialMappingResponse,
     status_code=201,
-    summary="Create an immutable, versioned general-ledger header mapping",
+    summary="Create an immutable, versioned source-adapter header mapping",
 )
 def post_core_financial_mapping(
     tenant_id: UUID,
@@ -144,12 +144,6 @@ def post_core_financial_mapping(
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> CoreFinancialMappingResponse:
-    if body.source_type != "general_ledger":
-        raise ApiError(
-            422,
-            "unsupported_source_type",
-            "The first integrated workflow accepts general-ledger mappings only.",
-        )
     return create_core_financial_mapping(
         session,
         user,
@@ -205,13 +199,13 @@ def read_core_financial_mappings(
     "/imports",
     response_model=CoreFinancialImportResponse,
     status_code=201,
-    summary="Normalize and retain one bounded general-ledger CSV import",
+    summary="Normalize and retain one bounded general-ledger or bank-activity CSV import",
     description=(
-        "Accepts one UTF-8 general-ledger CSV sheet using a caller-declared policy, source period, "
-        "mapping, and "
-        "completeness assertion. The completeness assertion and source identity are not "
-        "independently verified. Imported facts support management reporting only and are not a "
-        "canonical ledger, accounting conclusion, or authoritative cash-flow statement."
+        "Accepts one UTF-8 general-ledger or bank-activity CSV sheet using a caller-declared "
+        "policy, source period, mapping, and completeness assertion. The completeness assertion "
+        "and source identity are not independently verified. Imported facts support illustrative "
+        "management reporting only and are not a canonical ledger, accounting conclusion, or "
+        "authoritative cash-flow statement."
     ),
 )
 def post_core_financial_import(
@@ -232,12 +226,6 @@ def post_core_financial_import(
             "invalid_core_financial_metadata",
             "Core Financials import metadata failed strict validation.",
         ) from None
-    if metadata.source_type != "general_ledger":
-        raise ApiError(
-            422,
-            "unsupported_source_type",
-            "The first integrated workflow accepts general-ledger imports only.",
-        )
     return create_core_financial_import(
         session,
         user,
@@ -315,14 +303,14 @@ def read_core_financial_records(
     "/runs",
     response_model=CoreFinancialRunResponse,
     status_code=201,
-    summary="Calculate and persist an immutable revenue-only report run",
+    summary="Calculate and persist one immutable, source-backed financial measure",
     description=(
-        "This first integrated workflow calculates Revenue only from one accepted general-ledger "
-        "import and an explicit policy version. Other measures and bank activity are outside this "
-        "increment. The exact result is illustrative management reporting, not approved "
-        "accounting. "
-        "It abstains when source completeness, quality, period coverage, or revenue category "
-        "coverage is insufficient."
+        "Calculates one selected measure using the matching general-ledger or bank-activity "
+        "import and an explicit immutable policy version. P&L measures require ledger evidence; "
+        "Cash Flow requires bank evidence and an explicit versioned movement/transfer policy. "
+        "The result is illustrative management reporting, not approved accounting, and the API "
+        "withholds values when source completeness, quality, period, currency, or policy coverage "
+        "is insufficient."
     ),
 )
 def post_core_financial_run(

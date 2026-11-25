@@ -326,7 +326,8 @@ class CoreFinancialRecord(Base):
             name="ck_core_financial_records_category",
         ),
         CheckConstraint(
-            "event_type IS NULL OR event_type IN ('normal', 'refund', 'reversal', 'adjustment')",
+            "event_type IS NULL OR event_type IN "
+            "('normal', 'refund', 'reversal', 'adjustment', 'transfer')",
             name="ck_core_financial_records_event_type",
         ),
         CheckConstraint(

@@ -17,7 +17,7 @@ from businessflow.schemas import StrictModel
 SourceType = Literal["general_ledger", "bank_activity"]
 PeriodCompleteness = Literal["complete", "partial", "unknown"]
 ImportRowStatus = Literal["accepted", "rejected", "duplicate"]
-TransactionKind = Literal["normal", "refund", "reversal", "adjustment"]
+TransactionKind = Literal["normal", "refund", "reversal", "adjustment", "transfer"]
 ReportingBasis = Literal["accrual", "cash"]
 FinancialCategory = Literal[
     "revenue",
@@ -174,6 +174,20 @@ class MonetaryRoundingPolicy(StrictModel):
         return self
 
 
+class CashFlowPolicyDefinition(StrictModel):
+    """Explicit rules for a bounded observed bank-movement measure, not a cash-flow statement."""
+
+    movement_rule: Literal["cash_in_less_cash_out"]
+    refund_treatment: Literal["include_as_signed_bank_movement"]
+    reversal_treatment: Literal["require_linked_exact_opposite_entry"]
+    adjustment_treatment: Literal["include_as_signed_bank_movement"]
+    transfer_treatment: Literal[
+        "exclude_marked_transfers", "include_marked_transfers_as_observed_movements"
+    ]
+    opening_balance_treatment: Literal["not_reported_no_balance_fields"]
+    closing_balance_treatment: Literal["not_reported_no_balance_fields"]
+
+
 class CoreFinancialPolicyCreateRequest(StrictModel):
     """Versioned management-reporting policy; never represents accounting approval."""
 
@@ -198,6 +212,9 @@ class CoreFinancialPolicyCreateRequest(StrictModel):
     cash_flow_definition: Literal["net_observed_bank_movement_not_cash_flow_statement"] = (
         "net_observed_bank_movement_not_cash_flow_statement"
     )
+    # Optional only for validating historical v2 policies. Cash Flow abstains unless a new
+    # immutable policy version supplies these explicit source and transfer rules.
+    cash_flow_policy: CashFlowPolicyDefinition | None = None
 
     @model_validator(mode="after")
     def validate_policy_coverage(self) -> CoreFinancialPolicyCreateRequest:
@@ -414,11 +431,12 @@ class MetricControl(StrictModel):
 
 
 class CoreFinancialRunCreateRequest(StrictModel):
-    """First persisted workflow is deliberately limited to one revenue measure."""
+    """Persist one version-bound measure from its required source adapter."""
 
     policy_id: UUID
-    measure: Literal["revenue"] = "revenue"
-    ledger_import_id: UUID
+    measure: FinancialMeasure = "revenue"
+    ledger_import_id: UUID | None = None
+    bank_import_id: UUID | None = None
     period_start: date
     period_end: date
     currency_code: CurrencyCode
@@ -433,6 +451,13 @@ class CoreFinancialRunCreateRequest(StrictModel):
     def validate_run_input(self) -> CoreFinancialRunCreateRequest:
         if self.period_end < self.period_start:
             raise ValueError("period_end must not precede period_start")
+        if self.measure == "cash_flow":
+            if self.bank_import_id is None or self.ledger_import_id is not None:
+                raise ValueError(
+                    "cash_flow requires a bank import and must not use a ledger import"
+                )
+        elif self.ledger_import_id is None or self.bank_import_id is not None:
+            raise ValueError("P&L measures require a ledger import and must not use a bank import")
         control_metrics = [control.metric for control in self.controls]
         if len(control_metrics) != len(set(control_metrics)):
             raise ValueError("only one reconciliation control per metric is supported")
@@ -468,6 +493,7 @@ class CoreFinancialMetricResult(StrictModel):
     included_record_count: int
     excluded_other_currency_count: int
     excluded_outside_period_count: int
+    excluded_transfer_count: int = 0
     required_categories: tuple[FinancialCategory, ...] = ()
     category_totals: dict[str, OutputMoneyText] = Field(default_factory=dict)
     reason_codes: tuple[str, ...] = Field(default_factory=tuple)
@@ -499,6 +525,7 @@ class CoreFinancialRunResponse(StrictModel):
     currency_code: CurrencyCode
     fx_policy: Literal["one_currency_no_fx"]
     ledger_import_id: UUID | None
+    bank_import_id: UUID | None
     state: Literal["calculated", "incomplete"]
     engine_version: str
     metrics: tuple[CoreFinancialMetricResult, ...]

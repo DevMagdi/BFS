@@ -1,80 +1,63 @@
-# Core Financials — revenue-only integrated increment
+# Core Financials — shared six-measure workflow
 
-**Status: experimental, default-disabled, incomplete, and not production-ready.** The narrow backend/UI workflow is implemented in code. Browser-driven execution remains unverified; PostgreSQL verification for this revision must be read from its GitHub Actions PR check, not inferred from local or offline checks. This is not finance-owner approval, accounting advice, a release decision, or authorization to process customer data.
+**Status: experimental, default-disabled, incomplete, and not production-ready.** The persisted workflow can calculate one selected measure per run from version-bound ledger or bank evidence. This is management-reporting infrastructure, not an approved accounting policy, authoritative source, finance-owner approval, accounting advice, or authorization to process customer data.
 
-## Code-backed scope
+## Scope and accounting boundaries
 
-| Area | Status | Implementation |
-|---|---|---|
-| Persistence | Implemented in code; live PostgreSQL migration status is tracked in the PR checks | Six append-only Company-scoped tables in `src/businessflow/core_financials/models.py` and `migrations/versions/0016_core_financials.py`: versioned policies/mappings, imports, normalized records, runs, and run evidence. |
-| API | Implemented; PostgreSQL-backed execution status is tracked in the PR checks | `src/businessflow/api/core_financial_routes.py`: template, policy/mapping versions, CSV imports and row pages, **Revenue-only** runs, run history/detail, evidence drill-down, and replay verification. |
-| Ingestion/normalization | Implemented for one API-supported path | `src/businessflow/core_financials/service.py` bounds and parses UTF-8 CSV; `adapters.py` validates headers, dates, identities, currencies, debit/credit sides, account mappings and reversals, then normalizes general-ledger journal lines. Bank-adapter helpers remain lower-level only; the API rejects bank mappings/imports in this increment. |
-| Canonical model/mappings | Partial; broader governed ledger is missing | `CoreFinancialRecord` stores one signed amount per source row, mapped account/category, source/import IDs and row hashes. Header mapping and account/category policy are separate versioned objects. This is not a shared authoritative ledger or authenticated source-of-truth model. |
-| Calculation | Implemented in the API for one measure | `POST /runs` only accepts `measure: "revenue"`. It calculates revenue less revenue reductions using exact Decimal arithmetic, inclusive dates, one currency, and the selected immutable policy version. Other measures are not exposed by this integrated endpoint. |
-| Reconciliation | Implemented as an optional declared-control comparison | A caller-provided expected amount, control-file SHA-256, source ID and locator are compared with explicit tolerances. File/row/locator overlap is `not_verifiable`. Independence and control value remain caller-asserted, not authenticated. |
-| Evidence/drill-down | Implemented in API/UI code | Source row pages expose normalized fields, issues and row hashes. Run evidence links the revenue contribution/coefficient to the canonical record, import, source file hash, row number and row hash. Run input/result/trace hashes can be replay-verified. |
-| Authentication/authorization/scope | Integrated in code; live PostgreSQL RLS/grant status is tracked in the PR checks | Existing Bearer/session auth and `finance:read` / `finance:write` checks resolve a membership-authorized Company. Service queries include tenant/company filters. Migration declares forced RLS, composite scope FKs, append-only triggers and restricted runtime grants. |
-| UI | Implemented; browser E2E unverified | `/core-financials.html` is a small vanilla-JS workflow linked from the existing workspace. It versions the illustrative policy, maps/imports a CSV, inspects normalized rows, creates a revenue run, optionally reconciles, drills into evidence and requests replay verification. No framework or redesign was added. |
+| Measure | Required evidence | Definition source | Important limits |
+|---|---|---|---|
+| Revenue | Complete general-ledger import | Versioned account map, normal balances, category coverage, and caller-supplied Revenue formula | Refunds follow the signed source entry and explicit account mapping. |
+| Expenses | Complete general-ledger import | Versioned category/account mappings and caller-supplied Expenses formula | The selected categories and signs are not universal expense definitions. |
+| Gross Profit | Complete general-ledger import | Versioned caller-supplied formula and coverage | No gross-margin presentation or inventory accounting is inferred. |
+| Operating Profit | Complete general-ledger import | Versioned caller-supplied formula and coverage | “Operating” classification is caller policy, not inferred. |
+| Net Profit | Complete general-ledger import | Versioned caller-supplied formula and coverage | Taxes, non-operating items, and other categories are not universally classified. |
+| Cash Flow | Complete bank-activity import | Versioned movement, refund, reversal, adjustment, transfer, and balance-treatment rules | This is only net observed bank movement, not a cash-flow statement; no P&L rows, opening balance, or closing balance are inferred. |
 
-The standalone calculation module still contains broader experimental calculation code, but the persisted HTTP workflow is intentionally constrained to one measure. The revenue policy JSON carries the existing illustrative formula catalog; only Revenue is calculated or returned by this increment. Do not treat other measures as shipped functionality.
+All six measures are selected independently at `POST /runs`; one immutable run records one measure and its matching source adapter. P&L runs require `ledger_import_id`; Cash Flow requires `bank_import_id` and rejects a ledger import. The policy and import versions must match exactly. A run cannot synthesize Cash Flow from ledger transactions.
 
-## User journey
+The default catalog is an editable illustration. It provides example account codes, normal balances, formulas, and explicit Cash Flow rules, but it marks every P&L category as `unknown`. Unknown or contradictory category coverage withholds the affected measure. A caller must create a new immutable policy version to assert coverage or revise the definitions. Even a `complete` classification is caller-declared and is not an accounting approval or independently validated chart of accounts. Do not treat illustrative formulas as GAAP/IFRS or universal management-reporting definitions.
 
-1. Sign in to the existing app as a tenant owner/admin, choose a Company, and open **Revenue workflow**. The API still returns `503 core_financials_disabled` unless explicitly enabled in a non-production deployment. It hard-blocks `APP_ENV=production` even when the flag is true.
-2. Create/reuse the immutable `illustrative.revenue-only` policy version. It marks only `revenue` and `revenue_reduction` category coverage complete; every other category remains unknown. The account examples are 4000 (credit-normal revenue) and 4090 (debit-normal revenue).
-3. Load the included synthetic example or choose a UTF-8 CSV. Map every required general-ledger field to a header; every extra column must be explicitly ignored with a rationale. Save the Company/source-key-scoped mapping version.
-4. Choose the inclusive source period and make an explicit `complete` / `partial` / `unknown` caller assertion. Importing uploads the file to `POST /imports`; the server records a file hash (not the original file), validation outcomes, mapped source values and canonical rows. Rejected/duplicate rows are visible and block a calculated Revenue value.
-5. For the included synthetic sample, assert the November period complete and import these rows: a 1,000 USD credit to account 4000 and a 100 USD debit to account 4090. The exact expected Revenue is **900 USD** (`1000 - 100`). This result is policy-versioned and non-authoritative.
-6. Optionally load/select a separate synthetic control CSV, enter its expected Revenue and locator, and create the run. A passing comparison only means the declared exact amounts match within the selected tolerance; it does not prove the control is independent. A reused source file is not verifiable.
-7. Inspect the result, normalized import rows and per-row evidence. Select a saved run and **Replay-verify** its inputs, result, evidence and trace hashes.
+## Signed facts, source quality, currency, and time
 
-The UI does not create other financial measures, bank-activity imports, a cash-flow statement, FX conversions, AI explanations or recommendations. The source system, completeness, mapping and control source are not authenticated. The illustrative policy must never be represented as approved or authoritative.
+General-ledger debit/credit pairs are normalized to a signed canonical amount relative to the selected account's declared normal balance: normal-side postings are positive and opposite-side postings negative. Bank rows normalize `cash_in` as positive and `cash_out` as negative. Formula coefficients are explicit policy values; e.g. a selected contra-revenue account may be subtracted by its formula, while a refund posted directly to a revenue account follows the credit-normal signed entry. Neither category assignment nor formula semantics are inferred from account numbers.
 
-## API surface
+Both source adapters require an explicit header mapping, source identity, bank account identity for bank rows, date, currency, and exactly one positive movement side. Supported events are `normal`, `refund`, `reversal`, and `adjustment`; `transfer` is accepted only for bank activity. Reversals must link to an existing accepted entry under the same policy version and match its account, currency, and exact opposite amount. A duplicate source record ID, rejected row, or failed reversal makes the import quality incomplete and blocks calculation. Adjustments are accepted only through the explicit selected mapping/rules. The run uses the inclusive transaction-date boundaries; the imported source period must fully cover the report period.
 
-All routes are under `/api/v1/tenants/{tenant_id}/core-financials`. The flag is checked before route work; Company access is checked on each service call.
+A numeric value is returned only when the source is caller-asserted `complete`, has no rejected/duplicate rows, covers the requested dates, and every in-window accepted row is in the selected reporting currency. The policy is `one_currency_no_fx`: mismatched in-window currency withholds the measure; there is no silent exclusion, exchange-rate lookup, conversion, or consolidation. Missing policy/evidence, incomplete coverage, or source mismatch returns `incomplete`/`missing_source` with reason codes rather than a fabricated amount. Source identity and completeness remain caller assertions and are not authenticated against a source system.
 
-| Method and path | Purpose | Permission |
-|---|---|---|
-| `GET /template` | Example policy and canonical header contracts (only general ledger is accepted by this API increment) | `finance:read` |
-| `GET /policies` / `POST /policies` | List or append a versioned illustrative policy | read / write |
-| `GET /mappings` / `POST /mappings` | List mappings; create a general-ledger source-header mapping | read / write |
-| `POST /imports` | Bounded general-ledger CSV import (`metadata_json`, `file`, `Idempotency-Key`) | `finance:write` |
-| `GET /imports` / `GET /imports/{import_id}` | List or inspect imports | `finance:read` |
-| `GET /imports/{import_id}/records` | Paginated normalized row and validation details | `finance:read` |
-| `POST /runs` | Persist an immutable **Revenue-only** run | `finance:write` |
-| `GET /runs` / `GET /runs/{run_id}` | List or inspect run result/hashes | `finance:read` |
-| `GET /runs/{run_id}/evidence` | Paginated Revenue-to-source-row contributions | `finance:read` |
-| `POST /runs/{run_id}/verify` | Replay stored inputs/results/evidence | `finance:write` |
+Cash Flow uses only accepted rows in a bank-activity import. Its immutable `cash_flow_policy` makes the movement rule, refund and adjustment treatment, exact reversal rule, and treatment of marked transfers explicit. The shipped policy example excludes rows marked as transfers; a separately versioned policy may include them as observed movements. The CSV contract has no opening/closing balance fields, so a policy must explicitly say that those balances are not reported and are not inferred. Marked transfers are caller-classified and not independently validated. This bounded output must not be represented as a cash-flow statement or cash balance.
 
-A Revenue run request is version-bound through `policy_id` and the required `ledger_import_id`; the strict request schema accepts only `measure: "revenue"` and does not expose `bank_import_id` or any other measure. Bank activity is outside this workflow. An optional reconciliation control contains `metric: "revenue"`, expected decimal text, currency, tolerances, and a caller-declared source ID/hash/locator.
+## Persistence, lineage, replay, and tenant boundaries
 
-## Data handling, boundaries and retention
+The persisted workflow reuses the existing canonical import model and separate adapters, mappings, and immutable policy versions. Company-scoped append-only tables retain policy/mapping versions, imports, normalized records, runs, and line evidence. Runs hash the exact request, policy, source imports, accepted facts, result, and evidence; `POST /runs/{run_id}/verify` recomputes those values from the persisted immutable inputs. Responses expose mapping/policy hashes, import lineage, row hashes, result hashes, and a trace hash. The engine identifier is now `businessflow.core-financials.v3-shared-measures`; v2 Revenue-only snapshots retain their legacy version and remain verifiable for compatible Revenue runs.
 
-The original CSV file is not archived. Mapped source values and normalized amounts/identifiers are retained in row records and immutable snapshots; run inputs include accepted canonical facts. Migration `0016_core_financials` uses Company scope FKs, forced RLS, append-only triggers and `bf_runtime` `SELECT`/`INSERT` grants without `UPDATE`/`DELETE`/`TRUNCATE`. Hashes are integrity references, not encryption or source authentication. No customer-data retention/deletion workflow, legal hold, key rotation, finance-owner approval, or production controls are included.
+All service lookups are scoped by tenant and Company and use the existing `finance:read` / `finance:write` Company authorization. Migration `0016_core_financials` creates the six forced-RLS tables, composite scope foreign keys, append-only triggers, and restricted `bf_runtime` grants. Migration `0017_core_financial_transfers` extends the accepted event constraint for explicitly marked bank transfers. The original uploaded CSV is not archived, but mapped values, normalized amounts/identifiers, source row hashes, run snapshots, and evidence are retained. Hashes are integrity references, not encryption or source authentication. No retention/deletion workflow, legal hold, key rotation, finance-owner approval, or production accounting controls are included.
 
-`CORE_FINANCIALS_ENABLED` is `false` by default in config, `.env.example`, and Compose; set it to `true` only for an authorized isolated non-production test. No setting enables it in production. Do not upload real customer/confidential data in this prototype.
+## API and UI
 
-## Verification status and reproducible PostgreSQL setup
+All routes are under `/api/v1/tenants/{tenant_id}/core-financials`. The feature flag is checked before route work; it defaults to `false` and production is hard-blocked even if the flag is set.
 
-Scoped local, database-independent verification ran: `.venv/bin/pytest -q --noconftest tests/unit --ignore=tests/unit/test_calculation_analysis.py -k 'not test_m14_committed_rows_flow_to_hash_bound_analysis_envelope'` (**132 passed, 1 deselected**; the deselected M11 bridge test and its generic analysis helper are retained outside this Core Financials changeset), plus `.venv/bin/pytest -q --noconftest tests/test_position_review_web.py` (**1 passed**). Ruff format/lint, Mypy on 122 source files, Python/JavaScript syntax checks, `git diff --check`, and offline Alembic history/SQL generation also passed in the working tree. These checks do not substitute for PostgreSQL. The three PostgreSQL integration tests cover import replay, authenticated Company scoping, persisted evidence/replay, and RLS/runtime-grant/immutability. Direct local invocation is blocked during `conftest.py` loading because the three PostgreSQL URLs are unset. Read the actual Backend checks result for this revision to determine live migration, API/auth/tenant authorization, RLS/runtime grants and immutability status; offline Alembic SQL generation does not verify them. Browser E2E remains unverified; no browser automation harness was found.
+| Method and path | Purpose |
+|---|---|
+| `GET /template` | Illustrative policy and canonical ledger/bank header contracts |
+| `GET /policies` / `POST /policies` | List or append an immutable versioned, non-authoritative policy |
+| `GET /mappings` / `POST /mappings` | List or append a source-adapter-specific mapping (ledger and bank remain separate) |
+| `POST /imports` | Bounded UTF-8 CSV import for either general ledger or bank activity (`metadata_json`, `file`, `Idempotency-Key`) |
+| `GET /imports` / `GET /imports/{import_id}` | List or recover an import and its original versions/hashes |
+| `GET /imports/{import_id}/records` | Paginated normalized records and validation issues |
+| `POST /runs` | Persist one selected measure; P&L requires ledger evidence, Cash Flow requires bank evidence |
+| `GET /runs` / `GET /runs/{run_id}` | List or inspect persisted measure results and hashes |
+| `GET /runs/{run_id}/evidence` | Paginated measure-to-source-row contributions |
+| `POST /runs/{run_id}/verify` | Replay persisted inputs, outputs, evidence, and trace |
 
-The current sandbox has no `docker`/`podman`, PostgreSQL server/client binaries, or configured PostgreSQL URLs. The GitHub Actions job in `.github/workflows/backend.yml` runs on GitHub-hosted Ubuntu with a PostgreSQL 18.7 service, creates the bootstrap/migrator/runtime roles, applies the migration, runs `alembic check`, and executes the full pytest suite. It is triggered by pull requests targeting `main` or pushes to `main`, and has no `workflow_dispatch`. A verification-only Draft PR targeting `main` is the trigger for this work; use that PR's Backend checks run as the authoritative PostgreSQL result.
+`src/businessflow/web/core-financials.html` and `src/businessflow/web/assets/core-financials.js` provide a small authenticated workflow for editing/reviewing versioned policy JSON, selecting either source adapter, mapping/importing CSV, choosing a measure, inspecting results/evidence, recovering saved imports, and replay-verifying runs. It is intentionally not a UI redesign. Use synthetic or explicitly authorized test data only.
 
-With Docker Compose available, the local disposable test path is also available. Run it against a fresh project/volume only:
+## Verification
 
-```bash
-# In the repository root. Use generated test-only credentials; do not reuse production values.
-export BF_BOOTSTRAP_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-export BF_MIGRATOR_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-export BF_RUNTIME_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-export APP_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
-export APP_ENV=test
+- Database-independent golden/unit coverage is in `tests/unit/test_core_financials.py`: independent cases for all six measures, cross-measure P&L identities, cash/profit divergence, exact signs/precision, source quality/period/currency gaps, explicit cash transfer rules, and policy/source abstention.
+- PostgreSQL/API integration coverage is in `tests/test_core_financials.py`: Revenue recovery and replay regression, all-six-measure ledger/bank workflow and replay, evidence lineage, authorization/tenant isolation, Company RLS, runtime grants, and immutability. Migration head is `0017_core_financial_transfers`. The complete PostgreSQL suite passed locally on a fresh disposable 18.6 cluster (**273 passed**), and PR #22's Backend workflow passed with PostgreSQL 18.7, migration upgrade/model-drift, and the full integration suite ([run 45573830944](https://github.com/DevMagdi/BFS/actions/runs/45573830944)).
+- Static route/UI assertions are in `tests/test_position_review_web.py`.
+- Browser-driven E2E has **not** been run for this milestone; static served-UI tests do not count as Browser E2E.
+- PostgreSQL 18.7 migration/API/RLS integration was verified by PR #22's Backend checks ([run 45573830944](https://github.com/DevMagdi/BFS/actions/runs/45573830944)); local unit-only tests or offline migration generation alone are not substitutes for that evidence.
 
-# Unique Compose project gives this destructive suite a fresh isolated PostgreSQL volume.
-docker compose -p bfs-core-financials-test --profile test run --build --rm tests
-# Remove only that isolated test project's container/network/volume after the run.
-docker compose -p bfs-core-financials-test down -v
-```
-
-The `db` service uses `postgres:18.7-alpine`; `scripts/db-init/010-create-roles.sh` creates `bf_migrator` (schema owner), `bf_runtime` (non-owner, non-superuser, no `BYPASSRLS`) and the `businessflow_test` database; the test profile supplies `TEST_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL`, and a separate `TEST_ADMIN_DATABASE_URL`. Its session fixture downgrades the dedicated test schema to `base` and upgrades to `0016_core_financials`, so **never point it at any non-disposable database or use the normal Compose project/volume**. CI additionally verifies PostgreSQL 18.7 exactly, runs `alembic check`, then all integration tests.
+The disposable Compose test profile is destructive to its selected test database. Use only a fresh project and volume as described in the repository's backend testing documentation; never point it at a shared or non-disposable database.

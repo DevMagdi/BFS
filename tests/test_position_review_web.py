@@ -45,6 +45,7 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     assert "non-authoritative" in core_financial_page.text
     assert "Choose a general-ledger CSV" in core_financial_page.text
     assert "Load synthetic bank example" in core_financial_page.text
+    assert "Load synthetic Revenue control example" in core_financial_page.text
     assert "Select a saved import to restore" in core_financial_page.text
     assert "Content-Security-Policy" in core_financial_page.headers
     assert "script-src 'self'" in core_financial_page.headers["Content-Security-Policy"]
@@ -53,6 +54,8 @@ def test_static_m10_workflow_and_company_scoped_api_routes_are_served() -> None:
     assert "measure," in core_financial_script.text
     assert "cash_flow" in core_financial_script.text
     assert "Select saved import" in core_financial_script.text
+    assert "The synthetic control example is Revenue-only." in core_financial_script.text
+    assert "Measure changed. Select a separate control" in core_financial_script.text
     assert 'id="load-more-imports"' in core_financial_page.text
     assert "async function loadMoreImports()" in core_financial_script.text
     assert "async function selectSavedImport(importId)" in core_financial_script.text

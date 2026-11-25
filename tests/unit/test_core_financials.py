@@ -226,6 +226,7 @@ def _run(
     bank=None,
     controls=(),
     requested_metrics=None,
+    legacy_v2_replay=False,
 ):
     return calculate_financial_metrics(
         policy=policy or _policy(),
@@ -240,6 +241,7 @@ def _run(
         facts=_facts() if facts is None else facts,
         controls=controls,
         requested_metrics=requested_metrics,
+        legacy_v2_replay=legacy_v2_replay,
     )
 
 
@@ -481,6 +483,63 @@ def test_cash_flow_transfer_rule_is_explicit_and_unmatched_pnl_rows_never_supply
     assert lines == ()
 
 
+def test_cash_flow_reconciles_independent_control_and_excludes_transfers_from_evidence() -> None:
+    facts = (
+        _fact(
+            import_id=BANK_IMPORT_ID,
+            source_type="bank_activity",
+            category=None,
+            amount="100",
+            row_number=35,
+            account_code="operating-1",
+        ),
+        _fact(
+            import_id=BANK_IMPORT_ID,
+            source_type="bank_activity",
+            category=None,
+            amount="-40",
+            row_number=36,
+            account_code="operating-1",
+            event_type="transfer",
+        ),
+    )
+    independent_control = MetricControl(
+        metric="cash_flow",
+        expected_value="100",
+        currency_code="USD",
+        source=ControlSource(
+            source_id="separate-bank-close-control",
+            source_hash="e" * 64,
+            record_locator="control:row:1",
+        ),
+    )
+
+    results, _analysis, lines, state = _run(
+        facts=facts,
+        controls=(independent_control,),
+        requested_metrics=("cash_flow",),
+    )
+    cash_flow = results[0]
+    assert state == "calculated"
+    assert cash_flow.exact_value == "100"
+    assert cash_flow.excluded_transfer_count == 1
+    assert cash_flow.reconciliation.state == "passed"
+    assert [line.fact.event_type for line in lines] == ["normal"]
+
+    overlapping_control = independent_control.model_copy(
+        update={"source": independent_control.source.model_copy(update={"source_hash": "b" * 64})}
+    )
+    overlapped = _metric_map(
+        _run(
+            facts=facts,
+            controls=(overlapping_control,),
+            requested_metrics=("cash_flow",),
+        )[0]
+    )["cash_flow"].reconciliation
+    assert overlapped.state == "not_verifiable"
+    assert "control_source_overlaps_calculation_evidence" in overlapped.reason_codes
+
+
 def test_source_currency_quality_period_and_cash_policy_gaps_withhold_values() -> None:
     mixed_currency_facts = (
         _fact(
@@ -561,6 +620,217 @@ def test_source_currency_quality_period_and_cash_policy_gaps_withhold_values() -
     assert legacy_cash.status == "incomplete"
     assert legacy_cash.exact_value is None
     assert "cash_flow_policy_missing" in legacy_cash.reason_codes
+
+
+@pytest.mark.parametrize(
+    "metric",
+    ("revenue", "expenses", "gross_profit", "operating_profit", "net_profit", "cash_flow"),
+)
+def test_missing_required_source_withholds_each_measure(metric) -> None:
+    results, _analysis, lines, state = calculate_financial_metrics(
+        policy=_policy(),
+        policy_version=1,
+        request_period_start=REQUEST_START,
+        request_period_end=REQUEST_END,
+        currency_code="USD",
+        ledger_import=(
+            _import_state(LEDGER_IMPORT_ID, "general_ledger") if metric == "cash_flow" else None
+        ),
+        bank_import=(
+            None if metric == "cash_flow" else _import_state(BANK_IMPORT_ID, "bank_activity")
+        ),
+        facts=(),
+        controls=(),
+        requested_metrics=(metric,),
+    )
+
+    result = results[0]
+    assert state == "incomplete"
+    assert result.status == "missing_source"
+    assert result.exact_value is None
+    assert result.reason_codes == ("required_source_missing",)
+    assert result.source_import_ids == ()
+    assert lines == ()
+
+
+@pytest.mark.parametrize(
+    ("metric", "unknown_category"),
+    (
+        ("revenue", "revenue"),
+        ("expenses", "cost_of_sales"),
+        ("gross_profit", "revenue"),
+        ("operating_profit", "operating_expense"),
+        ("net_profit", "tax_expense"),
+    ),
+)
+def test_unknown_coverage_withholds_each_p_and_l_measure(metric, unknown_category) -> None:
+    results, _analysis, _lines, state = _run(
+        policy=_policy(unknown_categories=(unknown_category,)),
+        requested_metrics=(metric,),
+    )
+    result = results[0]
+    assert state == "incomplete"
+    assert result.status == "incomplete"
+    assert result.exact_value is None
+    assert f"category_coverage_unknown:{unknown_category}" in result.reason_codes
+
+
+def test_unknown_p_and_l_coverage_does_not_gate_bank_cash_flow() -> None:
+    categories = tuple(illustrative_policy_template().category_coverage)
+    results, _analysis, _lines, state = _run(
+        policy=_policy(unknown_categories=categories),
+        requested_metrics=("cash_flow",),
+    )
+    assert state == "calculated"
+    assert results[0].exact_value == "650"
+
+
+@pytest.mark.parametrize(
+    "metric",
+    ("revenue", "expenses", "gross_profit", "operating_profit", "net_profit", "cash_flow"),
+)
+def test_currency_mismatch_withholds_each_measure(metric) -> None:
+    if metric == "cash_flow":
+        facts = (
+            _fact(
+                import_id=BANK_IMPORT_ID,
+                source_type="bank_activity",
+                category=None,
+                amount="100",
+                row_number=50,
+                account_code="operating-1",
+            ),
+            _fact(
+                import_id=BANK_IMPORT_ID,
+                source_type="bank_activity",
+                category=None,
+                amount="20",
+                row_number=51,
+                account_code="operating-1",
+                currency_code="EUR",
+            ),
+        )
+    else:
+        category, account_code = (
+            ("cost_of_sales", "5000") if metric == "expenses" else ("revenue", "4000")
+        )
+        facts = (
+            _fact(
+                import_id=LEDGER_IMPORT_ID,
+                source_type="general_ledger",
+                category=category,
+                amount="100",
+                row_number=50,
+                account_code=account_code,
+            ),
+            _fact(
+                import_id=LEDGER_IMPORT_ID,
+                source_type="general_ledger",
+                category=category,
+                amount="20",
+                row_number=51,
+                account_code=account_code,
+                currency_code="EUR",
+            ),
+        )
+
+    results, _analysis, _lines, state = _run(facts=facts, requested_metrics=(metric,))
+    result = results[0]
+    assert state == "incomplete"
+    assert result.status == "incomplete"
+    assert result.exact_value is None
+    assert result.excluded_other_currency_count == 1
+    assert "source_currency_mismatch_no_fx" in result.reason_codes
+
+
+@pytest.mark.parametrize(
+    "metric",
+    ("revenue", "expenses", "gross_profit", "operating_profit", "net_profit", "cash_flow"),
+)
+def test_source_period_coverage_withholds_each_measure(metric) -> None:
+    source_start = date(2026, 11, 15)
+    source = _import_state(
+        BANK_IMPORT_ID if metric == "cash_flow" else LEDGER_IMPORT_ID,
+        "bank_activity" if metric == "cash_flow" else "general_ledger",
+        period_start=source_start,
+    )
+    results, _analysis, _lines, state = _run(
+        bank=source if metric == "cash_flow" else None,
+        ledger=source if metric != "cash_flow" else None,
+        requested_metrics=(metric,),
+    )
+    result = results[0]
+    assert state == "incomplete"
+    assert result.status == "incomplete"
+    assert result.exact_value is None
+    assert "source_period_does_not_cover_requested_period" in result.reason_codes
+
+
+@pytest.mark.parametrize(
+    "metric",
+    ("revenue", "expenses", "gross_profit", "operating_profit", "net_profit", "cash_flow"),
+)
+def test_wrong_source_type_withholds_each_measure(metric) -> None:
+    wrong_source = _import_state(
+        BANK_IMPORT_ID if metric == "cash_flow" else LEDGER_IMPORT_ID,
+        "general_ledger" if metric == "cash_flow" else "bank_activity",
+    )
+    results, _analysis, _lines, state = _run(
+        bank=wrong_source if metric == "cash_flow" else None,
+        ledger=wrong_source if metric != "cash_flow" else None,
+        requested_metrics=(metric,),
+    )
+    result = results[0]
+    assert state == "incomplete"
+    assert result.status == "incomplete"
+    assert result.exact_value is None
+    assert "required_source_type_mismatch" in result.reason_codes
+
+
+def test_legacy_v2_replay_preserves_revenue_currency_exclusion_semantics() -> None:
+    facts = (
+        _fact(
+            import_id=LEDGER_IMPORT_ID,
+            source_type="general_ledger",
+            category="revenue",
+            amount="100",
+            row_number=44,
+            account_code="4000",
+        ),
+        _fact(
+            import_id=LEDGER_IMPORT_ID,
+            source_type="general_ledger",
+            category="revenue",
+            amount="75",
+            row_number=45,
+            account_code="4000",
+            currency_code="EUR",
+        ),
+    )
+
+    v3_results, _analysis, _lines, v3_state = _run(
+        facts=facts,
+        requested_metrics=("revenue",),
+    )
+    legacy_results, _analysis, legacy_lines, legacy_state = _run(
+        facts=facts,
+        requested_metrics=("revenue",),
+        legacy_v2_replay=True,
+    )
+
+    v3_revenue = v3_results[0]
+    legacy_revenue = legacy_results[0]
+    assert v3_state == "incomplete"
+    assert v3_revenue.exact_value is None
+    assert v3_revenue.excluded_other_currency_count == 1
+    assert legacy_state == "calculated"
+    assert legacy_revenue.exact_value == "100"
+    assert legacy_revenue.excluded_other_currency_count == 1
+    assert len(legacy_lines) == 1
+    assert legacy_lines[0].fact.currency_code == "USD"
+
+    with pytest.raises(ValueError, match="only for the Revenue measure"):
+        _run(requested_metrics=("net_profit",), legacy_v2_replay=True)
 
 
 def test_first_persisted_workflow_calculates_only_revenue_with_exact_control_and_evidence() -> None:
@@ -768,6 +1038,53 @@ def test_control_overlap_is_not_verified_and_independent_control_reconciles_exac
     assert reconciled.state == "passed"
     assert reconciled.variance == "0"
     assert reconciled.source_independence == "caller_asserted_not_verified"
+
+
+@pytest.mark.parametrize(
+    ("source_rows", "existing_ids", "expected_duplicates"),
+    [
+        (
+            (
+                "duplicate-1,2026-11-10,4000,0,100,USD,normal,",
+                "duplicate-1,2026-11-11,4000,0,200,USD,normal,",
+            ),
+            set(),
+            2,
+        ),
+        (
+            ("duplicate-1,2026-11-10,4000,0,100,USD,normal,",),
+            {"duplicate-1"},
+            1,
+        ),
+    ],
+    ids=("within-import", "prior-import"),
+)
+def test_duplicate_source_record_ids_are_quarantined(
+    source_rows, existing_ids, expected_duplicates
+) -> None:
+    headers = tuple(f"ledger_column_{index}" for index, _ in enumerate(LEDGER_FIELDS))
+    csv = ",".join(headers) + "\n" + "\n".join(source_rows) + "\n"
+    sheet = parse_file("duplicate-ledger.csv", csv.encode(), max_rows=10).worksheets[0]
+
+    rows = normalize_source_rows(
+        sheet,
+        source_type="general_ledger",
+        source_key="ledger-main",
+        file_hash="a" * 64,
+        mapping_hash="b" * 64,
+        policy_hash="c" * 64,
+        field_mapping=dict(zip(LEDGER_FIELDS, headers, strict=True)),
+        policy=_policy(),
+        policy_id=str(POLICY_ID),
+        source_period_start=REQUEST_START,
+        source_period_end=REQUEST_END,
+        existing_record_ids=existing_ids,
+    )
+
+    assert len(rows) == expected_duplicates
+    assert {row.row_status for row in rows} == {"duplicate"}
+    assert all("duplicate_source_record_id" in row.issues for row in rows)
+    assert all(row.signed_amount is not None for row in rows)
 
 
 def test_ledger_adapter_uses_explicit_mapping_normal_balance_and_declared_period() -> None:

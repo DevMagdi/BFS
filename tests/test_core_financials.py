@@ -1,16 +1,27 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import UTC, date, datetime
 from hashlib import sha256
-from uuid import uuid4
+from pathlib import Path
+from uuid import UUID, uuid4
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
 
-from businessflow.core_financials.contracts import BANK_FIELDS, LEDGER_FIELDS
+from businessflow.core_financials.calculations import calculate_financial_metrics
+from businessflow.core_financials.catalog import LEGACY_CORE_FINANCIAL_ENGINE_VERSION
+from businessflow.core_financials.contracts import (
+    BANK_FIELDS,
+    LEDGER_FIELDS,
+    CoreFinancialRunCreateRequest,
+)
 from businessflow.core_financials.models import (
     CoreFinancialImport,
     CoreFinancialMapping,
@@ -19,6 +30,20 @@ from businessflow.core_financials.models import (
     CoreFinancialRun,
     CoreFinancialRunEvidence,
 )
+from businessflow.core_financials.service import (
+    _build_import_input_snapshot,
+    _fact_from_record,
+    _import_result_snapshot,
+    _line_payload,
+    _record_snapshot,
+    _run_input_snapshot,
+    _run_result_snapshot,
+    _source_import_state,
+    _trace_hash,
+    _verify_import_integrity,
+    _verify_policy,
+)
+from businessflow.metrics.snapshot import content_hash
 from tests.helpers import auth_headers, create_member, create_tenant, register_user
 
 
@@ -30,11 +55,15 @@ def _create_revenue_policy(
     client: TestClient,
     tenant_id: str,
     headers: dict[str, str],
+    *,
+    legacy_v2: bool = False,
 ) -> dict[str, object]:
     template_response = client.get(f"{_base(tenant_id)}/template", headers=headers)
     assert template_response.status_code == 200, template_response.text
     policy = template_response.json()["illustrative_policy"]
     policy["policy_key"] = "illustrative.revenue-only"
+    if legacy_v2:
+        policy.pop("cash_flow_policy", None)
     policy["category_coverage"] = {
         category: "complete" if category in {"revenue", "revenue_reduction"} else "unknown"
         for category in policy["category_coverage"]
@@ -220,6 +249,253 @@ def _import_bank_activity(
     assert imported["quality_status"] == "passed"
     assert imported["accepted_rows"] == 3
     return imported, content
+
+
+def _persist_legacy_v2_run(session, import_id: UUID) -> tuple[CoreFinancialRun, str, str]:
+    source_import = session.get(CoreFinancialImport, import_id)
+    assert source_import is not None
+    mapping, _current_policy, records = _verify_import_integrity(session, source_import)
+    policy_row = session.get(CoreFinancialPolicy, source_import.policy_id)
+    assert policy_row is not None
+
+    # Simulate the immutable v2 policy/import snapshot shape: those definitions predate
+    # cash_flow_policy, and the stored snapshot engine identifier remains v2.
+    policy_definition = dict(policy_row.definition)
+    policy_definition.pop("cash_flow_policy", None)
+    session.execute(
+        text(
+            "ALTER TABLE core_financial_policies "
+            "DISABLE TRIGGER trg_core_financial_policies_append_only"
+        )
+    )
+    session.execute(
+        text(
+            "ALTER TABLE core_financial_imports "
+            "DISABLE TRIGGER trg_core_financial_imports_append_only"
+        )
+    )
+    policy_row.definition = policy_definition
+    legacy_policy = _verify_policy(policy_row)
+    blank_rows_ignored = source_import.input_snapshot["file"]["blank_rows_ignored"]
+    source_row_hashes = [
+        {"row_number": record.source_row_number, "row_hash": record.source_row_hash}
+        for record in records
+    ]
+    legacy_import_input = _build_import_input_snapshot(
+        tenant_id=source_import.tenant_id,
+        company_id=source_import.company_id,
+        source_key=source_import.source_key,
+        source_type=source_import.source_type,
+        period_start=source_import.period_start,
+        period_end=source_import.period_end,
+        period_completeness=source_import.period_completeness,
+        file_name=source_import.file_name,
+        file_hash=source_import.file_hash,
+        file_size_bytes=source_import.file_size_bytes,
+        row_count=source_import.total_rows,
+        blank_rows_ignored=blank_rows_ignored,
+        mapping=mapping,
+        policy=policy_row,
+        source_row_hashes=source_row_hashes,
+        engine_version=LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
+    )
+    row_summaries = [_record_snapshot(record) for record in records]
+    legacy_import_result = _import_result_snapshot(
+        row_summaries,
+        quality_status=source_import.quality_status,
+        engine_version=LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
+    )
+    source_import.input_snapshot = legacy_import_input
+    source_import.result_snapshot = legacy_import_result
+    source_import.input_hash = content_hash(legacy_import_input)
+    source_import.result_hash = content_hash(legacy_import_result)
+    session.flush()
+    session.execute(
+        text(
+            "ALTER TABLE core_financial_imports "
+            "ENABLE TRIGGER trg_core_financial_imports_append_only"
+        )
+    )
+    session.execute(
+        text(
+            "ALTER TABLE core_financial_policies "
+            "ENABLE TRIGGER trg_core_financial_policies_append_only"
+        )
+    )
+    session.flush()
+
+    # Prove that old imported evidence is still independently recoverable before replaying a run.
+    _verify_import_integrity(session, source_import)
+    run_request = CoreFinancialRunCreateRequest(
+        policy_id=policy_row.id,
+        measure="revenue",
+        ledger_import_id=source_import.id,
+        period_start=date(2026, 11, 1),
+        period_end=date(2026, 11, 30),
+        currency_code="USD",
+    )
+    facts = tuple(
+        _fact_from_record(record, source_import)
+        for record in records
+        if record.row_status == "accepted"
+    )
+    import_pairs = ((source_import, records), None)
+    metrics, analysis, lines, state = calculate_financial_metrics(
+        policy=legacy_policy,
+        policy_version=policy_row.version,
+        request_period_start=run_request.period_start,
+        request_period_end=run_request.period_end,
+        currency_code=run_request.currency_code,
+        ledger_import=_source_import_state(source_import),
+        bank_import=None,
+        facts=facts,
+        controls=run_request.controls,
+        requested_metrics=("revenue",),
+        legacy_v2_replay=True,
+    )
+    assert state == "calculated"
+    assert metrics[0].exact_value == "900"
+    assert metrics[0].excluded_other_currency_count == 1
+
+    run_id = uuid4()
+    created_at = datetime.now(UTC)
+    input_snapshot = _run_input_snapshot(
+        tenant_id=source_import.tenant_id,
+        company_id=source_import.company_id,
+        policy_row=policy_row,
+        policy=legacy_policy,
+        request=run_request,
+        imports=import_pairs,
+        facts=facts,
+        engine_version=LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
+    )
+    result_snapshot = _run_result_snapshot(
+        state=state,
+        metrics=metrics,
+        analysis=analysis,
+        engine_version=LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
+    )
+    input_hash = content_hash(input_snapshot)
+    result_hash = content_hash(result_snapshot)
+    evidence_payload = sorted(
+        (_line_payload(line) for line in lines),
+        key=lambda item: (str(item["metric"]), str(item["record_id"])),
+    )
+    trace_hash = _trace_hash(
+        run_id=run_id,
+        input_hash=input_hash,
+        result_hash=result_hash,
+        evidence_hash=content_hash(evidence_payload),
+        created_at=created_at,
+        engine_version=LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
+    )
+    run = CoreFinancialRun(
+        id=run_id,
+        tenant_id=source_import.tenant_id,
+        company_id=source_import.company_id,
+        requested_by_user_id=policy_row.created_by_user_id,
+        policy_id=policy_row.id,
+        policy_version=policy_row.version,
+        policy_hash=policy_row.definition_hash,
+        ledger_import_id=source_import.id,
+        bank_import_id=None,
+        period_start=run_request.period_start,
+        period_end=run_request.period_end,
+        currency_code=run_request.currency_code,
+        state=state,
+        input_hash=input_hash,
+        result_hash=result_hash,
+        trace_hash=trace_hash,
+        input_snapshot=input_snapshot,
+        result_snapshot=result_snapshot,
+        created_at=created_at,
+    )
+    session.add(run)
+    session.flush()
+    for line in lines:
+        session.add(
+            CoreFinancialRunEvidence(
+                id=uuid4(),
+                tenant_id=source_import.tenant_id,
+                company_id=source_import.company_id,
+                run_id=run_id,
+                metric=line.metric,
+                record_id=line.fact.id,
+                formula_coefficient=line.coefficient,
+                contribution_amount=line.contribution_amount,
+                created_at=created_at,
+            )
+        )
+    session.flush()
+    return run, input_hash, result_hash
+
+
+def test_core_financial_transfer_migration_downgrade_is_safe(
+    client,
+    admin_engine,
+    monkeypatch,
+):
+    migration_url = os.environ["TEST_MIGRATION_DATABASE_URL"]
+    monkeypatch.setenv("MIGRATION_DATABASE_URL", migration_url)
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", migration_url.replace("%", "%%"))
+
+    command.downgrade(config, "0016_core_financials")
+    with admin_engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0016_core_financials"
+        )
+    command.upgrade(config, "head")
+
+    owner = register_user(client, f"core-financials-migration-{uuid4().hex}@example.com")
+    headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="Core Financial Migration Test",
+        company_name="Synthetic Migration Company",
+        key=f"core-financials-migration-{uuid4().hex}",
+    )
+    policy = _create_revenue_policy(client, tenant["id"], headers)
+    bank_mapping = _create_bank_mapping(client, tenant["id"], headers)
+    bank_import, _content = _import_bank_activity(
+        client,
+        tenant["id"],
+        headers,
+        policy,
+        bank_mapping,
+    )
+
+    try:
+        with pytest.raises(
+            Exception,
+            match="cannot downgrade Core Financials while bank transfer evidence exists",
+        ):
+            command.downgrade(config, "0016_core_financials")
+    finally:
+        command.upgrade(config, "head")
+
+    with admin_engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0017_core_financial_transfers"
+        )
+        assert (
+            connection.scalar(
+                text(
+                    "SELECT count(*) FROM core_financial_records "
+                    "WHERE import_id = :import_id AND event_type = 'transfer'"
+                ),
+                {"import_id": bank_import["id"]},
+            )
+            == 1
+        )
+        security = connection.execute(
+            text(
+                "SELECT relrowsecurity, relforcerowsecurity FROM pg_class "
+                "WHERE oid = 'public.core_financial_records'::regclass"
+            )
+        ).one()
+        assert security.relrowsecurity and security.relforcerowsecurity
 
 
 def test_revenue_only_workflow_imports_calculates_reconciles_traces_and_replays(client):
@@ -551,6 +827,94 @@ def test_six_measure_workflow_binds_ledger_and_bank_lineage_and_replays(client):
         replay = client.post(f"{_base(tenant['id'])}/runs/{run['id']}/verify", headers=headers)
         assert replay.status_code == 200, replay.text
         assert replay.json()["passed"] is True, f"{measure}: {replay.text}"
+
+
+def test_legacy_v2_mixed_currency_import_and_run_remain_replay_verifiable(
+    client,
+    admin_engine,
+):
+    owner = register_user(client, f"core-financials-v2-{uuid4().hex}@example.com")
+    headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="Core Financials Legacy Replay Test",
+        company_name="Synthetic Legacy Replay Company",
+        key=f"core-financials-v2-{uuid4().hex}",
+    )
+    policy = _create_revenue_policy(client, tenant["id"], headers, legacy_v2=True)
+    mapping = _create_mapping(client, tenant["id"], headers)
+    csv_headers = (
+        "record_id",
+        "transaction_date",
+        "account_code",
+        "debit",
+        "credit",
+        "currency",
+        "event_type",
+        "reversal_of",
+    )
+    content = (
+        ",".join(csv_headers)
+        + "\n"
+        + "sale-usd,2026-11-10,4000,0,1000,USD,normal,\n"
+        + "refund-usd,2026-11-18,4090,100,0,USD,refund,\n"
+        + "sale-eur,2026-11-20,4000,0,75,EUR,normal,\n"
+    ).encode("utf-8")
+    metadata = {
+        "source_key": "ledger-demo",
+        "source_type": "general_ledger",
+        "mapping_id": mapping["id"],
+        "policy_id": policy["id"],
+        "period_start": "2026-11-01",
+        "period_end": "2026-11-30",
+        "period_completeness": "complete",
+    }
+    imported_response = client.post(
+        f"{_base(tenant['id'])}/imports",
+        data={"metadata_json": json.dumps(metadata)},
+        files={"file": ("legacy-v2-ledger.csv", content, "text/csv")},
+        headers={**headers, "Idempotency-Key": f"legacy-v2-{uuid4().hex}"},
+    )
+    assert imported_response.status_code == 201, imported_response.text
+    imported = imported_response.json()
+    assert imported["quality_status"] == "passed"
+    assert imported["accepted_rows"] == 3
+
+    factory = sessionmaker(admin_engine, expire_on_commit=False)
+    with factory.begin() as session:
+        run, _input_hash, _result_hash = _persist_legacy_v2_run(
+            session,
+            UUID(imported["id"]),
+        )
+        run_id = run.id
+
+    recovered = client.get(
+        f"{_base(tenant['id'])}/imports/{imported['id']}",
+        headers=headers,
+    )
+    assert recovered.status_code == 200, recovered.text
+    records = client.get(
+        f"{_base(tenant['id'])}/imports/{imported['id']}/records?limit=100&offset=0",
+        headers=headers,
+    )
+    assert records.status_code == 200, records.text
+    assert records.json()["total"] == 3
+
+    detail = client.get(f"{_base(tenant['id'])}/runs/{run_id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["engine_version"] == LEGACY_CORE_FINANCIAL_ENGINE_VERSION
+    assert detail.json()["metrics"][0]["status"] == "calculated"
+    assert detail.json()["metrics"][0]["exact_value"] == "900"
+    assert detail.json()["metrics"][0]["excluded_other_currency_count"] == 1
+
+    verification = client.post(
+        f"{_base(tenant['id'])}/runs/{run_id}/verify",
+        headers=headers,
+    )
+    assert verification.status_code == 200, verification.text
+    assert verification.json()["passed"] is True
+    assert verification.json()["engine_version"] == LEGACY_CORE_FINANCIAL_ENGINE_VERSION
 
 
 def test_fractional_and_max_precision_amounts_round_trip_through_import_run_and_evidence(client):

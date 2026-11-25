@@ -503,6 +503,10 @@
   }
 
   function loadControlExample() {
+    if (selectedMeasure() !== "revenue") {
+      showMessage("The synthetic control example is Revenue-only. Select Revenue before loading it.");
+      return;
+    }
     state.controlFile = new File([CONTROL_SAMPLE], "illustrative_revenue_control.csv", { type: "text/csv" });
     $("#control-expected").value = "900";
     $("#control-source-id").value = "illustrative-control-2026-11";
@@ -1167,6 +1171,14 @@
     $("#measure-select").addEventListener("change", () => {
       state.run = null;
       state.evidenceItems = [];
+      state.controlFile = null;
+      $("#control-file").value = "";
+      $("#control-expected").value = "";
+      $("#control-source-id").value = "";
+      $("#control-locator").value = "";
+      $("#control-absolute-tolerance").value = "0";
+      $("#control-relative-tolerance").value = "0";
+      setStatus("#control-file-state", "Measure changed. Select a separate control for the newly selected measure, or leave reconciliation not provided.", "muted");
       $("#run-result").replaceChildren();
       $("#verification-result").replaceChildren();
       show($("#verify-run-button"), false);

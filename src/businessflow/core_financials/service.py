@@ -2046,6 +2046,7 @@ def verify_core_financial_run(
         facts=facts,
         controls=saved_request.controls,
         requested_metrics=(saved_request.measure,),
+        legacy_v2_replay=engine_version == LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
     )
     replayed_result = _run_result_snapshot(
         state=replayed_state,

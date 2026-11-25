@@ -56,6 +56,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     _require_migrator()
+    # The table uses FORCE ROW LEVEL SECURITY, so the non-BYPASSRLS migration owner
+    # would otherwise see no rows without tenant/company context. Temporarily remove
+    # FORCE while holding the DDL lock so this data-preservation guard sees all evidence.
+    op.execute("ALTER TABLE core_financial_records NO FORCE ROW LEVEL SECURITY")
     op.execute(
         sa.text(
             """
@@ -72,6 +76,7 @@ def downgrade() -> None:
             """
         )
     )
+    op.execute("ALTER TABLE core_financial_records FORCE ROW LEVEL SECURITY")
     op.drop_constraint(
         "ck_core_financial_records_event_type",
         "core_financial_records",

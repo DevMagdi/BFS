@@ -90,6 +90,7 @@ def calculate_financial_metrics(
     facts: tuple[CanonicalFinancialFact, ...],
     controls: tuple[MetricControl, ...],
     requested_metrics: tuple[FinancialMeasure, ...] | None = None,
+    legacy_v2_replay: bool = False,
 ) -> tuple[
     tuple[CoreFinancialMetricResult, ...],
     tuple[CoreFinancialAnalysisStatement, ...],
@@ -104,6 +105,8 @@ def calculate_financial_metrics(
         or any(metric not in FINANCIAL_MEASURES for metric in selected_metrics)
     ):
         raise ValueError("requested_metrics must be a non-empty set of supported measures")
+    if legacy_v2_replay and selected_metrics != ("revenue",):
+        raise ValueError("legacy v2 replay is supported only for the Revenue measure")
     control_metrics = [control.metric for control in controls]
     if len(control_metrics) != len(set(control_metrics)):
         raise ValueError("at most one reconciliation control per metric is supported")
@@ -274,7 +277,10 @@ def calculate_financial_metrics(
         excluded_outside_period_count = len(import_facts) - len(in_window)
         selected = [fact for fact in in_window if fact.currency_code == currency_code]
         excluded_currency_count = len(in_window) - len(selected)
-        if excluded_currency_count:
+        # Historical v2 Revenue snapshots calculated in the requested currency and counted
+        # other-currency rows as excluded. Preserve that exact behavior only while replaying
+        # those immutable runs; current v3 runs abstain to avoid silent partial-source results.
+        if excluded_currency_count and not legacy_v2_replay:
             result = _unavailable_metric(
                 metric=metric,
                 basis=metric_basis,

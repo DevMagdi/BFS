@@ -51,25 +51,49 @@ from businessflow.main import create_app  # noqa: E402
 
 @pytest.fixture(scope="session", autouse=True)
 def migrated_clean_test_database() -> None:
-    """Reset the dedicated test DB, then prove a clean Alembic upgrade succeeds."""
-    admin_engine = create_engine(TEST_ADMIN_DATABASE_URL, hide_parameters=True)
-    migration_engine = create_engine(TEST_MIGRATION_DATABASE_URL, hide_parameters=True)
+    """Recreate the dedicated test DB, then prove a clean Alembic upgrade succeeds."""
+    database_name = make_url(TEST_MIGRATION_DATABASE_URL).database
+    if database_name is None:
+        raise RuntimeError("The dedicated test database URL must name a database.")
+    admin_url = make_url(TEST_ADMIN_DATABASE_URL).set(database="postgres")
+    admin_engine = create_engine(
+        admin_url,
+        isolation_level="AUTOCOMMIT",
+        hide_parameters=True,
+    )
+    target_admin_engine = None
+    migration_engine = None
     try:
+        quoted_database_name = admin_engine.dialect.identifier_preparer.quote(database_name)
         with admin_engine.connect() as connection:
-            version_table = connection.scalar(text("SELECT to_regclass('public.alembic_version')"))
-        if version_table is not None:
-            config = Config(str(ROOT / "alembic.ini"))
-            config.set_main_option("sqlalchemy.url", TEST_MIGRATION_DATABASE_URL.replace("%", "%%"))
-            command.downgrade(config, "base")
+            connection.exec_driver_sql(
+                f"DROP DATABASE IF EXISTS {quoted_database_name} WITH (FORCE)"
+            )
+            connection.exec_driver_sql(f"CREATE DATABASE {quoted_database_name} OWNER bf_migrator")
 
+        target_admin_engine = create_engine(TEST_ADMIN_DATABASE_URL, hide_parameters=True)
+        with target_admin_engine.begin() as connection:
+            connection.exec_driver_sql(f"REVOKE ALL ON DATABASE {quoted_database_name} FROM PUBLIC")
+            connection.exec_driver_sql(
+                f"GRANT CONNECT ON DATABASE {quoted_database_name} TO bf_runtime, bf_migrator"
+            )
+            connection.exec_driver_sql("REVOKE ALL ON SCHEMA public FROM PUBLIC")
+            connection.exec_driver_sql("ALTER SCHEMA public OWNER TO bf_migrator")
+            connection.exec_driver_sql("GRANT USAGE ON SCHEMA public TO bf_runtime")
+            connection.exec_driver_sql("REVOKE CREATE ON SCHEMA public FROM bf_runtime")
+
+        migration_engine = create_engine(TEST_MIGRATION_DATABASE_URL, hide_parameters=True)
         config = Config(str(ROOT / "alembic.ini"))
         config.set_main_option("sqlalchemy.url", TEST_MIGRATION_DATABASE_URL.replace("%", "%%"))
         command.upgrade(config, "head")
         with migration_engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            assert revision == "0020_business_semantic_layer"
+            assert revision == "0022_bi_config_analysis"
     finally:
-        migration_engine.dispose()
+        if migration_engine is not None:
+            migration_engine.dispose()
+        if target_admin_engine is not None:
+            target_admin_engine.dispose()
         admin_engine.dispose()
 
 

@@ -469,7 +469,7 @@ def test_core_financial_transfer_migration_downgrade_is_safe(
 
     try:
         with pytest.raises(
-            Exception,
+            DBAPIError,
             match="cannot downgrade Core Financials while bank transfer evidence exists",
         ):
             command.downgrade(config, "0016_core_financials")
@@ -478,7 +478,7 @@ def test_core_financial_transfer_migration_downgrade_is_safe(
 
     with admin_engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0020_business_semantic_layer"
+            "0022_bi_config_analysis"
         )
         assert (
             connection.scalar(

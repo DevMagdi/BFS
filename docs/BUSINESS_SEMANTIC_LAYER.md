@@ -1,8 +1,12 @@
 # Business Semantic Layer — identity and relationship foundation
 
-This document describes the first delivered Business Semantic Layer slice: Company-owned
-semantic identities, reviewed source mappings, and versioned explicit relationships. It is a
-foundation for governed metric and BI work, not a general-purpose analytics engine.
+This document describes the identity-and-relationship foundation of the Business Semantic Layer:
+Company-owned semantic identities, reviewed source mappings, and versioned explicit relationships.
+The separate Phase 3 Business Intelligence API builds on this foundation for versioned metric
+definitions, Company configuration, readiness, deterministic saved analyses, replay, and evidence
+references. See [`BUSINESS_INTELLIGENCE_PHASE3.md`](BUSINESS_INTELLIGENCE_PHASE3.md) for that
+increment's API, calculation, authorization, and verification boundaries. Neither slice is a
+general-purpose analytics engine or BI workspace.
 
 ## Scope and API
 
@@ -76,7 +80,9 @@ financial authority, establish completeness, imply accuracy, or prove causality.
 six-measure Financial Engine remains the only implementation of its supported financial
 calculations; this semantic slice does not change its scope or authority.
 
-This slice does not provide custom SQL, LLM-authored calculations, automatic identity resolution,
-unsupported entity types, inferred relationships, cross-source conflict resolution, metric
-readiness, saved BI analyses, or a BI workspace. Those capabilities require explicit later Phase 3
-tracks and must retain the evidence and readiness boundaries above.
+The identity-and-relationship slice itself does not provide custom SQL, LLM-authored calculations,
+automatic identity resolution, unsupported entity types, inferred relationships, or cross-source
+conflict resolution. The separate BI increment now provides the bounded metric/readiness/analysis
+capabilities described above, but not a BI workspace or those unsupported identity, query, and
+calculation behaviors. It must retain the evidence, authorization, and readiness boundaries in this
+foundation.

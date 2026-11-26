@@ -275,7 +275,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0020_business_semantic_layer"
+                "0022_bi_config_analysis"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -652,7 +652,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         os.environ["MIGRATION_DATABASE_URL"] = wrong_role_url
         try:
             with pytest.raises(
-                Exception,
+                DBAPIError,
                 match="migrations must run as the dedicated bf_migrator role",
             ):
                 command.downgrade(
@@ -662,7 +662,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
             os.environ["MIGRATION_DATABASE_URL"] = migration_url
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0020_business_semantic_layer"
+                "0022_bi_config_analysis"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -687,7 +687,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         os.environ["MIGRATION_DATABASE_URL"] = wrong_role_url
         try:
             with pytest.raises(
-                Exception,
+                DBAPIError,
                 match="migrations must run as the dedicated bf_migrator role",
             ):
                 command.upgrade(_config_for_database(wrong_role_url), "0014_disable_public_signup")
@@ -714,7 +714,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
             )
         try:
             with pytest.raises(
-                Exception,
+                DBAPIError,
                 match="bf_runtime must not be a member of other PostgreSQL roles",
             ):
                 command.upgrade(migration_config, "0014_disable_public_signup")
@@ -737,7 +737,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
             connection.exec_driver_sql("GRANT CREATE ON SCHEMA public TO bf_runtime")
             connection.exec_driver_sql("ALTER TABLE public.users OWNER TO bf_runtime")
         try:
-            with pytest.raises(Exception, match=r"bf_runtime must not own public\.users"):
+            with pytest.raises(DBAPIError, match=r"bf_runtime must not own public\.users"):
                 command.upgrade(migration_config, "0014_disable_public_signup")
             with migration_engine.connect() as connection:
                 assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
@@ -769,7 +769,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
             )
         try:
             with pytest.raises(
-                Exception,
+                DBAPIError,
                 match=r"bf_runtime has delegated INSERT grants on public\.users",
             ):
                 command.upgrade(migration_config, "0014_disable_public_signup")
@@ -830,7 +830,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         os.environ["MIGRATION_DATABASE_URL"] = wrong_role_url
         try:
             with pytest.raises(
-                Exception,
+                DBAPIError,
                 match="migrations must run as the dedicated bf_migrator role",
             ):
                 command.upgrade(_config_for_database(wrong_role_url), "head")
@@ -847,7 +847,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         os.environ["MIGRATION_DATABASE_URL"] = wrong_role_url
         try:
             with pytest.raises(
-                Exception,
+                DBAPIError,
                 match="migrations must run as the dedicated bf_migrator role",
             ):
                 command.downgrade(_config_for_database(wrong_role_url), "0013_direct_cash_forecast")
@@ -864,7 +864,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(migration_config, "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0020_business_semantic_layer"
+                "0022_bi_config_analysis"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -928,7 +928,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(migration_config, "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0020_business_semantic_layer"
+                "0022_bi_config_analysis"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -990,7 +990,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         os.environ["MIGRATION_DATABASE_URL"] = wrong_role_url
         try:
             with pytest.raises(
-                Exception,
+                DBAPIError,
                 match="migrations must run as the dedicated bf_migrator role",
             ):
                 command.upgrade(_config_for_database(wrong_role_url), "head")
@@ -1008,7 +1008,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0020_business_semantic_layer"
+                "0022_bi_config_analysis"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -1053,7 +1053,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         os.environ["MIGRATION_DATABASE_URL"] = failure_url
         try:
             with pytest.raises(
-                Exception,
+                DBAPIError,
                 match="migrations must run as the dedicated bf_migrator role",
             ):
                 command.upgrade(_config_for_database(failure_url), "head")
@@ -1082,7 +1082,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0020_business_semantic_layer"
+                "0022_bi_config_analysis"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -1163,7 +1163,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0020_business_semantic_layer"
+                "0022_bi_config_analysis"
             )
             _assert_runtime_user_privileges(
                 connection,

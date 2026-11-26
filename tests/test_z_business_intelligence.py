@@ -127,6 +127,7 @@ def _register_and_promote_sales_source(
                 "amount": "amount",
                 "status": "status",
             },
+            "field_options": {"amount": {"decimal_separator": "."}},
             "ignored_columns": [],
         },
         headers=owner_headers,

@@ -108,18 +108,19 @@ runs, and exact saved dependency analyses; they do not copy full run payloads in
 
 ## Verification boundary
 
-Local verification (2026-11-21): the database-independent suite passes (**227 passed** with
+Local verification (2026-11-21): the database-independent suite passes (**228 passed** with
 `pytest --noconftest -q tests/unit`); Ruff lint passes and format check reports **228 files** already
 formatted; mypy reports no issues in **150 source files**; Python compileall and `git diff --check`
-pass. The full suite collects (**383 tests**) using syntactically valid placeholder PostgreSQL URLs;
+pass. The full suite collects (**384 tests**) using syntactically valid placeholder PostgreSQL URLs;
 collection is not execution. The Business Intelligence OpenAPI surface registers **12 paths / 15
 operations**. Offline `alembic upgrade head --sql` renders through
 `0022_bi_config_analysis` (**5,446 lines**), which checks migration
 generation only. This workspace has no configured PostgreSQL test URLs or local PostgreSQL server,
-so a live migration, database/API integration suite, RLS/grant/trigger checks, and schema-drift check
-must run in the required PostgreSQL 18.7 candidate CI. `.github/workflows/backend.yml` runs for
-pull requests targeting `main` and pushes to `main` or `arena/**`, providing a pre-PR candidate path
-without opening a PR. No candidate run exists yet; the reviewed candidate must be pushed to this
-branch, and `alembic upgrade head`, `alembic check`, and full `pytest` must pass before any PR is
-opened. No candidate commit, PR, or merge is present at this verification point. Software checks do
-not approve source authority, finance policy, production use, or customer-data authorization.
+so live migration, database/API integration, RLS/grant/trigger, and schema-drift checks must run in the
+required PostgreSQL 18.7 candidate CI. The first pushed candidate (run **45878630379**) passed
+formatting/lint, mypy, schema upgrade, and drift checks but failed five BI integration tests. Review
+identified nullable formula JSONB fields being encoded as JSON `null` and a test mapping that omitted
+its required decimal separator; both are corrected and regression-covered where possible. A new
+PostgreSQL 18.7 candidate run is required and remains pending; `alembic upgrade head`, `alembic check`,
+and full `pytest` must pass before any PR is opened. No PR or merge is present. Software checks do not
+approve source authority, finance policy, production use, or customer-data authorization.

@@ -17,6 +17,7 @@ from businessflow.business_intelligence.analysis_service import (
     _system_metric_reference_for_calculation,
 )
 from businessflow.business_intelligence.engine import calculate_saved_analysis
+from businessflow.business_intelligence.models import BusinessMetricDefinitionVersion
 from businessflow.business_intelligence.registry import (
     SYSTEM_METRIC_BY_KEY,
     system_metric_definition_hash,
@@ -32,6 +33,13 @@ from businessflow.business_intelligence.schemas import (
     MetricReadinessCheck,
 )
 from businessflow.errors import ApiError
+
+
+def test_optional_metric_formula_jsonb_fields_use_sql_null() -> None:
+    for column_name in ("formula", "numerator", "denominator"):
+        column = BusinessMetricDefinitionVersion.__table__.c[column_name]
+        assert column.nullable
+        assert column.type.none_as_null is True
 
 
 def _record(

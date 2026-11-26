@@ -479,7 +479,8 @@ def upgrade() -> None:
               RAISE EXCEPTION 'submission attribution is invalid'
                 USING ERRCODE = '23514', CONSTRAINT = 'manual_customer_commitment_submission_guard';
             END IF;
-          ELSIF NEW.status IN ('accepted', 'rejected', 'changes_requested') THEN
+          ELSIF NEW.status IN ('accepted', 'rejected')
+             OR (NEW.status = 'changes_requested' AND OLD.status = 'submitted') THEN
             IF OLD.status <> 'submitted'
                OR NEW.reviewed_by_user_id IS DISTINCT FROM actor_id
                OR NEW.reviewed_at IS NULL

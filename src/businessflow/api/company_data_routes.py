@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from businessflow.api.dependencies import get_current_user, get_session
 from businessflow.company_data.schemas import (
     CompanyDataContractListResponse,
+    CompanyDataCoverageResponse,
     CompanyDataIngestionCreateRequest,
     CompanyDataIngestionListResponse,
     CompanyDataIngestionResponse,
@@ -20,6 +21,7 @@ from businessflow.company_data.schemas import (
 from businessflow.company_data.service import (
     create_ingestion,
     create_source,
+    get_company_data_coverage,
     get_ingestion,
     get_source,
     list_contracts,
@@ -41,6 +43,15 @@ def get_company_data_contracts(
     session: Session = Depends(get_session),
 ) -> CompanyDataContractListResponse:
     return list_contracts(session, user, tenant_id)
+
+
+@router.get("/coverage", response_model=CompanyDataCoverageResponse)
+def read_company_data_coverage(
+    tenant_id: UUID,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> CompanyDataCoverageResponse:
+    return get_company_data_coverage(session, user, tenant_id)
 
 
 @router.post("/sources", response_model=CompanyDataSourceSummary, status_code=201)

@@ -29,6 +29,51 @@ class CompanyDataContractListResponse(StrictModel):
     items: list[CompanyDataContractResponse]
 
 
+class CompanyDataContractVersionSummary(StrictModel):
+    contract_key: str
+    version: str
+    definition_hash: str
+
+
+class CompanyDataCoverageIngestionCounts(StrictModel):
+    succeeded: int = 0
+    succeeded_with_warnings: int = 0
+    blocked: int = 0
+
+
+class CompanyDataCoverageQualityCounts(StrictModel):
+    passed: int = 0
+    warning: int = 0
+    failed: int = 0
+
+
+class CompanyDataCoverageFreshnessCounts(StrictModel):
+    fresh: int = 0
+    stale: int = 0
+    policy_missing: int = 0
+    source_as_of_missing: int = 0
+    future_as_of: int = 0
+
+
+class CompanyDataDatasetCoverage(StrictModel):
+    dataset_type: ImportDataset
+    contract_versions: list[CompanyDataContractVersionSummary]
+    registered_source_count: int = Field(ge=0)
+    sources_without_ingestion_count: int = Field(ge=0)
+    latest_ingestion_counts: CompanyDataCoverageIngestionCounts
+    latest_quality_counts: CompanyDataCoverageQualityCounts
+    current_freshness_counts: CompanyDataCoverageFreshnessCounts
+    latest_ingestion_at: datetime | None
+
+
+class CompanyDataCoverageResponse(StrictModel):
+    tenant_id: UUID
+    company_id: UUID
+    evaluated_at: datetime
+    note: str
+    datasets: list[CompanyDataDatasetCoverage]
+
+
 class CompanyDataSourceCreateRequest(StrictModel):
     source_key: Annotated[
         str, StringConstraints(min_length=2, max_length=64, pattern=r"^[a-z0-9][a-z0-9._-]{1,63}$")

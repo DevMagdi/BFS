@@ -1,17 +1,23 @@
 # BusinessFlow — Product Vision
 
-- **Status:** M9 strategic direction for owner review. This is an evidence-based product hypothesis, not customer validation, an approved Product Baseline, a committed MVP, or implementation authorization.
+- **Status:** Owner-directed product direction for execution. It is not customer validation, proof of market demand, or a claim that the whole platform is shipped; domain-specific data and finance-policy gates still apply.
 - **Evidence boundary:** The current implementation is described in [`../BACKEND_IMPLEMENTATION.md`](../BACKEND_IMPLEMENTATION.md); the code-based assessment is in [`../architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md`](../architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md). Future capabilities in this vision are not shipped capabilities.
 
 ## Vision
 
 **Help each company make better-informed, human-owned decisions by bringing its selected business facts, deterministic analysis, and reviewable evidence together across the domains it chooses to use.**
 
-BusinessFlow is intended to become a company-wide Business Intelligence & Decision Platform: a governed way to understand what the company’s available information supports, identify important gaps or changes, compare explicitly defined choices, and record how an authorized person decided. “Company-wide” describes the potential reach across relevant company domains; it does **not** mean every domain is mandatory, every company uses the same organization chart, or the first release must cover the whole enterprise.
+BusinessFlow is intended to become an integrated company-wide Business Intelligence, Financial Intelligence, Operational Intelligence, and Decision Intelligence platform: a governed way to understand what available information supports, identify gaps or changes, analyze explicit choices, and record how an authorized person decided. “Company-wide” does not mean every domain is mandatory, every company uses the same organization chart, or the first release covers the whole enterprise.
 
-The product direction is a hypothesis about a useful category and workflow. The repository and prior project-feasibility documents do not establish that customers need this broader product, which domain should come first, or that a single universal KPI or decision model is appropriate.
+The owner-directed strategy is not yet validated with customers. The repository does not establish adoption, willingness to pay, or the most valuable first domain question; a universal KPI or decision model is neither evidenced nor required.
 
-Projects and project feasibility are one bounded domain in the current implementation, not the product boundary. The company-wide direction is to add selected business domains incrementally and compose only relevant, governed evidence for a specific company question.
+BusinessFlow must be able to start from different data realities:
+
+- **Fragmented systems:** later governed source integrations should connect selected ERP, CRM, accounting, HR, and operations evidence; no live connector is currently implemented.
+- **Excel/document-led processes:** make mapping, validation, source identity, quality, and lineage explicit. Current M4 supports six workforce/project CSV/XLSX datasets only; it is not document extraction or general import.
+- **No established systems:** offer a small structured capture flow for the selected use case, not a replacement ERP. That guided foundation is a target, not current functionality.
+
+Poor or missing evidence is an onboarding and data-improvement need, not a reason to reject a business or invent defaults. Projects and project feasibility are one bounded current domain, not the product boundary.
 
 ## Product problem hypothesis
 
@@ -53,7 +59,7 @@ This approved principle applies to every current or future BusinessFlow AI respo
 5. **Honest about insufficient data:** abstain from confident conclusions when evidence is incomplete or unreliable.
 6. **Reproducible:** important assessments and decisions preserve the relevant input, calculation, policy, and evidence versions.
 
-This is a product requirement, not an implemented AI feature. The implemented M2–M8 slices provide bounded provenance, deterministic calculations, authorization, and immutable snapshots in specific workflows, but no AI runtime or permission-aware AI retrieval is implemented.
+This is a product requirement, not an implemented AI feature. Existing M2–M8, M10–M16, and Core Financials slices provide bounded evidence and deterministic patterns in specific workflows, but no AI runtime or permission-aware AI retrieval is implemented.
 
 ## Product principles
 
@@ -66,6 +72,8 @@ This is a product requirement, not an implemented AI feature. The implemented M2
 - **Security is architectural.** Preserve tenant isolation, company scope, backend authorization, PostgreSQL forced RLS, least-privilege runtime/migrator roles, and append-only evidence/history as the system grows.
 - **Deployable where customers control their data.** Retain the self-hosted/on-prem-first and cloud-portable direction. Do not make a managed-cloud service, external model, or third-party analytics engine a prerequisite for the core.
 - **Local/on-prem AI is a target requirement.** If an AI capability is separately approved, it must be supportable with customer-controlled local/on-prem inference; it must not require sending company data to an external model. This is a target, not a current capability. No LLM, inference runtime, provider, or vector store is selected or implemented.
+- **AI is an interface/reasoning layer, not the product or authority.** The product is governed data intake, deterministic analysis, and reviewable decision workflows—not a generic chatbot or AI-generated dashboard. AI may explain authorized evidence but cannot supply facts, authoritative calculations, financial policy, approval, or execution.
+- **Repeatable software, not consulting-only.** Onboarding expertise can help configure a Company, but durable value should come from reusable product workflows rather than bespoke analysis as the sole offering.
 - **Small vertical slices before abstractions.** Prefer a domain-owned, end-to-end slice over a giant generic schema, universal KPI catalog, or general-purpose workflow engine.
 
 ## Scope boundary: direction versus current implementation
@@ -74,18 +82,18 @@ This is a product requirement, not an implemented AI feature. The implemented M2
 |---|---|---|
 | Tenant and company | Tenant/company are distinct; the database enforces one company per tenant. | Preserve that working boundary until an approved use case requires a different cardinality. Company-wide reporting does not itself require multi-company consolidation. |
 | Business domains | Organization/workforce and project intake/decision workflows are implemented in bounded slices. Projects are one supported domain, not the product boundary. | Add other company domains only when selected and governed; no domain is universal. |
-| Data intake | Staged CSV/XLSX import supports six workforce/project dataset types with explicit mapping, validation, confirmation, and source-row links. | Expand source coverage through domain-specific contracts; a general connector/source registry is not present. |
+| Data intake | Staged CSV/XLSX import supports six workforce/project dataset types; M12 registers source/evidence metadata for applied imports. | Provide small selected-purpose manual capture for companies without systems, domain file contracts for spreadsheets, and later governed connectors. M12 is not a general integration framework. |
 | Analytics | M5 contains five non-financial, observational capacity/assignment/skill metrics, labelled `implementation_draft` and `observational_only_no_recommendation`. | Governed, domain-owned metrics and cross-domain decision evidence are future work. No broad BI workbench is present. |
 | Decisions | M6–M7 record a project-intake capacity assessment and human-controlled, evidence-bound approval flow. | A reusable lifecycle for other typed decision subjects is a target pattern, not current functionality. |
 | Finance | M8 stores project-scoped financial observations and emits an immutable assessment that remains `incomplete`; no financial policy or metric is approved in code. | Optional **company-wide Financial Intelligence** across the selected Company requires finance-owner definitions, data contracts, access controls, and policy approval; it is not limited to project feasibility. |
-| User interface | No product frontend or dashboard is present in the reviewed backend. | A usable read-only decision experience is a later product choice; this assessment does not authorize a UI implementation. |
-| AI-assisted answers | No AI runtime, model provider, or permission-aware retrieval is implemented. The M2–M8 slices provide only bounded evidence, authorization, and reproducibility patterns. | Apply Evidence Before Answers to every future response; retrieve only authorized evidence, expose provenance/calculation lineage and limitations, abstain when evidence is insufficient, and support local/on-prem inference. No specific model or runtime is approved. |
+| User interface | Narrow static workflows exist for synthetic M10 review, M4–M7 capacity decisions (PR #26), and default-disabled Core Financials. The Company Data Foundation page is in progress on this branch. | Connect task-oriented data-quality, domain-analysis, financial/operational intelligence, and decision workflows; do not assume one all-purpose dashboard. |
+| AI-assisted answers | No AI runtime, model provider, or permission-aware retrieval is implemented. Existing slices provide bounded evidence and authorization patterns, not AI guarantees. | Apply Evidence Before Answers to every future response; retrieve only authorized evidence, expose provenance/calculation lineage and limitations, abstain when evidence is insufficient, and support local/on-prem inference. No specific model or runtime is approved. |
 
 Detailed code and schema evidence is in [`../architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md`](../architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md); proposed module boundaries are in [`../architecture/TARGET_DOMAIN_ARCHITECTURE.md`](../architecture/TARGET_DOMAIN_ARCHITECTURE.md); finance-specific governance is in [`../architecture/FINANCIAL_INTELLIGENCE_ARCHITECTURE.md`](../architecture/FINANCIAL_INTELLIGENCE_ARCHITECTURE.md).
 
 ## Product validation and success evidence
 
-No numeric product, customer, financial, or operational success threshold is set here. Before treating this direction as a Product Baseline, the owner should decide which customer segment and repeated decision to investigate, who owns the domain definitions and source systems, and what observable evidence would show that the workflow is more useful and trustworthy than the customer’s existing tools and processes. The current founder-authorized discovery memo is specific to the earlier project-acceptance hypothesis; this M9 assessment does not expand its outreach or data-handling authorization.
+No numeric success threshold or customer validation is claimed. The next domain slice still needs an accountable source/domain owner, security/retention decisions, and evidence that the workflow improves a real recurring decision. The existing founder discovery authorization remains limited to the earlier project-acceptance hypothesis; this direction does not expand outreach or customer-data access.
 
 Product validation should test real recent decisions and incumbent processes, not feature enthusiasm alone. No customer interview results, pilot, product trial, or willingness-to-pay evidence is claimed by this repository review.
 

@@ -1,10 +1,10 @@
 # BusinessFlow
 
-**M9 product direction under assessment:** a company-wide Business Intelligence & Decision Platform.
+**BusinessFlow direction:** an evidence-driven Business Intelligence, Financial Intelligence, Operational Intelligence, and Decision Intelligence platform.
 
-BusinessFlow is intended to help a company use selected, governed business facts and deterministic analyses to support reviewable human decisions across the domains it chooses to enable. Projects are one currently supported business domain, not the product boundary. This is a proposed product direction—not a validated market position, approved Product Baseline, or description of capabilities already shipped.
+BusinessFlow should help companies turn governed evidence into deterministic analysis and human-owned decisions across the domains they choose. It must work toward serving companies with fragmented systems, spreadsheets, disconnected systems, or no established systems—without replacing their ERP/accounting systems or inventing data. Projects are one current domain, not the product boundary. This owner-directed strategy is not proof of market demand or a claim that the full platform is shipped.
 
-The approved foundational trust principle is **Evidence Before Answers — No evidence, no confident answer**. Any future AI response must be evidence-grounded, traceable, transparent, permission-aware, honest about insufficient evidence, and reproducible for important assessments/decisions. Local/on-prem inference is a target requirement for any separately approved AI capability; no AI runtime or model is implemented or selected. See [`docs/AI_GOVERNANCE.md`](docs/AI_GOVERNANCE.md).
+The trust principle is **Evidence Before Answers — No evidence, no confident answer**. AI is an evidence-grounded interface/reasoning layer, not the product authority, generic chatbot, calculator, policy author, or approver. Any future response must be traceable, transparent, permission-aware, honest about insufficient evidence, and reproducible for important assessments/decisions. Local/on-prem inference is a target requirement; no AI runtime or model is implemented or selected. See [`docs/AI_GOVERNANCE.md`](docs/AI_GOVERNANCE.md).
 
 ## Current implementation status
 
@@ -20,11 +20,11 @@ M14 adds one manual, finance-specific CSV intake with a versioned semantic-light
 
 M15 is a conditional engineering prototype, default-disabled by `FINANCIAL_CALCULATIONS_ENABLED=false`, hard-blocked in production, and dependent on M14 being enabled. It exposes only the exact mechanical subtotal of one complete M14 reconciliation group using M11 Decimal arithmetic and replay. M16 adds a separate fixed 13-week, default-disabled, production-blocked known-item cash roll-forward with explicit opening balance and caller-asserted flow types, dates, actual/forecast basis, and supersession. M14 does not authenticate those cash semantics or timing; absent categories remain unknown, never zero-filled. The M16 output is not a complete/accurate or source-authoritative forecast, and the feature flags do not authorize customer or production accounting data. See [`docs/M15_DETERMINISTIC_FINANCIAL_CALCULATIONS.md`](docs/M15_DETERMINISTIC_FINANCIAL_CALCULATIONS.md) and [`docs/M16_DIRECT_CASH_FORECAST.md`](docs/M16_DIRECT_CASH_FORECAST.md).
 
-BusinessFlow is **not yet** a company-wide BI platform: broad company-domain coverage, a general KPI/analytics layer, approved financial calculations or policies, reusable non-project decision subjects, a general-purpose frontend, live connectors, and external actions are not implemented. M8 is not a company-wide finance engine; M10 does not change that boundary, and M14 does not satisfy the unresolved finance governance gates. Neither M15 nor M16 approves financial policy or closes those gates. The exact current behavior, schema paths, and tests are in [`docs/BACKEND_IMPLEMENTATION.md`](docs/BACKEND_IMPLEMENTATION.md).
+BusinessFlow is **not yet** an integrated company-wide intelligence platform. Broad domain coverage, cross-domain analytics, approved financial calculations or policies, reusable non-project decisions, live connectors, and external actions are not implemented. Narrow static workflows exist for synthetic M10 review, capacity decisions (PR #26), and default-disabled Core Financials; these are separate flows, not a unified BI workspace. M8 is not company-wide finance; M14–M16 do not resolve finance-governance gates. This branch adds the Company Data Foundation coverage API and source-evidence UI over existing M4/M12 data, without a connector or migration. See [`docs/BACKEND_IMPLEMENTATION.md`](docs/BACKEND_IMPLEMENTATION.md) and [`docs/architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md`](docs/architecture/CURRENT_VS_TARGET_GAP_ANALYSIS.md).
 
-## M9 product and architecture assessment
+## Product direction and architecture
 
-Start with these documentation-only assessment deliverables:
+Current product and architecture references (the original M9 review is historical):
 
 1. [Product vision](docs/product/PRODUCT_VISION.md)
 2. [Target domain architecture](docs/architecture/TARGET_DOMAIN_ARCHITECTURE.md)
@@ -32,7 +32,7 @@ Start with these documentation-only assessment deliverables:
 4. [Financial intelligence architecture](docs/architecture/FINANCIAL_INTELLIGENCE_ARCHITECTURE.md)
 5. [Product roadmap proposal](docs/roadmap/PRODUCT_ROADMAP.md)
 
-M9 itself changed documentation only and did not authorize a general implementation milestone. M10, M12, M13 and M14 are later, separately scoped implementation slices: M10 remains synthetic-only; M12 registers existing M4 imports with versioned contracts and evidence but does not add connectors; M13 adds bounded descriptive M5 comparisons; M14 adds only manual, source-asserted finance intake and reconciliation evidence. The M15 subtotal and M16 direct-cash schedule are separate conditional engineering prototypes, not milestone approval. M14–M16 do not approve production deployment, customer-data processing, a finance source, accounting policy, correction/retention rules, or any business interpretation. See the M10/M12/M13/M14/M15/M16 guides and the M9 gap analysis for their distinct scopes.
+M9 was documentation-only. PR #26 added a cross-cutting capacity workspace; the Company Data Foundation work here is a separate unnumbered increment over existing M4/M12 evidence. Historical M17–M25 numbering and proposal status remain intact; no M26 or migration is introduced. The M14–M16 finance limits above remain in force.
 
 ## Earlier project-feasibility hypothesis (historical)
 

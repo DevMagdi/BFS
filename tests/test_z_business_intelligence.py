@@ -353,6 +353,7 @@ def test_bi_registry_analysis_replay_evidence_and_exact_formula_dependencies(
     )
     assert configuration.status_code == 201, configuration.text
     assert configuration.json()["version"] == 1
+    configuration_id = configuration.json()["id"]
     current_configuration = client.get(f"{base}/configuration", headers=owner_headers)
     configuration_history = client.get(f"{base}/configurations", headers=owner_headers)
     assert current_configuration.status_code == configuration_history.status_code == 200
@@ -619,7 +620,7 @@ def test_bi_registry_analysis_replay_evidence_and_exact_formula_dependencies(
                 "UPDATE business_company_semantic_config_versions "
                 "SET configuration_hash = :hash WHERE id = :configuration_id"
             ),
-            {"hash": "f" * 64, "configuration_id": configuration["id"]},
+            {"hash": "f" * 64, "configuration_id": configuration_id},
         )
 
     with pytest.raises(DBAPIError), migration_engine.begin() as connection:
@@ -640,7 +641,7 @@ def test_bi_registry_analysis_replay_evidence_and_exact_formula_dependencies(
                 "DELETE FROM business_company_semantic_source_precedence "
                 "WHERE configuration_version_id = :configuration_id AND source_id = :source_id"
             ),
-            {"configuration_id": configuration["id"], "source_id": source_id},
+            {"configuration_id": configuration_id, "source_id": source_id},
         )
 
     with pytest.raises(DBAPIError), migration_engine.begin() as connection:

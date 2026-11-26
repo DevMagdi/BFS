@@ -120,7 +120,9 @@ so live migration, database/API integration, RLS/grant/trigger, and schema-drift
 required PostgreSQL 18.7 candidate CI. The first pushed candidate (run **45878630379**) passed
 formatting/lint, mypy, schema upgrade, and drift checks but failed five BI integration tests. Review
 identified nullable formula JSONB fields being encoded as JSON `null` and a test mapping that omitted
-its required decimal separator; both are corrected and regression-covered where possible. A new
-PostgreSQL 18.7 candidate run is required and remains pending; `alembic upgrade head`, `alembic check`,
-and full `pytest` must pass before any PR is opened. No PR or merge is present. Software checks do not
-approve source authority, finance policy, production use, or customer-data authorization.
+its required decimal separator; both are corrected and regression-covered where possible. The second
+candidate (run **45879422697**) passed formatting/lint, mypy, schema upgrade, and drift checks; its full
+suite exposed one BI test-harness bug that indexed a FastAPI response as a dictionary. That test is
+corrected; a final PostgreSQL 18.7 candidate run is still required. `alembic upgrade head`, `alembic
+check`, and full `pytest` must pass before any PR is opened. No PR or merge is present. Software checks
+do not approve source authority, finance policy, production use, or customer-data authorization.

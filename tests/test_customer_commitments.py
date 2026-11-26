@@ -397,7 +397,7 @@ def test_manual_customer_commitment_lifecycle_correction_evidence_history_and_co
         )
         session.execute(
             text("SELECT set_config('app.user_id', :id, true)"),
-            {"id": owner["user_id"]},
+            {"id": owner_user_id},
         )
         session.execute(
             text(

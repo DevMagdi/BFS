@@ -22,6 +22,7 @@ CompanyDataDatasetType = Literal[
     "projects",
     "resource_assignments",
     "customer_commitments",
+    "universal_records",
 ]
 
 

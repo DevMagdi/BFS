@@ -57,6 +57,31 @@ def test_csv_parsing_accepts_utf8_bom_unicode_quoted_fields_and_ignores_blank_ro
     assert parsed.worksheets[0].blank_rows_ignored == 1
 
 
+def test_csv_parser_options_use_explicit_delimiter_encoding_and_header_row() -> None:
+    content = "export for review\ncustomer_code;name\nCUS-1;Café Ltd\n".encode("cp1252")
+    parsed = parse_file(
+        "customers.csv",
+        content,
+        max_rows=10,
+        csv_delimiter=";",
+        csv_encoding="cp1252",
+        header_row=2,
+    )
+
+    assert parsed.worksheets[0].headers == ["customer_code", "name"]
+    assert parsed.worksheets[0].rows[0].row_number == 3
+    assert parsed.worksheets[0].rows[0].values == ["CUS-1", "Café Ltd"]
+
+    utf16 = parse_file(
+        "customers.csv",
+        "customer_code|name\nCUS-2|Second\n".encode("utf-16"),
+        max_rows=10,
+        csv_delimiter="|",
+        csv_encoding="utf-16",
+    )
+    assert utf16.worksheets[0].rows[0].values == ["CUS-2", "Second"]
+
+
 def test_csv_formula_like_values_remain_inert_text() -> None:
     parsed = parse_file("formula.csv", b'name\n=HYPERLINK("https://invalid")\n', max_rows=1)
     assert parsed.worksheets[0].rows[0].values == ['=HYPERLINK("https://invalid")']
@@ -64,7 +89,7 @@ def test_csv_formula_like_values_remain_inert_text() -> None:
 
 def test_csv_rejects_invalid_encoding_duplicate_normalized_headers_and_extra_cells() -> None:
     cases = [
-        (b"name\n\xff", "CSV files must be valid UTF-8"),
+        (b"name\n\xff", "does not match the selected text encoding"),
         (b"Employee Code,employee_code\nA,B\n", "Column headers must be unique"),
         (b"name\nAlice,extra\n", "contains values beyond the header columns"),
     ]

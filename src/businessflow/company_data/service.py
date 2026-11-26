@@ -67,6 +67,7 @@ def _source_query(session: Session, tenant_id: UUID, company_id: UUID, source_id
             CompanyDataSource.id == source_id,
             CompanyDataSource.tenant_id == tenant_id,
             CompanyDataSource.company_id == company_id,
+            CompanyDataSource.dataset_type != "universal_records",
         )
     )
 
@@ -297,6 +298,7 @@ def list_sources(
     filters = (
         CompanyDataSource.tenant_id == tenant_id,
         CompanyDataSource.company_id == access.company.id,
+        CompanyDataSource.dataset_type != "universal_records",
     )
     total = session.scalar(select(func.count()).select_from(CompanyDataSource).where(*filters)) or 0
     sources = list(
@@ -510,6 +512,12 @@ def create_source(
             "manual_customer_commitment_source_managed",
             "The manual customer-commitment source is registered by the guided workflow.",
         )
+    if body.dataset_type == "universal_records":
+        raise ApiError(
+            409,
+            "universal_source_workflow_required",
+            "Register Universal Data sources through the governed Universal Data workflow.",
+        )
     contract = session.scalar(
         select(CompanyDataContract).where(
             CompanyDataContract.dataset_type == body.dataset_type,
@@ -658,6 +666,12 @@ def create_ingestion(
     if source is None:
         raise ApiError(
             404, "company_data_source_not_found", "The company data source was not found."
+        )
+    if source.dataset_type == "universal_records":
+        raise ApiError(
+            409,
+            "universal_source_workflow_required",
+            "Universal Data sources use the governed Universal Data ingestion workflow.",
         )
     if source.dataset_type not in DATASETS:
         raise ApiError(

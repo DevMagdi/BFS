@@ -457,7 +457,7 @@ def test_manual_customer_commitment_lifecycle_correction_evidence_history_and_co
         command.downgrade(config, "0017_core_financial_transfers")
     with admin_engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0018_customer_commitments"
+            "0019_universal_data_foundation"
         )
 
 

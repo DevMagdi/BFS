@@ -32,6 +32,7 @@ from businessflow.api.position_review_routes import router as position_review_ro
 from businessflow.api.project_assessment_routes import router as project_assessment_router
 from businessflow.api.project_decision_routes import router as project_decision_router
 from businessflow.api.tenant_routes import router as tenant_router
+from businessflow.api.universal_data_routes import router as universal_data_router
 from businessflow.config import Settings, get_settings
 from businessflow.database import create_database_engine, make_session_factory
 from businessflow.errors import ApiError
@@ -159,6 +160,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(tenant_router, prefix="/api/v1")
     application.include_router(company_context_router, prefix="/api/v1")
     application.include_router(company_data_router, prefix="/api/v1")
+    application.include_router(universal_data_router, prefix="/api/v1")
     application.include_router(customer_commitment_router, prefix="/api/v1")
     application.include_router(core_financial_router, prefix="/api/v1")
     application.include_router(data_import_router, prefix="/api/v1")

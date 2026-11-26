@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     import_staging_ttl_hours: int = Field(
         default=24, ge=1, le=168, validation_alias="IMPORT_STAGING_TTL_HOURS"
     )
+    universal_local_connector_root: str | None = Field(
+        default=None, validation_alias="UNIVERSAL_LOCAL_CONNECTOR_ROOT"
+    )
 
     @field_validator("app_secret_key")
     @classmethod

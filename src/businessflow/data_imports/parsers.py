@@ -130,26 +130,51 @@ def _normalize_csv_record(values: list[str], width: int, row_number: int) -> lis
     return normalized
 
 
-def _parse_csv(content: bytes, max_rows: int) -> ParsedFile:
+def _parse_csv(
+    content: bytes,
+    max_rows: int,
+    *,
+    delimiter: str = ",",
+    encoding: str = "utf-8-sig",
+    header_row: int = 1,
+) -> ParsedFile:
+    if delimiter not in {",", ";", chr(9), "|"} or len(delimiter) != 1:
+        raise ImportFileError(
+            422, "invalid_csv_options", "Choose comma, semicolon, tab, or pipe as the delimiter."
+        )
+    if encoding not in {"utf-8-sig", "utf-16", "cp1252"}:
+        raise ImportFileError(
+            422,
+            "invalid_csv_options",
+            "Choose UTF-8, UTF-16, or Windows-1252 encoding explicitly.",
+        )
+    if not 1 <= header_row <= 25:
+        raise ImportFileError(
+            422, "invalid_csv_options", "The header row must be between 1 and 25."
+        )
     try:
-        text = content.decode("utf-8-sig", errors="strict")
-    except UnicodeDecodeError:
+        text = content.decode(encoding, errors="strict")
+    except (UnicodeDecodeError, LookupError):
         raise ImportFileError(
             422,
             "malformed_file",
-            "CSV files must be valid UTF-8 (an optional UTF-8 BOM is allowed).",
+            "The CSV file does not match the selected text encoding.",
         ) from None
     if "\x00" in text:
         raise ImportFileError(422, "malformed_file", "CSV files may not contain NUL characters.")
     try:
-        reader = csv.reader(io.StringIO(text, newline=""), strict=True)
-        raw_headers = next(reader, None)
+        reader = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter, strict=True)
+        raw_headers: list[str] | None = None
+        for _ in range(header_row):
+            raw_headers = next(reader, None)
+            if raw_headers is None:
+                break
         if raw_headers is None:
-            raise ImportFileError(422, "malformed_file", "The CSV file is empty.")
+            raise ImportFileError(422, "malformed_file", "The selected header row is not present.")
         headers = _validate_headers(raw_headers)
         rows: list[ParsedRow] = []
         blank_rows = 0
-        for record_number, values in enumerate(reader, start=2):
+        for record_number, values in enumerate(reader, start=header_row + 1):
             normalized = _normalize_csv_record(values, len(headers), record_number)
             if not normalized:
                 blank_rows += 1
@@ -163,7 +188,7 @@ def _parse_csv(content: bytes, max_rows: int) -> ParsedFile:
                 )
     except ImportFileError:
         raise
-    except (csv.Error, StopIteration):
+    except csv.Error:
         raise ImportFileError(422, "malformed_file", "The CSV file is malformed.") from None
     return ParsedFile(
         file_format="csv",
@@ -260,7 +285,11 @@ def _check_xlsx_archive(content: bytes) -> None:
         ) from None
 
 
-def _parse_xlsx(content: bytes, max_rows: int) -> ParsedFile:
+def _parse_xlsx(content: bytes, max_rows: int, *, header_row: int = 1) -> ParsedFile:
+    if not 1 <= header_row <= 25:
+        raise ImportFileError(
+            422, "invalid_csv_options", "The header row must be between 1 and 25."
+        )
     _check_xlsx_archive(content)
     if not DEFUSEDXML:
         raise ImportFileError(
@@ -307,7 +336,7 @@ def _parse_xlsx(content: bytes, max_rows: int) -> ParsedFile:
                     "too_many_columns",
                     f"A worksheet may not contain more than {MAX_COLUMNS} columns.",
                 )
-            if worksheet.max_row is not None and worksheet.max_row > max_rows + 1:
+            if worksheet.max_row is not None and worksheet.max_row > max_rows + header_row:
                 raise ImportFileError(
                     413,
                     "too_many_rows",
@@ -316,14 +345,18 @@ def _parse_xlsx(content: bytes, max_rows: int) -> ParsedFile:
             iterator = worksheet.iter_rows()
             try:
                 header_cells = next(iterator)
+                for _ in range(1, header_row):
+                    header_cells = next(iterator)
             except StopIteration:
                 raise ImportFileError(
-                    422, "malformed_file", "Every worksheet must begin with a header row."
+                    422,
+                    "malformed_file",
+                    "The selected header row is not present in every worksheet.",
                 ) from None
             headers = _validate_headers([_cell_text(cell.value, cell) for cell in header_cells])
             rows: list[ParsedRow] = []
             blank_rows = 0
-            for row_number, cells in enumerate(iterator, start=2):
+            for row_number, cells in enumerate(iterator, start=header_row + 1):
                 values = [_cell_text(cell.value, cell) for cell in cells]
                 if len(values) > len(headers):
                     extras = values[len(headers) :]
@@ -370,12 +403,30 @@ def _parse_xlsx(content: bytes, max_rows: int) -> ParsedFile:
             workbook.close()
 
 
-def parse_file(filename: str, content: bytes, max_rows: int) -> ParsedFile:
+def parse_file(
+    filename: str,
+    content: bytes,
+    max_rows: int,
+    *,
+    csv_delimiter: str = ",",
+    csv_encoding: str = "utf-8-sig",
+    header_row: int = 1,
+) -> ParsedFile:
     suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if not 1 <= header_row <= 25:
+        raise ImportFileError(
+            422, "invalid_csv_options", "The header row must be between 1 and 25."
+        )
     if suffix == "csv":
-        return _parse_csv(content, max_rows)
+        return _parse_csv(
+            content,
+            max_rows,
+            delimiter=csv_delimiter,
+            encoding=csv_encoding,
+            header_row=header_row,
+        )
     if suffix == "xlsx":
-        return _parse_xlsx(content, max_rows)
+        return _parse_xlsx(content, max_rows, header_row=header_row)
     raise ImportFileError(
         415, "unsupported_file", "Only UTF-8 CSV and non-macro XLSX files are supported."
     )

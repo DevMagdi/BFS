@@ -131,9 +131,43 @@ jobs:
         run: mypy src/businessflow
 
       - name: Upgrade schema and check model drift
+        shell: bash
         run: |
-          alembic upgrade head
-          alembic check
+          set -euo pipefail
+          run_database_gate() {
+            local label="$1"
+            shift
+            local log_path
+            local status
+            log_path="$(mktemp)"
+            set +e
+            "$@" >"$log_path" 2>&1
+            status=$?
+            set -e
+            cat "$log_path"
+            if [ "$status" -ne 0 ]; then
+              python - "$label" "$log_path" <<'PY'
+          import os
+          import sys
+
+          label, log_path = sys.argv[1:]
+          with open(log_path, encoding="utf-8", errors="replace") as log_file:
+              lines = [line.rstrip() for line in log_file if line.strip()]
+          detail = lines[-12:] or ["No command output was captured."]
+          message = " | ".join(detail).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          message = message[:3000]
+          print(f"::error title=PostgreSQL database gate failure::{label}: {message}")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(f"### {label} failed\n\n```text\n")
+              summary.write("\n".join(detail) + "\n```\n")
+          PY
+              rm -f "$log_path"
+              return "$status"
+            fi
+            rm -f "$log_path"
+          }
+          run_database_gate "Alembic upgrade" alembic upgrade head
+          run_database_gate "Alembic model drift check" alembic check
 
       - name: Run PostgreSQL integration tests
         shell: bash

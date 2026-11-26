@@ -247,14 +247,17 @@ def test_business_intelligence_metric_migration_downgrade_refuses_retained_defin
     config.set_main_option("sqlalchemy.url", migration_url.replace("%", "%%"))
     with pytest.raises(
         DBAPIError,
-        match="Cannot downgrade while business metric definition data is retained",
+        match=(
+            r"archived source bytes or idempotent runs remain|"
+            r"business metric definition data is retained"
+        ),
     ):
         command.downgrade(config, "0020_business_semantic_layer")
 
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0022_bi_config_analysis"
+            == "0023_core_financial_guardrails"
         )
         assert (
             connection.scalar(
@@ -992,14 +995,17 @@ def test_business_intelligence_migration_downgrade_refuses_retained_evidence(
 
     with pytest.raises(
         DBAPIError,
-        match="Cannot downgrade while Company configuration or BI evidence is retained",
+        match=(
+            r"archived source bytes or idempotent runs remain|"
+            r"Company configuration or BI evidence is retained"
+        ),
     ):
         command.downgrade(config, "0021_bi_registry")
 
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0022_bi_config_analysis"
+            == "0023_core_financial_guardrails"
         )
         assert (
             connection.scalar(

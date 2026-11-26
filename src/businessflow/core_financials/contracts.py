@@ -380,6 +380,9 @@ class CoreFinancialImportResponse(StrictModel):
     requested_by_user_id: UUID
     source_key: str
     source_type: SourceType
+    source_identity_status: Literal["caller_asserted_not_verified"]
+    source_authority_status: Literal["not_established"]
+    source_archive_status: Literal["retained", "legacy_unavailable"]
     file_name: str
     file_hash: HashText
     file_size_bytes: int
@@ -506,6 +509,9 @@ class CoreFinancialRunCreateRequest(StrictModel):
 
 class MetricReconciliation(StrictModel):
     state: Literal["passed", "failed", "not_provided", "not_verifiable"]
+    arithmetic_comparison: (
+        Literal["within_tolerance", "outside_tolerance", "not_computed"] | None
+    ) = None
     expected_value: MoneyText | None
     actual_value: OutputMoneyText | None
     variance: OutputMoneyText | None
@@ -553,6 +559,10 @@ class CoreFinancialRunResponse(StrictModel):
     policy_version: int
     policy_hash: HashText
     authority: Literal["illustrative_not_authoritative"]
+    source_identity_status: Literal["caller_asserted_not_verified"] = "caller_asserted_not_verified"
+    source_authority_status: Literal["not_established"] = "not_established"
+    production_readiness: Literal["blocked"] = "blocked"
+    replayed: bool = False
     reporting_framework: Literal["management_reporting"]
     accounting_policy_status: Literal["not_established"]
     period_start: date
@@ -625,6 +635,9 @@ class CoreFinancialOverviewSource(StrictModel):
     id: UUID
     source_key: str
     source_type: SourceType
+    source_identity_status: Literal["caller_asserted_not_verified"]
+    source_authority_status: Literal["not_established"]
+    source_archive_status: Literal["retained", "legacy_unavailable"]
     file_name: str
     file_hash: HashText
     input_hash: HashText
@@ -995,6 +1008,34 @@ class CoreFinancialTemplateResponse(StrictModel):
     policy_disclaimer: str
     general_ledger_headers: tuple[str, ...]
     bank_activity_headers: tuple[str, ...]
+
+
+class CoreFinancialReadinessResponse(StrictModel):
+    tenant_id: UUID
+    company_id: UUID
+    readiness_status: Literal["blocked"]
+    feature_status: Literal["disabled", "enabled_nonproduction", "production_hard_blocked"]
+    production_status: Literal["blocked"]
+    policy_approval_status: Literal["illustrative_not_authoritative"]
+    source_identity_status: Literal["caller_asserted_not_verified"]
+    source_authority_status: Literal["not_established"]
+    source_completeness_status: Literal["caller_asserted_not_verified"]
+    new_import_archive_status: Literal["original_bytes_retained_and_hash_checked"]
+    retention_schedule_status: Literal["not_approved"]
+    legacy_imports_without_original_bytes: int = Field(ge=0)
+    supported_measures: tuple[FinancialMeasure, ...]
+    cash_flow_scope: Literal["observed_bank_net_movement_only"]
+    blocker_codes: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def production_must_remain_blocked(self) -> CoreFinancialReadinessResponse:
+        if self.readiness_status != "blocked" or self.production_status != "blocked":
+            raise ValueError("Core Financials cannot report production readiness")
+        if self.supported_measures != FINANCIAL_MEASURES:
+            raise ValueError("readiness must describe all six supported measures in catalog order")
+        if not self.blocker_codes:
+            raise ValueError("blocked readiness requires explicit blocker codes")
+        return self
 
 
 def parse_iso_date(value: str | None) -> date | None:

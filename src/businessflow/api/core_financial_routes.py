@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from typing import Annotated, Literal
+from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, Response, UploadFile
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,7 @@ from businessflow.core_financials.contracts import (
     CoreFinancialPolicyCreateRequest,
     CoreFinancialPolicyPage,
     CoreFinancialPolicyResponse,
+    CoreFinancialReadinessResponse,
     CoreFinancialRecordPage,
     CoreFinancialRunCreateRequest,
     CoreFinancialRunEvidencePage,
@@ -45,8 +47,10 @@ from businessflow.core_financials.service import (
     create_core_financial_run,
     ensure_core_financials_enabled,
     get_core_financial_import,
+    get_core_financial_import_source,
     get_core_financial_overview,
     get_core_financial_policy,
+    get_core_financial_readiness,
     get_core_financial_run,
     get_core_financial_template,
     list_core_financial_imports,
@@ -70,6 +74,10 @@ router = APIRouter(
     tags=["core financials"],
     dependencies=[Depends(require_core_financials_enabled)],
 )
+readiness_router = APIRouter(
+    prefix="/tenants/{tenant_id}/core-financials",
+    tags=["core financials"],
+)
 PageLimit = Annotated[int, Query(ge=1, le=100)]
 PageOffset = Annotated[int, Query(ge=0, le=100_000)]
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=128)]
@@ -78,6 +86,25 @@ MetadataJson = Annotated[
     Form(min_length=2, max_length=FINANCE_SOURCE_MAX_METADATA_BYTES),
 ]
 ImportRowStatus = Literal["accepted", "rejected", "duplicate"]
+
+
+@readiness_router.get(
+    "/readiness",
+    response_model=CoreFinancialReadinessResponse,
+    summary="Report financial feature status and non-overridable production blockers",
+    description=(
+        "This read-only route remains available while Core Financials is disabled so authorized "
+        "finance readers can inspect blockers. It never approves a source, accounting policy, "
+        "independent control, retention schedule, or customer-data use."
+    ),
+)
+def read_core_financial_readiness(
+    tenant_id: UUID,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CoreFinancialReadinessResponse:
+    return get_core_financial_readiness(session, user, tenant_id, settings=settings)
 
 
 @router.get("/template", response_model=CoreFinancialTemplateResponse)
@@ -285,6 +312,44 @@ def read_core_financial_import(
     )
 
 
+@router.get(
+    "/imports/{import_id}/source",
+    response_class=Response,
+    summary="Download a hash-verified archived original financial CSV",
+    description=(
+        "Requires finance:read and returns bytes only from a same-Company retained import. "
+        "Pre-archive legacy imports return 410; no source bytes are reconstructed."
+    ),
+)
+def download_core_financial_import_source(
+    tenant_id: UUID,
+    import_id: UUID,
+    request: Request,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    content, file_name, file_hash = get_core_financial_import_source(
+        session,
+        user,
+        tenant_id,
+        import_id,
+        settings=settings,
+        request_id=request.state.request_id,
+    )
+    encoded_name = quote(file_name, safe="")
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}",
+            "X-Content-SHA256": file_hash,
+            "X-Source-Archive-Status": "retained-verified",
+        },
+    )
+
+
 @router.get("/imports/{import_id}/records", response_model=CoreFinancialRecordPage)
 def read_core_financial_records(
     tenant_id: UUID,
@@ -317,15 +382,18 @@ def read_core_financial_records(
         "Calculates one selected measure using the matching general-ledger or bank-activity "
         "import and an explicit immutable policy version. P&L measures require ledger evidence; "
         "Cash Flow requires bank evidence and an explicit versioned movement/transfer policy. "
-        "The result is illustrative management reporting, not approved accounting, and the API "
-        "withholds values when source completeness, quality, period, currency, or policy coverage "
-        "is insufficient."
+        "A required Idempotency-Key makes creation safe to retry. Caller-provided controls remain "
+        "unverified arithmetic comparisons, not independent reconciliation. The result is "
+        "illustrative management reporting, not approved accounting, and the API withholds values "
+        "when source bytes, completeness assertions, quality, period, currency, or policy coverage "
+        "are insufficient."
     ),
 )
 def post_core_financial_run(
     tenant_id: UUID,
     body: CoreFinancialRunCreateRequest,
     request: Request,
+    idempotency_key: IdempotencyKey,
     user: UserAccount = Depends(get_current_user),
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
@@ -335,6 +403,7 @@ def post_core_financial_run(
         user,
         tenant_id,
         body,
+        idempotency_key,
         request.state.request_id,
         request.state.now,
         settings,

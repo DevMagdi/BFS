@@ -10,10 +10,12 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     String,
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -201,6 +203,12 @@ class CoreFinancialImport(Base):
         ),
         CheckConstraint("file_format = 'csv'", name="ck_core_financial_imports_file_format"),
         CheckConstraint("file_size_bytes > 0", name="ck_core_financial_imports_file_size"),
+        CheckConstraint(
+            "(source_archive_status = 'retained' AND original_content IS NOT NULL "
+            "AND octet_length(original_content) = file_size_bytes) OR "
+            "(source_archive_status = 'legacy_unavailable' AND original_content IS NULL)",
+            name="ck_core_financial_imports_source_archive",
+        ),
         CheckConstraint("period_end >= period_start", name="ck_core_financial_imports_period"),
         CheckConstraint(
             "period_completeness IN ('complete', 'partial', 'unknown')",
@@ -257,6 +265,12 @@ class CoreFinancialImport(Base):
     file_format: Mapped[str] = mapped_column(String(8), nullable=False)
     file_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_archive_status: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="legacy_unavailable"
+    )
+    original_content: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True, deferred=True
+    )
     mapping_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     mapping_version: Mapped[int] = mapped_column(Integer, nullable=False)
     mapping_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -401,6 +415,14 @@ class CoreFinancialRun(Base):
     __tablename__ = "core_financial_runs"
     __table_args__ = (
         UniqueConstraint("tenant_id", "company_id", "id", name="uq_core_financial_runs_scope_id"),
+        Index(
+            "uq_core_financial_runs_idempotency",
+            "tenant_id",
+            "company_id",
+            "idempotency_key_hash",
+            unique=True,
+            postgresql_where=text("idempotency_key_hash IS NOT NULL"),
+        ),
         ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="RESTRICT"),
         ForeignKeyConstraint(
             ["tenant_id", "company_id"],
@@ -449,6 +471,13 @@ class CoreFinancialRun(Base):
             "state IN ('calculated', 'incomplete')", name="ck_core_financial_runs_state"
         ),
         CheckConstraint(
+            "(idempotency_key_hash IS NULL AND request_fingerprint IS NULL) OR "
+            "(idempotency_key_hash IS NOT NULL AND request_fingerprint IS NOT NULL AND "
+            "idempotency_key_hash ~ '^[0-9a-f]{64}$' AND "
+            "request_fingerprint ~ '^[0-9a-f]{64}$')",
+            name="ck_core_financial_runs_idempotency",
+        ),
+        CheckConstraint(
             "input_hash ~ '^[0-9a-f]{64}$' AND result_hash ~ '^[0-9a-f]{64}$' "
             "AND trace_hash ~ '^[0-9a-f]{64}$'",
             name="ck_core_financial_runs_hashes",
@@ -472,6 +501,8 @@ class CoreFinancialRun(Base):
     policy_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     policy_version: Mapped[int] = mapped_column(Integer, nullable=False)
     policy_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key_hash: Mapped[str | None] = mapped_column(String(64))
+    request_fingerprint: Mapped[str | None] = mapped_column(String(64))
     ledger_import_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     bank_import_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     period_start: Mapped[date] = mapped_column(Date, nullable=False)

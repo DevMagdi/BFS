@@ -7,7 +7,12 @@ import pytest
 from fastapi import FastAPI
 from pydantic import ValidationError
 
-from businessflow.api.core_financial_routes import router as core_financial_router
+from businessflow.api.core_financial_routes import (
+    readiness_router as core_financial_readiness_router,
+)
+from businessflow.api.core_financial_routes import (
+    router as core_financial_router,
+)
 from businessflow.api.finance_source_limits import finance_source_request_body_limit
 from businessflow.api.finance_source_upload_limit import _upload_body_limit
 from businessflow.config import Settings
@@ -78,6 +83,7 @@ def _import_state(
     period_completeness: str = "complete",
     quality_status: str = "passed",
     file_hash: str | None = None,
+    source_archive_status: str = "retained",
 ) -> SourceImportState:
     return SourceImportState(
         id=import_id,
@@ -94,6 +100,7 @@ def _import_state(
         accepted_rows=8,
         rejected_rows=0,
         duplicate_rows=0,
+        source_archive_status=source_archive_status,
     )
 
 
@@ -298,6 +305,7 @@ def test_complete_policy_calculates_signed_p_and_l_and_net_bank_movement_exactly
     assert metrics["cash_flow"].basis == "cash_movement"
     assert metrics["cash_flow"].included_record_count == 2
     assert metrics["revenue"].reconciliation.state == "not_provided"
+    assert metrics["revenue"].reconciliation.arithmetic_comparison == "not_computed"
     assert len([line for line in lines if line.metric == "revenue"]) == 2
     assert any(statement.code == "cash_flow_scope" for statement in analysis)
 
@@ -483,7 +491,7 @@ def test_cash_flow_transfer_rule_is_explicit_and_unmatched_pnl_rows_never_supply
     assert lines == ()
 
 
-def test_cash_flow_reconciles_independent_control_and_excludes_transfers_from_evidence() -> None:
+def test_cash_flow_compares_arithmetic_without_claiming_independent_reconciliation() -> None:
     facts = (
         _fact(
             import_id=BANK_IMPORT_ID,
@@ -523,7 +531,10 @@ def test_cash_flow_reconciles_independent_control_and_excludes_transfers_from_ev
     assert state == "calculated"
     assert cash_flow.exact_value == "100"
     assert cash_flow.excluded_transfer_count == 1
-    assert cash_flow.reconciliation.state == "passed"
+    assert cash_flow.reconciliation.state == "not_verifiable"
+    assert cash_flow.reconciliation.arithmetic_comparison == "within_tolerance"
+    assert cash_flow.reconciliation.reason_codes == ("control_source_independence_not_verified",)
+    assert cash_flow.reconciliation.source_independence == "caller_asserted_not_verified"
     assert [line.fact.event_type for line in lines] == ["normal"]
 
     overlapping_control = independent_control.model_copy(
@@ -766,6 +777,23 @@ def test_source_period_coverage_withholds_each_measure(metric) -> None:
     assert "source_period_does_not_cover_requested_period" in result.reason_codes
 
 
+def test_legacy_import_without_archived_bytes_cannot_supply_a_new_measure() -> None:
+    legacy_import = _import_state(
+        LEDGER_IMPORT_ID,
+        "general_ledger",
+        source_archive_status="legacy_unavailable",
+    )
+
+    results, analysis, lines, state = _run(ledger=legacy_import, requested_metrics=("revenue",))
+
+    assert state == "incomplete"
+    assert results[0].status == "incomplete"
+    assert results[0].exact_value is None
+    assert "original_source_artifact_not_retained" in results[0].reason_codes
+    assert lines == ()
+    assert any(item.code == "source_import_incomplete" for item in analysis)
+
+
 @pytest.mark.parametrize(
     "metric",
     ("revenue", "expenses", "gross_profit", "operating_profit", "net_profit", "cash_flow"),
@@ -833,7 +861,7 @@ def test_legacy_v2_replay_preserves_revenue_currency_exclusion_semantics() -> No
         _run(requested_metrics=("net_profit",), legacy_v2_replay=True)
 
 
-def test_first_persisted_workflow_calculates_only_revenue_with_exact_control_and_evidence() -> None:
+def test_revenue_measure_keeps_exact_control_arithmetic_and_evidence() -> None:
     control = MetricControl(
         metric="revenue",
         expected_value="900",
@@ -856,7 +884,8 @@ def test_first_persisted_workflow_calculates_only_revenue_with_exact_control_and
     assert revenue.reported_value == "900"
     assert revenue.category_totals == {"revenue": "1000", "revenue_reduction": "100"}
     assert revenue.included_record_count == 2
-    assert revenue.reconciliation.state == "passed"
+    assert revenue.reconciliation.state == "not_verifiable"
+    assert revenue.reconciliation.arithmetic_comparison == "within_tolerance"
     assert revenue.reconciliation.variance == "0"
     assert {line.contribution_amount for line in lines} == {"1000", "-100"}
     assert {line.metric for line in lines} == {"revenue"}
@@ -1007,7 +1036,7 @@ def test_incomplete_source_period_withholds_metric_and_records_precise_reason() 
     assert "source_period_does_not_cover_requested_period" in revenue.reason_codes
 
 
-def test_control_overlap_is_not_verified_and_independent_control_reconciles_exactly() -> None:
+def test_control_overlap_is_not_verified_and_control_arithmetic_is_labeled_only() -> None:
     overlapping = MetricControl(
         metric="revenue",
         expected_value="900",
@@ -1035,9 +1064,11 @@ def test_control_overlap_is_not_verified_and_independent_control_reconciles_exac
 
     assert overlapped.state == "not_verifiable"
     assert "control_source_overlaps_calculation_evidence" in overlapped.reason_codes
-    assert reconciled.state == "passed"
+    assert reconciled.state == "not_verifiable"
+    assert reconciled.arithmetic_comparison == "within_tolerance"
     assert reconciled.variance == "0"
     assert reconciled.source_independence == "caller_asserted_not_verified"
+    assert reconciled.reason_codes == ("control_source_independence_not_verified",)
 
 
 @pytest.mark.parametrize(
@@ -1360,11 +1391,24 @@ def test_core_financials_flag_defaults_off_and_cannot_be_enabled_in_production()
 
 def test_core_financial_routes_are_registered_and_import_body_limit_includes_metadata() -> None:
     app = FastAPI()
+    app.include_router(core_financial_readiness_router, prefix="/api/v1")
     app.include_router(core_financial_router, prefix="/api/v1")
     paths = app.openapi()["paths"]
     assert "/api/v1/tenants/{tenant_id}/core-financials/template" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/imports" in paths
+    assert "/api/v1/tenants/{tenant_id}/core-financials/imports/{import_id}/source" in paths
+    assert "/api/v1/tenants/{tenant_id}/core-financials/readiness" in paths
     assert "/api/v1/tenants/{tenant_id}/core-financials/runs/{run_id}/verify" in paths
+    run_create = paths["/api/v1/tenants/{tenant_id}/core-financials/runs"]["post"]
+    idempotency_parameter = next(
+        parameter
+        for parameter in run_create["parameters"]
+        if parameter["name"] == "Idempotency-Key"
+    )
+    assert idempotency_parameter["in"] == "header"
+    assert idempotency_parameter["required"] is True
+    assert idempotency_parameter["schema"]["minLength"] == 16
+    assert idempotency_parameter["schema"]["maxLength"] == 128
 
     maximum_file_bytes = 1024
     limit = _upload_body_limit(

@@ -24,6 +24,18 @@ def test_company_data_foundation_page_exposes_scoped_inventory_and_existing_work
     assert "function clearTenantWorkspace()" in script.text
     assert "if (changedWorkspace) clearTenantWorkspace();" in script.text
     assert "state.tenantDataReady = false;" in script.text
+    assert "$(selector).reset();" in script.text
+    assert "Universal Data Hub" in page.text
+    assert 'id="ud-review-panel"' in page.text
+    assert "function renderUniversalData()" in script.text
+    assert "function loadUniversalProfileHistory" in script.text
+    assert "function applyUniversalMapping" in script.text
+    assert "function downloadUniversalEvidence" in script.text
+    assert "function loadUniversalRecordLineage" in script.text
+    assert "Idempotency-Key" in script.text
+    assert "function idempotencyKeyForAttempt" in script.text
+    assert 'idempotencyKeyForAttempt("universalUploadAttempt"' in script.text
+    assert 'idempotencyKeyForAttempt("universalSyncAttempt"' in script.text
     assert "textContent" in script.text
     assert "innerHTML" not in script.text
     assert "http://localhost" not in script.text
@@ -37,3 +49,11 @@ def test_company_data_foundation_page_exposes_scoped_inventory_and_existing_work
     coverage_path = "/api/v1/tenants/{tenant_id}/company-data/coverage"
     assert coverage_path in paths
     assert set(paths[coverage_path]) == {"get"}
+    universal_prefix = "/api/v1/tenants/{tenant_id}/company-data/universal"
+    universal_source = f"{universal_prefix}/sources/{{source_id}}"
+    universal_ingestion = f"{universal_source}/ingestions/{{ingestion_id}}"
+    assert f"{universal_source}/profile-history" in paths
+    assert f"{universal_source}/sync" in paths
+    assert f"{universal_ingestion}/evidence" in paths
+    assert f"{universal_ingestion}/promote" in paths
+    assert f"{universal_prefix}/records/{{record_id}}/lineage" in paths

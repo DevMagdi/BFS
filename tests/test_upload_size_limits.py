@@ -141,6 +141,11 @@ def _route_limits(max_file_bytes: int, tenant_id: str):
             False,
         ),
         (
+            f"/api/v1/tenants/{tenant_id}/company-data/universal/sources/{tenant_id}/ingestions",
+            multipart_upload_request_body_limit(max_file_bytes),
+            False,
+        ),
+        (
             f"/api/v1/tenants/{tenant_id}/finance-sources/intakes",
             finance_source_request_body_limit(max_file_bytes),
             True,
@@ -192,7 +197,7 @@ def test_authenticated_import_rejects_over_file_cap_below_route_body_cap(setting
     assert len(body) < route_limit, "the route-wide request cap was not reached"
 
 
-def test_declared_oversized_m4_m10_and_m14_bodies_stop_before_multipart_parser(
+def test_declared_oversized_m4_m10_universal_and_m14_bodies_stop_before_multipart_parser(
     settings, monkeypatch
 ) -> None:
     app = _limited_app(settings)
@@ -226,7 +231,11 @@ def test_declared_oversized_m4_m10_and_m14_bodies_stop_before_multipart_parser(
         assert unrelated_json.json()["error"]["code"] == "invalid_request"
 
 
-@pytest.mark.parametrize("route_index", [0, 1, 2, 3], ids=["m4", "m10", "m14", "core-financials"])
+@pytest.mark.parametrize(
+    "route_index",
+    [0, 1, 2, 3, 4],
+    ids=["m4", "m10", "universal", "m14", "core-financials"],
+)
 def test_exact_limit_is_accepted_and_one_byte_over_is_rejected(
     settings, monkeypatch, route_index: int
 ) -> None:
@@ -258,7 +267,7 @@ def test_exact_limit_is_accepted_and_one_byte_over_is_rejected(
         assert observed_chunks == [], "declared one-byte oversize must not reach the parser"
 
 
-def test_streamed_m4_m10_and_m14_bodies_count_unreliable_lengths_and_track_parser_chunks(
+def test_streamed_m4_m10_universal_and_m14_bodies_count_unreliable_lengths_and_track_parser_chunks(
     settings, monkeypatch
 ) -> None:
     app = _limited_app(settings)

@@ -38,7 +38,8 @@ class CompanyDataContract(Base):
         ),
         CheckConstraint(
             "dataset_type IN ('employees', 'skills', 'employee_skills', "
-            "'weekly_capacity', 'projects', 'resource_assignments', 'customer_commitments')",
+            "'weekly_capacity', 'projects', 'resource_assignments', 'customer_commitments', "
+            "'universal_records')",
             name="ck_company_data_contracts_dataset",
         ),
         CheckConstraint(
@@ -125,7 +126,7 @@ class CompanyDataSource(Base):
         ),
         CheckConstraint(
             "dataset_type IN ('employees', 'skills', 'employee_skills', 'weekly_capacity', "
-            "'projects', 'resource_assignments', 'customer_commitments')",
+            "'projects', 'resource_assignments', 'customer_commitments', 'universal_records')",
             name="ck_company_data_sources_dataset",
         ),
         CheckConstraint(

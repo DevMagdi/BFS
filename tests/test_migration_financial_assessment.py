@@ -110,6 +110,132 @@ def _assert_public_user_writes_revoked(connection) -> None:
     assert _has_public_user_writes(connection) is False
 
 
+def test_universal_data_tables_enforce_company_rls_and_runtime_privilege_boundaries(admin_engine):
+    append_only_tables = (
+        "company_data_source_profile_versions",
+        "universal_source_snapshots",
+        "universal_ingestion_rows",
+        "universal_mapping_profiles",
+        "universal_mapping_profile_versions",
+        "universal_ingestion_events",
+        "universal_row_validations",
+        "canonical_business_record_revisions",
+        "universal_ingestion_record_links",
+    )
+    update_tables = {"universal_ingestions", "canonical_business_records"}
+    immutable_tables = set(append_only_tables)
+    table_names = (
+        "company_data_source_profile_versions",
+        "universal_source_snapshots",
+        "universal_mapping_profiles",
+        "universal_mapping_profile_versions",
+        "universal_ingestions",
+        "universal_ingestion_rows",
+        "universal_ingestion_events",
+        "universal_row_validations",
+        "canonical_business_records",
+        "canonical_business_record_revisions",
+        "universal_ingestion_record_links",
+    )
+
+    with admin_engine.connect() as connection:
+        for table_name in table_names:
+            security = connection.execute(
+                text(
+                    "SELECT c.relrowsecurity, c.relforcerowsecurity, r.rolname AS owner "
+                    "FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner "
+                    "WHERE c.oid = to_regclass(:table_name)"
+                ),
+                {"table_name": f"public.{table_name}"},
+            ).one()
+            assert security.relrowsecurity is True
+            assert security.relforcerowsecurity is True
+            assert security.owner == "bf_migrator"
+            policy = connection.execute(
+                text(
+                    "SELECT cmd, qual, with_check FROM pg_policies "
+                    "WHERE schemaname = 'public' AND tablename = :table_name"
+                ),
+                {"table_name": table_name},
+            ).one()
+            assert policy.cmd == "ALL"
+            assert "app.tenant_id" in policy.qual
+            assert "app.company_id" in policy.qual
+            assert "app.tenant_id" in policy.with_check
+            assert "app.company_id" in policy.with_check
+            assert (
+                connection.scalar(
+                    text("SELECT has_table_privilege('bf_runtime', :table_name, 'SELECT')"),
+                    {"table_name": f"public.{table_name}"},
+                )
+                is True
+            )
+            assert (
+                connection.scalar(
+                    text("SELECT has_table_privilege('bf_runtime', :table_name, 'INSERT')"),
+                    {"table_name": f"public.{table_name}"},
+                )
+                is True
+            )
+            for privilege, expected in (
+                ("UPDATE", table_name in update_tables),
+                ("DELETE", False),
+                ("TRUNCATE", False),
+            ):
+                assert (
+                    connection.scalar(
+                        text("SELECT has_table_privilege('bf_runtime', :table_name, :privilege)"),
+                        {"table_name": f"public.{table_name}", "privilege": privilege},
+                    )
+                    is expected
+                )
+            if table_name in immutable_tables:
+                assert (
+                    connection.scalar(
+                        text(
+                            "SELECT has_any_column_privilege('bf_runtime', :table_name, 'UPDATE')"
+                        ),
+                        {"table_name": f"public.{table_name}"},
+                    )
+                    is False
+                )
+
+        for table_name in append_only_tables:
+            trigger_name = f"trg_{table_name}_append_only"
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal "
+                        "AND tgrelid = to_regclass(:table_name) AND tgname = :trigger_name"
+                    ),
+                    {"table_name": f"public.{table_name}", "trigger_name": trigger_name},
+                )
+                == 1
+            )
+        for table_name, trigger_name in (
+            ("universal_ingestions", "trg_universal_ingestions_guard"),
+            ("canonical_business_records", "trg_canonical_business_records_guard"),
+        ):
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal "
+                        "AND tgrelid = to_regclass(:table_name) AND tgname = :trigger_name"
+                    ),
+                    {"table_name": f"public.{table_name}", "trigger_name": trigger_name},
+                )
+                == 1
+            )
+        current_revision_fk = connection.execute(
+            text(
+                "SELECT condeferrable, condeferred FROM pg_constraint "
+                "WHERE conname = 'fk_udf_canonical_current_revision'"
+            )
+        ).one()
+        assert current_revision_fk.condeferrable is True
+        assert current_revision_fk.condeferred is True
+
+
 def test_migration_head_upgrade_downgrade_and_reupgrade():
 
     database_name = f"businessflow_m14_migration_test_{uuid4().hex[:12]}"
@@ -149,7 +275,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0018_customer_commitments"
+                "0019_universal_data_foundation"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -221,7 +347,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
                         is False
                     )
 
-            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 7
+            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 8
             assert (
                 connection.scalar(
                     text(
@@ -536,7 +662,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
             os.environ["MIGRATION_DATABASE_URL"] = migration_url
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0018_customer_commitments"
+                "0019_universal_data_foundation"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -738,7 +864,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(migration_config, "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0018_customer_commitments"
+                "0019_universal_data_foundation"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -802,7 +928,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(migration_config, "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0018_customer_commitments"
+                "0019_universal_data_foundation"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -882,7 +1008,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0018_customer_commitments"
+                "0019_universal_data_foundation"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -956,7 +1082,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0018_customer_commitments"
+                "0019_universal_data_foundation"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -1037,14 +1163,14 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0018_customer_commitments"
+                "0019_universal_data_foundation"
             )
             _assert_runtime_user_privileges(
                 connection,
                 expected_insert=False,
                 table_wide_update=False,
             )
-            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 7
+            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 8
             assert (
                 connection.scalar(text("SELECT to_regclass('public.company_data_sources')"))
                 == "company_data_sources"

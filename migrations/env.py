@@ -20,6 +20,7 @@ from businessflow.metrics import models as metrics_models  # noqa: F401
 from businessflow.position_reviews import models as position_review_models  # noqa: F401
 from businessflow.project_assessments import models as project_assessment_models  # noqa: F401
 from businessflow.project_decisions import models as project_decision_models  # noqa: F401
+from businessflow.universal_data import models as universal_data_models  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

@@ -50,6 +50,28 @@
     commitmentHistory: [],
     commitmentHistoryOffset: 0,
     commitmentHistoryTotal: 0,
+    universalSources: [],
+    universalSourceTotal: 0,
+    universalLoadError: null,
+    universalEntities: [],
+    universalMappings: [],
+    universalMappingDraft: null,
+    universalCurrent: null,
+    universalReviewSequence: 0,
+    universalIngestionsSourceId: null,
+    universalProfileHistorySourceId: null,
+    universalProfileHistory: [],
+    universalProfileHistoryTotal: 0,
+    universalRecordFilter: null,
+    universalRecordLineageId: null,
+    universalRowsOffset: 0,
+    universalRowsTotal: 0,
+    universalIngestions: [],
+    universalIngestionTotal: 0,
+    universalRecords: [],
+    universalRecordTotal: 0,
+    universalUploadAttempt: null,
+    universalSyncAttempt: null,
     messageTimer: null,
   };
 
@@ -163,12 +185,22 @@
     notice.textContent = !state.tenantDataReady
       ? "Loading Company permissions and evidence. Write actions stay disabled until the selected workspace is loaded."
       : roleCanWrite
-        ? "Owner/admin write access is active for M12 source registration and M4 import evidence. The server remains authoritative for every permission check."
-        : "M12 source registration and M4 ingestion recording are read-only for members. Active members can still create and submit their own manual customer-commitment drafts; only an owner/admin can review them.";
+        ? "Owner/admin write access is active for M12 source registration, Universal Data review/promotion, and M4 import evidence. The server remains authoritative for every permission check."
+        : "M12 and Universal Data are read-only for members; M4 import recording is also owner/admin-only. Active members can create and submit their own manual customer-commitment drafts; only an owner/admin can review them.";
     notice.hidden = state.canWrite;
-    for (const selector of ["#source-form", "#ingestion-form"]) {
-      for (const field of $$("input, select, button", $(selector))) field.disabled = !state.canWrite;
+    for (const selector of ["#source-form", "#ingestion-form", "#ud-source-form", "#ud-upload-form", "#ud-sync-form", "#ud-mapping-form"]) {
+      for (const field of $$("input, select, textarea, button", $(selector))) field.disabled = !state.canWrite;
     }
+    const universalIngestion = state.universalCurrent?.detail?.ingestion;
+    $("#ud-validate-button").disabled = !state.canWrite || !universalIngestion ||
+      universalIngestion.status === "promoted" || !universalIngestion.mapping_profile_version_id;
+    const needsUniversalAcknowledgement = Boolean(universalIngestion &&
+      Number(universalIngestion.counts.warning_rows || 0) + Number(universalIngestion.counts.duplicate_rows || 0) > 0);
+    $("#ud-promote-button").disabled = !state.canWrite || !universalIngestion ||
+      !["validated", "review_required"].includes(universalIngestion.status) ||
+      (needsUniversalAcknowledgement && !$("#ud-acknowledge").checked);
+    $("#ud-acknowledge").disabled = !state.canWrite;
+    $("#ud-correction-reason").disabled = !state.canWrite;
     const commitmentNotice = $("#commitment-role-notice");
     commitmentNotice.textContent = !state.tenantDataReady
       ? "Loading Company permissions. Manual workflow actions stay disabled until the selected workspace is loaded."
@@ -196,8 +228,33 @@
     state.commitmentHistory = [];
     state.commitmentHistoryOffset = 0;
     state.commitmentHistoryTotal = 0;
+    state.universalSources = [];
+    state.universalSourceTotal = 0;
+    state.universalLoadError = null;
+    state.universalEntities = [];
+    state.universalMappings = [];
+    state.universalMappingDraft = null;
+    state.universalCurrent = null;
+    state.universalReviewSequence += 1;
+    state.universalIngestionsSourceId = null;
+    state.universalProfileHistorySourceId = null;
+    state.universalProfileHistory = [];
+    state.universalProfileHistoryTotal = 0;
+    state.universalRecordFilter = null;
+    state.universalRecordLineageId = null;
+    state.universalRowsOffset = 0;
+    state.universalRowsTotal = 0;
+    state.universalIngestions = [];
+    state.universalIngestionTotal = 0;
+    state.universalRecords = [];
+    state.universalRecordTotal = 0;
+    state.universalUploadAttempt = null;
+    state.universalSyncAttempt = null;
     $("#commitment-status-filter").value = "";
     clearCommitmentEditor();
+    for (const selector of ["#ud-source-form", "#ud-upload-form", "#ud-sync-form", "#ud-mapping-form"]) {
+      $(selector).reset();
+    }
     $("#coverage-evaluated-at").textContent = "";
     $("#coverage-note").textContent = "";
     $("#coverage-grid").replaceChildren(node("p", "df-empty", "Loading evidence for the selected Company…"));
@@ -207,10 +264,27 @@
     $("#commitment-list-load-more").disabled = true;
     $("#evidence-panel").hidden = true;
     $("#evidence-content").replaceChildren();
+    $("#ud-review-panel").hidden = true;
+    $("#ud-ingestion-summary").replaceChildren();
+    $("#ud-inspection").replaceChildren();
+    $("#ud-validation-summary").replaceChildren();
+    $("#ud-mapping-fields").replaceChildren();
+    $("#ud-existing-mapping").replaceChildren(node("option", "", "Create a new mapping version"));
+    $("#ud-existing-mapping").options[0].value = "";
+    $("#ud-row-list").replaceChildren();
+    $("#ud-ingestion-list").replaceChildren(node("p", "df-empty", "Select a source to review its runs."));
+    $("#ud-record-list").replaceChildren(node("p", "df-empty", "No canonical records loaded."));
+    $("#ud-record-count").textContent = "";
+    $("#ud-record-lineage").replaceChildren();
+    $("#ud-record-lineage").hidden = true;
+    $("#ud-profile-history").replaceChildren();
+    $("#ud-profile-history").hidden = true;
+    $("#ud-status").textContent = "";
     $("#global-message").hidden = true;
     $("#global-message").textContent = "";
     renderDatasetOptions();
     renderSourceOptions();
+    renderUniversalData();
     updateRoleUi();
   }
 
@@ -363,11 +437,12 @@
   function renderSources() {
     const target = $("#source-list");
     target.replaceChildren();
-    if (!state.sources.length) {
-      target.append(node("p", "df-empty", "No M12 source is registered in this Company yet. This means the source is not tracked in BusinessFlow; it is not evidence that the business has no data."));
+    const m12Sources = state.sources.filter((source) => source.dataset_type !== "universal_records");
+    if (!m12Sources.length) {
+      target.append(node("p", "df-empty", "No M4 or manual customer-commitment source is registered in this Company yet. This means it is not tracked here; it is not evidence that the business has no data."));
       return;
     }
-    for (const source of state.sources) {
+    for (const source of m12Sources) {
       const card = node("article", "df-source-card");
       const heading = node("div", "df-source-heading");
       const identity = node("div");
@@ -419,6 +494,7 @@
     renderDatasetOptions();
     renderSourceOptions();
     renderSources();
+    renderUniversalData();
     renderCommitments();
     updateRoleUi();
   }
@@ -435,14 +511,24 @@
       const commitmentPath = `${base}/customer-commitments`;
       const commitmentFilter = $("#commitment-status-filter").value;
       const commitmentQuery = commitmentFilter ? `&status=${encodeURIComponent(commitmentFilter)}` : "";
-      const [contractsResult, coverageResult, sourcesResult, importsResult, commitmentsResult] = await Promise.all([
-        request(`${base}/contracts`),
-        request(`${base}/coverage`),
-        request(`${base}/sources?limit=${PAGE_SIZE}&offset=0`),
-        request(`/tenants/${encodeURIComponent(tenantId)}/imports?limit=${PAGE_SIZE}&offset=0`),
-        request(`${commitmentPath}?limit=${PAGE_SIZE}&offset=0${commitmentQuery}`),
+      const universalBase = `${base}/universal`;
+      const universalRequest = Promise.all([
+        request(`${universalBase}/sources?limit=${PAGE_SIZE}&offset=0`),
+        request(`${universalBase}/entities`),
+      ]).then(([sources, entities]) => ({ sources, entities, error: null }))
+        .catch((error) => ({ sources: null, entities: null, error }));
+      const [coreResults, universalResult] = await Promise.all([
+        Promise.all([
+          request(`${base}/contracts`),
+          request(`${base}/coverage`),
+          request(`${base}/sources?limit=${PAGE_SIZE}&offset=0`),
+          request(`/tenants/${encodeURIComponent(tenantId)}/imports?limit=${PAGE_SIZE}&offset=0`),
+          request(`${commitmentPath}?limit=${PAGE_SIZE}&offset=0${commitmentQuery}`),
+        ]),
+        universalRequest,
       ]);
       if (sequence !== state.loadSequence || state.tenant?.id !== tenantId) return;
+      const [contractsResult, coverageResult, sourcesResult, importsResult, commitmentsResult] = coreResults;
       state.contracts = contractsResult.data?.items || [];
       state.coverage = coverageResult.data;
       state.sources = sourcesResult.data?.items || [];
@@ -451,10 +537,27 @@
       state.importTotal = importsResult.data?.total || 0;
       state.commitments = commitmentsResult.data?.items || [];
       state.commitmentTotal = commitmentsResult.data?.total || 0;
+      state.universalLoadError = universalResult.error
+        ? universalResult.error.message || "Universal Data could not be loaded."
+        : null;
+      state.universalSources = universalResult.sources?.data?.items || [];
+      state.universalSourceTotal = universalResult.sources?.data?.total || 0;
+      state.universalEntities = universalResult.entities?.data?.items || [];
+      if (state.universalLoadError) {
+        state.universalCurrent = null;
+        state.universalMappingDraft = null;
+        state.universalIngestions = [];
+        state.universalIngestionTotal = 0;
+        state.universalRecords = [];
+        state.universalRecordTotal = 0;
+      }
       state.commitmentFilter = commitmentFilter;
       state.tenantDataReady = true;
       renderWorkspace();
       setStatus(`Company data evidence loaded · ${state.tenant.role || "member"} · ${state.sourceTotal} registered sources · ${state.importTotal} M4 imports in history.`, "is-success");
+      const historySourceId = $("#ud-history-source").value;
+      if (historySourceId) void loadUniversalIngestions(historySourceId);
+      void loadUniversalRecords();
     } catch (error) {
       if (sequence !== state.loadSequence) return;
       if ([403, 404].includes(error.status)) clearTenantWorkspace();
@@ -1147,7 +1250,1046 @@
     }
   }
 
-  function bindEvents() {
+  function universalBase(tenantId = state.tenant?.id) {
+    return `/tenants/${encodeURIComponent(tenantId || "")}/company-data/universal`;
+  }
+
+  function setUniversalStatus(message, kind = "muted") {
+    const target = $("#ud-status");
+    target.textContent = message;
+    target.classList.remove("is-error", "is-success");
+    if (kind === "is-error" || kind === "is-success") target.classList.add(kind);
+  }
+
+  function shortJson(value, maximum = 1800) {
+    const text = JSON.stringify(value, null, 2);
+    return text.length > maximum ? `${text.slice(0, maximum)}\n…` : text;
+  }
+
+  function selectedUniversalSource(sourceId) {
+    return state.universalSources.find((source) => source.source_id === sourceId) || null;
+  }
+
+  function renderUniversalOptions() {
+    for (const selector of ["#ud-upload-source", "#ud-history-source"]) {
+      const select = $(selector);
+      const previous = select.value;
+      select.replaceChildren();
+      const enabledOnly = selector === "#ud-upload-source";
+      const sources = state.universalSources.filter((source) => !enabledOnly || source.source_status === "enabled");
+      const placeholder = node("option", "", sources.length ? "Choose a Universal source…" : "Register an enabled source first…");
+      placeholder.value = "";
+      select.append(placeholder);
+      for (const source of sources) {
+        const option = node("option", "", `${source.display_name} · ${source.source_type.replaceAll("_", " ")}${source.source_status === "disabled" ? " · disabled" : ""}`);
+        option.value = source.source_id;
+        select.append(option);
+      }
+      const preferred = state.universalCurrent?.sourceId || previous || sources[0]?.source_id;
+      if (preferred && sources.some((source) => source.source_id === preferred)) select.value = preferred;
+    }
+    renderUniversalConnectorMode();
+  }
+
+  function renderUniversalConnectorMode() {
+    const source = selectedUniversalSource($("#ud-upload-source").value);
+    const local = source?.source_type === "local_directory";
+    $("#ud-sync-form").hidden = !local;
+    $("#ud-upload-file").required = true;
+    $("#ud-apply-mapping").disabled = !state.canWrite || !state.universalCurrent || !$("#ud-existing-mapping").value;
+  }
+
+  function renderUniversalEntityOptions() {
+    for (const selector of ["#ud-entity-type", "#ud-record-entity"]) {
+      const select = $(selector);
+      const previous = select.value;
+      select.replaceChildren();
+      const allOption = node("option", "", selector === "#ud-record-entity" ? "All entity types" : "Choose a canonical entity…");
+      allOption.value = "";
+      select.append(allOption);
+      for (const entity of state.universalEntities) {
+        const option = node("option", "", entity.label);
+        option.value = entity.entity_type;
+        select.append(option);
+      }
+      if (previous && Array.from(select.options).some((option) => option.value === previous)) select.value = previous;
+    }
+  }
+
+  function renderUniversalSources() {
+    const target = $("#ud-source-list");
+    const more = $("#ud-sources-load-more");
+    more.hidden = state.universalSources.length >= state.universalSourceTotal;
+    more.disabled = !state.tenant || state.universalSources.length >= state.universalSourceTotal;
+    target.replaceChildren();
+    if (!state.universalSources.length) {
+      target.append(node("p", "df-empty", "No Universal Data source is registered for this Company. Registration is metadata only; it does not verify a provider or source authority."));
+      return;
+    }
+    for (const source of state.universalSources) {
+      const card = node("article", "df-source-card");
+      const heading = node("div", "df-source-heading");
+      const identity = node("div");
+      identity.append(
+        node("h3", "", source.display_name),
+        node("p", "df-source-key", `${source.source_key} · ${source.source_type.replaceAll("_", " ")} · profile v${source.version}`),
+      );
+      heading.append(identity);
+      const statuses = node("div", "df-status-badges");
+      statuses.append(badge(source.source_status, source.source_status === "enabled" ? "passed" : "warning"));
+      statuses.append(badge(source.authority_classification.replaceAll("_", " "), source.authority_classification === "unclassified" ? "warning" : ""));
+      if (!source.last_attempted_at) statuses.append(badge("No ingestion"));
+      heading.append(statuses);
+      card.append(heading);
+      card.append(node("p", "df-source-meta", `Registered ${dateTimeText(source.created_at)} · owner ${source.owner_user_id} · ${source.connection_reference_configured ? "connector reference configured" : "no connector reference"} · ${source.credential_reference_configured ? "credential reference configured" : "no credential reference"}`));
+      const actions = node("div", "df-ingestion-actions");
+      const useButton = node("button", "button button-secondary button-small", "Use for ingestion");
+      useButton.type = "button";
+      useButton.disabled = source.source_status !== "enabled";
+      useButton.addEventListener("click", () => {
+        $("#ud-upload-source").value = source.source_id;
+        $("#ud-history-source").value = source.source_id;
+        renderUniversalConnectorMode();
+        void loadUniversalIngestions(source.source_id);
+      });
+      const historyButton = node("button", "button button-quiet button-small", "Profile history");
+      historyButton.type = "button";
+      historyButton.addEventListener("click", () => loadUniversalProfileHistory(source.source_id));
+      actions.append(useButton, historyButton);
+      card.append(actions);
+      target.append(card);
+    }
+    if (state.universalSources.length < state.universalSourceTotal) {
+      target.append(node("p", "df-contract-line", `Showing ${state.universalSources.length} of ${state.universalSourceTotal} Universal sources.`));
+    }
+  }
+
+  async function loadMoreUniversalSources() {
+    const context = captureWorkspace();
+    const offset = state.universalSources.length;
+    const button = $("#ud-sources-load-more");
+    if (!context.tenantId || button.disabled || offset >= state.universalSourceTotal) return;
+    button.disabled = true;
+    try {
+      const { data } = await request(`${universalBase(context.tenantId)}/sources?limit=100&offset=${offset}`);
+      if (!workspaceIsCurrent(context) || state.universalSources.length !== offset) return;
+      const existing = new Set(state.universalSources.map((source) => source.source_id));
+      state.universalSources.push(...(data?.items || []).filter((source) => !existing.has(source.source_id)));
+      state.universalSourceTotal = data?.total ?? state.universalSourceTotal;
+      renderUniversalOptions();
+      renderUniversalSources();
+    } catch (error) {
+      if (workspaceIsCurrent(context)) setUniversalStatus(error.message || "Additional Universal sources could not be loaded.", "is-error");
+    } finally {
+      if (workspaceIsCurrent(context)) button.disabled = state.universalSources.length >= state.universalSourceTotal;
+    }
+  }
+
+  function renderUniversalProfileHistory() {
+    const target = $("#ud-profile-history");
+    target.replaceChildren(node("h4", "", "Source profile history"));
+    for (const profile of state.universalProfileHistory) {
+      const item = node("article", "df-history-item");
+      item.append(node("h5", "", `Version ${profile.version} · ${profile.display_name}`));
+      item.append(node("p", "", `${profile.source_type.replaceAll("_", " ")} · ${profile.source_status} · ${profile.authority_classification.replaceAll("_", " ")} · owner ${profile.owner_user_id}`));
+      item.append(node("p", "", `Recorded ${dateTimeText(profile.created_at)} by ${profile.created_by_user_id} · freshness ${profile.freshness_max_age_hours ?? "not set"} hours`));
+      target.append(item);
+    }
+    if (state.universalProfileHistory.length < state.universalProfileHistoryTotal) {
+      const more = node("button", "button button-quiet button-small", "Load older profile versions");
+      more.type = "button";
+      more.classList.add("df-profile-history-load-more");
+      more.addEventListener("click", () => loadUniversalProfileHistory(state.universalProfileHistorySourceId, { append: true }));
+      target.append(more);
+      target.append(node("p", "df-contract-line", `Showing ${state.universalProfileHistory.length} of ${state.universalProfileHistoryTotal} profile versions.`));
+    }
+    target.hidden = false;
+  }
+
+  async function loadUniversalProfileHistory(sourceId, { append = false } = {}) {
+    const context = captureWorkspace();
+    if (append && state.universalProfileHistorySourceId !== sourceId) return;
+    const offset = append ? state.universalProfileHistory.length : 0;
+    state.universalProfileHistorySourceId = sourceId;
+    if (!append) {
+      state.universalProfileHistory = [];
+      state.universalProfileHistoryTotal = 0;
+      const target = $("#ud-profile-history");
+      target.replaceChildren(node("p", "df-empty", "Loading append-only profile history…"));
+      target.hidden = false;
+    } else {
+      const more = $("#ud-profile-history").querySelector(".df-profile-history-load-more");
+      if (more) more.disabled = true;
+    }
+    try {
+      const { data } = await request(`${universalBase(context.tenantId)}/sources/${encodeURIComponent(sourceId)}/profile-history?limit=50&offset=${offset}`);
+      if (!workspaceIsCurrent(context) || state.universalProfileHistorySourceId !== sourceId ||
+        (append && state.universalProfileHistory.length !== offset)) return;
+      const items = data?.items || [];
+      state.universalProfileHistory = append ? [...state.universalProfileHistory, ...items] : items;
+      state.universalProfileHistoryTotal = data?.total || 0;
+      renderUniversalProfileHistory();
+    } catch (error) {
+      if (workspaceIsCurrent(context) && state.universalProfileHistorySourceId === sourceId) {
+        if (append) setUniversalStatus(error.message || "Additional source profile history could not be loaded.", "is-error");
+        else $("#ud-profile-history").replaceChildren(node("p", "df-finding", error.message || "Source profile history could not be loaded."));
+      }
+    } finally {
+      if (append && workspaceIsCurrent(context) && state.universalProfileHistorySourceId === sourceId) renderUniversalProfileHistory();
+    }
+  }
+
+  function renderUniversalIngestions() {
+    const target = $("#ud-ingestion-list");
+    const more = $("#ud-ingestions-load-more");
+    more.hidden = state.universalIngestions.length >= state.universalIngestionTotal;
+    more.disabled = !state.tenant || state.universalIngestions.length >= state.universalIngestionTotal;
+    target.replaceChildren();
+    if (!state.universalIngestions.length) {
+      target.append(node("p", "df-empty", "No ingestion run is recorded for this source yet."));
+      return;
+    }
+    for (const ingestion of state.universalIngestions) {
+      const item = node("article", "df-ingestion-item");
+      const heading = node("div", "df-ingestion-heading");
+      heading.append(node("strong", "", ingestion.file_name));
+      heading.append(badge(ingestion.status.replaceAll("_", " "), ingestion.status === "blocked" || ingestion.status === "failed" ? "failed" : ingestion.status === "review_required" ? "warning" : ingestion.status === "promoted" ? "passed" : ""));
+      item.append(heading);
+      item.append(node("p", "", `${dateTimeText(ingestion.created_at)} · ${ingestion.counts.total_rows} rows · ${ingestion.entity_type || "not mapped"} · ${shortHash(ingestion.input_fingerprint)}`));
+      item.append(node("p", "", `Valid ${ingestion.counts.valid_rows} · invalid ${ingestion.counts.invalid_rows} · warnings ${ingestion.counts.warning_rows} · duplicates ${ingestion.counts.duplicate_rows} · promoted ${ingestion.counts.promoted_rows}`));
+      const open = node("button", "button button-secondary button-small", "Open review");
+      open.type = "button";
+      open.addEventListener("click", () => openUniversalIngestion(ingestion.source_id, ingestion.id));
+      item.append(open);
+      target.append(item);
+    }
+    if (state.universalIngestions.length < state.universalIngestionTotal) {
+      target.append(node("p", "df-contract-line", `Showing ${state.universalIngestions.length} of ${state.universalIngestionTotal} ingestion runs.`));
+    }
+  }
+
+  async function loadUniversalIngestions(sourceId, { append = false } = {}) {
+    const context = captureWorkspace();
+    if (append && state.universalIngestionsSourceId !== sourceId) return;
+    const offset = append ? state.universalIngestions.length : 0;
+    state.universalIngestionsSourceId = sourceId;
+    if (!append) {
+      state.universalIngestions = [];
+      state.universalIngestionTotal = 0;
+      $("#ud-ingestions-load-more").hidden = true;
+      $("#ud-ingestions-load-more").disabled = true;
+    }
+    const sourceSelect = $("#ud-history-source");
+    if (sourceSelect && state.universalSources.some((source) => source.source_id === sourceId)) sourceSelect.value = sourceId;
+    if (!append) $("#ud-ingestion-list").replaceChildren(node("p", "loading", "Loading ingestion history…"));
+    try {
+      const { data } = await request(`${universalBase(context.tenantId)}/sources/${encodeURIComponent(sourceId)}/ingestions?limit=50&offset=${offset}`);
+      if (!workspaceIsCurrent(context) || state.universalIngestionsSourceId !== sourceId ||
+        (append && state.universalIngestions.length !== offset)) return;
+      const items = data?.items || [];
+      state.universalIngestions = append ? [...state.universalIngestions, ...items] : items;
+      state.universalIngestionTotal = data?.total || 0;
+      renderUniversalIngestions();
+    } catch (error) {
+      if (workspaceIsCurrent(context) && state.universalIngestionsSourceId === sourceId) {
+        if (append) setUniversalStatus(error.message || "Additional ingestion history could not be loaded.", "is-error");
+        else $("#ud-ingestion-list").replaceChildren(node("p", "df-empty", error.message || "Ingestion history could not be loaded."));
+      }
+    } finally {
+      if (append && workspaceIsCurrent(context) && state.universalIngestionsSourceId === sourceId) renderUniversalIngestions();
+    }
+  }
+
+  async function loadMoreUniversalIngestions() {
+    const sourceId = state.universalIngestionsSourceId;
+    const button = $("#ud-ingestions-load-more");
+    if (!sourceId || button.disabled || state.universalIngestions.length >= state.universalIngestionTotal) return;
+    button.disabled = true;
+    await loadUniversalIngestions(sourceId, { append: true });
+  }
+
+  function renderUniversalData() {
+    renderUniversalOptions();
+    renderUniversalEntityOptions();
+    if (state.universalLoadError) {
+      $("#ud-source-list").replaceChildren(node("p", "df-finding", state.universalLoadError));
+      $("#ud-ingestion-list").replaceChildren(node("p", "df-finding", "Universal ingestion history is unavailable."));
+      $("#ud-record-list").replaceChildren(node("p", "df-finding", "Universal canonical records are unavailable."));
+      $("#ud-profile-history").replaceChildren();
+      $("#ud-profile-history").hidden = true;
+      $("#ud-record-lineage").replaceChildren();
+      $("#ud-record-lineage").hidden = true;
+      $("#ud-review-panel").hidden = true;
+      setUniversalStatus(`Universal Data is temporarily unavailable: ${state.universalLoadError}`, "is-error");
+      return;
+    }
+    renderUniversalSources();
+    renderUniversalIngestions();
+    renderUniversalRecords();
+    const current = state.universalCurrent;
+    if (current?.detail) renderUniversalIngestion();
+    else $("#ud-review-panel").hidden = true;
+    setUniversalStatus(state.tenantDataReady
+      ? `Universal Data loaded · ${state.universalSourceTotal} source(s) · ${state.universalSources.length} shown.`
+      : "Loading Universal Data permissions and evidence…");
+  }
+
+  async function registerUniversalSource(event) {
+    event.preventDefault();
+    if (!state.canWrite || !state.tenant) {
+      showMessage("Owner/admin access is required to register a Universal Data source.");
+      return;
+    }
+    const context = captureWorkspace();
+    const sourceType = $("#ud-source-type").value;
+    const body = {
+      source_key: $("#ud-source-key").value.trim(),
+      display_name: $("#ud-source-name").value.trim(),
+      source_type: sourceType,
+      authority_classification: $("#ud-source-authority").value,
+    };
+    const domain = $("#ud-source-domain").value.trim();
+    const freshness = $("#ud-source-freshness").value.trim();
+    if (domain) body.business_domain = domain;
+    if (freshness) body.freshness_max_age_hours = Number(freshness);
+    if (sourceType === "local_directory") body.connection_reference = "config://universal/local-directory";
+    const button = $("#ud-register-source-button");
+    button.disabled = true;
+    setUniversalStatus("Recording a new Company-scoped source profile…");
+    try {
+      const { data } = await request(`${universalBase(context.tenantId)}/sources`, { method: "POST", body });
+      if (!workspaceIsCurrent(context)) return;
+      $("#ud-source-form").reset();
+      await loadWorkspace();
+      if (state.tenant?.id === context.tenantId) {
+        $("#ud-upload-source").value = data.source_id;
+        $("#ud-history-source").value = data.source_id;
+        renderUniversalConnectorMode();
+        await loadUniversalIngestions(data.source_id);
+        setUniversalStatus(`Source ${data.display_name} registered at profile version ${data.version}. This records metadata only.`, "is-success");
+      }
+    } catch (error) {
+      if (state.tenant?.id === context.tenantId) setUniversalStatus(error.message || "The Universal source could not be registered.", "is-error");
+    } finally {
+      if (state.tenant?.id === context.tenantId) button.disabled = !state.canWrite;
+    }
+  }
+
+  function freshIdempotencyKey() {
+    return window.crypto?.randomUUID?.() || `ud-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  function idempotencyKeyForAttempt(stateProperty, fingerprint) {
+    const current = state[stateProperty];
+    if (current?.fingerprint === fingerprint) return current.key;
+    const key = freshIdempotencyKey();
+    state[stateProperty] = { fingerprint, key };
+    return key;
+  }
+
+  async function stageUniversalFile(event) {
+    event.preventDefault();
+    if (!state.canWrite || !state.tenant) {
+      showMessage("Owner/admin access is required to stage Universal Data files.");
+      return;
+    }
+    const sourceId = $("#ud-upload-source").value;
+    const file = $("#ud-upload-file").files?.[0];
+    if (!sourceId || !file) {
+      setUniversalStatus("Choose an enabled Universal source and a CSV/XLSX file.", "is-error");
+      return;
+    }
+    const context = captureWorkspace();
+    const form = new FormData();
+    form.append("file", file, file.name);
+    form.append("csv_delimiter", $("#ud-delimiter").value);
+    form.append("csv_encoding", $("#ud-encoding").value);
+    form.append("header_row", $("#ud-header-row").value || "1");
+    const uploadFingerprint = JSON.stringify([
+      context.tenantId,
+      sourceId,
+      file.name,
+      file.size,
+      file.lastModified,
+      $("#ud-delimiter").value,
+      $("#ud-encoding").value,
+      $("#ud-header-row").value || "1",
+    ]);
+    const idempotencyKey = idempotencyKeyForAttempt("universalUploadAttempt", uploadFingerprint);
+    const button = $("#ud-upload-button");
+    button.disabled = true;
+    setUniversalStatus("Inspecting file and retaining the original evidence…");
+    try {
+      const { data } = await request(`${universalBase(context.tenantId)}/sources/${encodeURIComponent(sourceId)}/ingestions`, {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: form,
+      });
+      if (!workspaceIsCurrent(context)) return;
+      state.universalUploadAttempt = null;
+      $("#ud-upload-file").value = "";
+      await loadUniversalIngestions(sourceId);
+      await openUniversalIngestion(sourceId, data.ingestion.id);
+      setUniversalStatus(`Evidence retained and inspected · ${data.ingestion.counts.total_rows} row(s) · original bytes are fingerprinted and preserved.`, "is-success");
+    } catch (error) {
+      if (error.code === "idempotency_key_reused") state.universalUploadAttempt = null;
+      if (workspaceIsCurrent(context)) setUniversalStatus(error.message || "The Universal Data file could not be staged.", "is-error");
+    } finally {
+      if (workspaceIsCurrent(context)) button.disabled = !state.canWrite;
+    }
+  }
+
+  async function stageUniversalLocalFile(event) {
+    event.preventDefault();
+    if (!state.canWrite || !state.tenant) {
+      showMessage("Owner/admin access is required to use the local connector.");
+      return;
+    }
+    const sourceId = $("#ud-upload-source").value;
+    const relativePath = $("#ud-sync-path").value.trim();
+    if (!sourceId || !relativePath) {
+      setUniversalStatus("Choose a local-directory source and enter a relative file path.", "is-error");
+      return;
+    }
+    const context = captureWorkspace();
+    const parseOptions = {
+      csv_delimiter: $("#ud-delimiter").value,
+      csv_encoding: $("#ud-encoding").value,
+      header_row: Number($("#ud-header-row").value || 1),
+    };
+    const syncFingerprint = JSON.stringify([context.tenantId, sourceId, relativePath, parseOptions]);
+    const idempotencyKey = idempotencyKeyForAttempt("universalSyncAttempt", syncFingerprint);
+    const button = $("#ud-sync-button");
+    button.disabled = true;
+    setUniversalStatus("Reading a bounded file from the configured local connector…");
+    try {
+      const { data } = await request(`${universalBase(context.tenantId)}/sources/${encodeURIComponent(sourceId)}/sync`, {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: { relative_path: relativePath, ...parseOptions },
+      });
+      if (!workspaceIsCurrent(context)) return;
+      state.universalSyncAttempt = null;
+      await loadUniversalIngestions(sourceId);
+      await openUniversalIngestion(sourceId, data.ingestion.id);
+      setUniversalStatus(`Local connector staged ${data.ingestion.file_name}. The original bytes are retained as source evidence.`, "is-success");
+    } catch (error) {
+      if (error.code === "idempotency_key_reused") state.universalSyncAttempt = null;
+      if (workspaceIsCurrent(context)) setUniversalStatus(error.message || "The local connector could not stage this file.", "is-error");
+    } finally {
+      if (workspaceIsCurrent(context)) button.disabled = !state.canWrite;
+    }
+  }
+
+  async function loadUniversalMappings(sourceId) {
+    const context = captureWorkspace();
+    state.universalMappings = [];
+    const select = $("#ud-existing-mapping");
+    select.replaceChildren(node("option", "", "Loading saved mapping versions…"));
+    select.options[0].value = "";
+    renderUniversalConnectorMode();
+    try {
+      const { data } = await request(`${universalBase(context.tenantId)}/sources/${encodeURIComponent(sourceId)}/mapping-profiles?limit=100&offset=0`);
+      if (!workspaceIsCurrent(context) || state.universalCurrent?.sourceId !== sourceId) return;
+      state.universalMappings = data?.items || [];
+      const previous = select.value;
+      select.replaceChildren(node("option", "", "Create a new mapping version"));
+      select.options[0].value = "";
+      for (const mapping of state.universalMappings) {
+        const option = node("option", "", `${mapping.profile_key} · v${mapping.version} · ${mapping.entity_type}`);
+        option.value = mapping.id;
+        select.append(option);
+      }
+      if (previous && state.universalMappings.some((mapping) => mapping.id === previous)) select.value = previous;
+      renderUniversalConnectorMode();
+    } catch (_error) {
+      state.universalMappings = [];
+      select.replaceChildren(node("option", "", "Saved mappings could not be loaded"));
+      select.options[0].value = "";
+      renderUniversalConnectorMode();
+    }
+  }
+
+  function populateUniversalWorksheetOptions(detail, selected) {
+    const select = $("#ud-worksheet");
+    select.replaceChildren();
+    for (const sheet of detail.available_worksheets || []) {
+      const option = node("option", "", `${sheet.name} · ${sheet.row_count ?? 0} row(s)`);
+      option.value = sheet.name;
+      select.append(option);
+    }
+    if (selected && Array.from(select.options).some((option) => option.value === selected)) select.value = selected;
+  }
+
+  function renderUniversalInspection(detail) {
+    const target = $("#ud-inspection");
+    target.replaceChildren();
+    const sheets = detail.available_worksheets || [];
+    for (const sheet of sheets) {
+      const card = node("article", "df-inspection-sheet");
+      card.append(node("h4", "", `${sheet.name} · ${sheet.row_count ?? 0} row(s)`));
+      card.append(node("p", "", `${(sheet.headers || []).length} column(s) · ${sheet.blank_rows_ignored ?? 0} blank row(s) ignored`));
+      for (const column of sheet.columns || []) {
+        const confidence = Math.round(Number(column.confidence || 0) * 100);
+        card.append(node("p", "", `${column.position}. ${column.name} · inferred ${column.inferred_type} (${confidence}% advisory) · ${column.note}`));
+      }
+      target.append(card);
+    }
+  }
+
+  function renderUniversalSummary(detail) {
+    const target = $("#ud-ingestion-summary");
+    target.replaceChildren();
+    const ingestion = detail.ingestion;
+    const values = [
+      ["Status", ingestion.status.replaceAll("_", " ")],
+      ["File", ingestion.file_name],
+      ["Rows", `${ingestion.counts.total_rows} total`],
+      ["Mapping", ingestion.mapping_profile_name ? `${ingestion.mapping_profile_name} · v${ingestion.mapping_version}` : "Not mapped"],
+      ["Entity", ingestion.entity_type || "Not selected"],
+      ["Validation", ingestion.validation_hash ? shortHash(ingestion.validation_hash) : "Not run"],
+      ["Evidence SHA-256", shortHash(ingestion.input_fingerprint)],
+      ["Captured source profile ID", shortHash(ingestion.source_profile_version_id)],
+    ];
+    for (const [label, value] of values) {
+      const item = node("div", "df-universal-summary-item");
+      item.append(node("span", "", label), node("strong", "", value));
+      target.append(item);
+    }
+  }
+
+  function renderUniversalMappingFields() {
+    const target = $("#ud-mapping-fields");
+    target.replaceChildren();
+    const current = state.universalCurrent;
+    if (!current?.detail) return;
+    const sheetName = $("#ud-worksheet").value;
+    const sheet = (current.detail.available_worksheets || []).find((item) => item.name === sheetName);
+    const entity = state.universalEntities.find((item) => item.entity_type === $("#ud-entity-type").value);
+    if (!sheet || !entity) {
+      target.append(node("p", "df-empty", "Choose a canonical entity and worksheet to create an explicit column mapping."));
+      return;
+    }
+    if (!state.universalMappingDraft) state.universalMappingDraft = { assignments: {}, field_options: {} };
+    const draft = state.universalMappingDraft;
+    const fieldByName = new Map((entity.fields || []).map((field) => [field.name, field]));
+    const fieldOptions = [{ value: "", label: "Choose a canonical field…" }, ...entity.fields.map((field) => ({ value: field.name, label: `${field.name}${field.required ? " · required" : ""}` })), { value: "__ignore__", label: "Explicitly ignore this column" }];
+    for (const header of sheet.headers || []) {
+      const row = node("div", "df-mapping-row");
+      const identity = node("div");
+      identity.append(node("strong", "", header));
+      const inference = (sheet.columns || []).find((column) => column.name === header);
+      if (inference) identity.append(node("span", "df-mapping-inference", `${inference.inferred_type} · ${Math.round(Number(inference.confidence || 0) * 100)}% advisory`));
+      const select = node("select");
+      select.setAttribute("aria-label", `Map source column ${header}`);
+      for (const optionData of fieldOptions) {
+        const option = node("option", "", optionData.label);
+        option.value = optionData.value;
+        select.append(option);
+      }
+      select.value = draft.assignments[header] || "";
+      const optionsSlot = node("div", "df-mapping-options");
+      select.addEventListener("change", () => {
+        const value = select.value;
+        if (value && value !== "__ignore__") {
+          for (const [otherHeader, assignment] of Object.entries(draft.assignments)) {
+            if (otherHeader !== header && assignment === value) draft.assignments[otherHeader] = "";
+          }
+        }
+        draft.assignments[header] = value;
+        renderUniversalMappingFields();
+      });
+      const mappedField = fieldByName.get(select.value);
+      if (mappedField) renderUniversalFieldOptions(optionsSlot, mappedField, draft);
+      row.append(identity, select, optionsSlot);
+      target.append(row);
+    }
+    const requiredMissing = entity.fields.filter((field) => field.required && !Object.values(draft.assignments).includes(field.name));
+    target.append(node("p", "df-contract-line", requiredMissing.length
+      ? `Required fields not currently mapped: ${requiredMissing.map((field) => field.name).join(", ")}. Validation will report missing fields until explicitly mapped.`
+      : "All required canonical fields have an explicit mapping. Verify any optional columns and field options before saving."));
+  }
+
+  function renderUniversalFieldOptions(target, field, draft) {
+    const saved = draft.field_options[field.name] || {};
+    const addSelect = (labelText, choices, current, onChange) => {
+      const label = node("label");
+      label.append(node("span", "", labelText));
+      const select = node("select");
+      for (const choice of choices) {
+        const option = node("option", "", choice.label);
+        option.value = choice.value;
+        select.append(option);
+      }
+      select.value = current ?? "";
+      select.addEventListener("change", () => onChange(select.value));
+      label.append(select);
+      target.append(label);
+    };
+    if (field.type === "date") {
+      addSelect("Date format", [
+        { value: "", label: "ISO dates only / no conversion" },
+        { value: "%Y-%m-%d", label: "YYYY-MM-DD" },
+        { value: "%d/%m/%Y", label: "DD/MM/YYYY" },
+        { value: "%m/%d/%Y", label: "MM/DD/YYYY" },
+        { value: "%Y/%m/%d", label: "YYYY/MM/DD" },
+        { value: "%d-%m-%Y", label: "DD-MM-YYYY" },
+      ], saved.date_format || "", (value) => {
+        const next = { ...(draft.field_options[field.name] || {}) };
+        if (value) next.date_format = value;
+        else delete next.date_format;
+        draft.field_options[field.name] = next;
+      });
+      return;
+    }
+    if (field.type === "decimal") {
+      addSelect("Decimal separator", [
+        { value: "", label: "Choose…" }, { value: ".", label: "Dot" }, { value: ",", label: "Comma" },
+      ], saved.decimal_separator || "", (value) => {
+        const next = { ...(draft.field_options[field.name] || {}) };
+        if (value) next.decimal_separator = value;
+        else delete next.decimal_separator;
+        if (next.thousands_separator === value) delete next.thousands_separator;
+        draft.field_options[field.name] = next;
+        renderUniversalMappingFields();
+      });
+      const decimal = saved.decimal_separator;
+      const groupChoices = [
+        { value: "", label: "No thousands separator" },
+        { value: ",", label: "Comma" }, { value: ".", label: "Dot" },
+        { value: " ", label: "Space" }, { value: "'", label: "Apostrophe" },
+      ].filter((choice) => choice.value === "" || choice.value !== decimal);
+      addSelect("Thousands separator", groupChoices, saved.thousands_separator || "", (value) => {
+        const next = { ...(draft.field_options[field.name] || {}) };
+        if (value) next.thousands_separator = value;
+        else delete next.thousands_separator;
+        draft.field_options[field.name] = next;
+      });
+      return;
+    }
+    addSelect("Text case", [
+      { value: "preserve", label: "Preserve source" },
+      { value: "upper", label: "Uppercase (explicit)" },
+      { value: "lower", label: "Lowercase (explicit)" },
+    ], saved.text_case || "preserve", (value) => {
+      draft.field_options[field.name] = { ...(draft.field_options[field.name] || {}), text_case: value };
+    });
+  }
+
+  function createUniversalMappingDraft(version) {
+    const draft = { assignments: {}, field_options: {} };
+    if (version) {
+      for (const [fieldName, header] of Object.entries(version.field_mapping || {})) draft.assignments[header] = fieldName;
+      for (const header of version.ignored_columns || []) draft.assignments[header] = "__ignore__";
+      draft.field_options = JSON.parse(JSON.stringify(version.field_options || {}));
+    }
+    return draft;
+  }
+
+  function renderUniversalValidationSummary(detail) {
+    const target = $("#ud-validation-summary");
+    target.replaceChildren();
+    const snapshot = detail.validation_snapshot;
+    if (!snapshot) {
+      target.append(node("p", "df-empty", "Save a mapping version and run validation to review row findings and duplicate candidates."));
+      return;
+    }
+    const counts = detail.ingestion.counts;
+    target.append(node("p", "", `Validation ${shortHash(detail.ingestion.validation_hash)} · ${counts.valid_rows} valid · ${counts.invalid_rows} invalid · ${counts.warning_rows} warning · ${counts.duplicate_rows} duplicate. Optional blanks remain explicit; no missing values are inferred.`));
+    for (const finding of snapshot.dataset_findings || []) {
+      target.append(node("p", finding.severity === "error" ? "df-finding" : "df-finding is-warning", `${finding.code}: ${finding.message}`));
+    }
+    if (counts.warning_rows || counts.duplicate_rows) {
+      target.append(node("p", "df-contract-line", "Promotion requires explicit warning/duplicate acknowledgement. Possible cross-source matches remain separate records unless a reviewer resolves them; no automatic merge occurs."));
+    }
+  }
+
+  function renderUniversalRows() {
+    const current = state.universalCurrent;
+    const target = $("#ud-row-list");
+    target.replaceChildren();
+    if (!current?.rows?.length) {
+      target.append(node("p", "df-empty", "No data rows are available for this worksheet."));
+    } else {
+      for (const row of current.rows) {
+        const item = node("article", "df-row-item");
+        const heading = node("div", "df-row-heading");
+        heading.append(node("strong", "", `${row.worksheet_name} · source row ${row.row_number}`));
+        const statusKind = row.row_status === "invalid" ? "failed" : row.row_status === "warning" || row.row_status === "duplicate" ? "warning" : row.row_status === "valid" ? "passed" : "";
+        heading.append(badge(row.row_status, statusKind));
+        item.append(heading);
+        if (row.source_record_id) item.append(node("p", "", `Source record key: ${row.source_record_id}`));
+        const data = node("pre");
+        data.textContent = `Raw evidence: ${shortJson(row.raw_values, 1000)}\nMapped values: ${shortJson(row.mapped_values, 1200)}`;
+        item.append(data);
+        for (const finding of row.findings || []) {
+          const issue = node("p", finding.severity === "error" ? "df-finding" : finding.severity === "warning" ? "df-finding is-warning" : "df-contract-line");
+          issue.textContent = `${finding.code}: ${finding.message}`;
+          item.append(issue);
+          if (Array.isArray(finding.candidates) && finding.candidates.length) {
+            const candidates = node("ul", "df-lineage-list");
+            for (const candidate of finding.candidates) {
+              const li = node("li", "", `${candidate.record_id} · source ${candidate.source_id} · ${candidate.matching_fields.join(", ")} · unresolved`);
+              candidates.append(li);
+            }
+            item.append(candidates);
+          }
+        }
+        target.append(item);
+      }
+    }
+    const more = $("#ud-rows-load-more");
+    more.hidden = !current || current.rows.length >= current.rowsTotal;
+    more.disabled = !current || current.rows.length >= current.rowsTotal;
+  }
+
+  function renderUniversalIngestion() {
+    const current = state.universalCurrent;
+    if (!current?.detail) return;
+    const detail = current.detail;
+    const ingestion = detail.ingestion;
+    $("#ud-review-panel").hidden = false;
+    $("#ud-review-title").textContent = `${ingestion.file_name} · ingestion review`;
+    renderUniversalSummary(detail);
+    renderUniversalInspection(detail);
+    renderUniversalValidationSummary(detail);
+    populateUniversalWorksheetOptions(detail, ingestion.selected_worksheet || detail.mapping_profile_version?.worksheet_name);
+    $("#ud-entity-type").value = detail.mapping_profile_version?.entity_type || $("#ud-entity-type").value || "";
+    if (detail.mapping_profile_version) {
+      $("#ud-profile-key").value = detail.mapping_profile_version.profile_key;
+      $("#ud-profile-name").value = detail.mapping_profile_version.display_name;
+    }
+    if (!state.universalMappingDraft) state.universalMappingDraft = createUniversalMappingDraft(detail.mapping_profile_version);
+    renderUniversalMappingFields();
+    renderUniversalRows();
+    const promoted = ingestion.status === "promoted";
+    $("#ud-map-button").disabled = !state.canWrite || promoted;
+    $("#ud-validate-button").disabled = !state.canWrite || promoted || !ingestion.mapping_profile_version_id;
+    $("#ud-promote-button").disabled = !state.canWrite || promoted || !["validated", "review_required"].includes(ingestion.status);
+    $("#ud-promote-button").hidden = promoted || !["validated", "review_required"].includes(ingestion.status);
+    $("#ud-download-evidence").disabled = false;
+    $("#ud-acknowledge").checked = false;
+    $("#ud-correction-reason").value = "";
+    renderUniversalConnectorMode();
+  }
+
+  async function loadUniversalRows({ append = false } = {}) {
+    const current = state.universalCurrent;
+    if (!current || !state.tenant) return;
+    const context = captureWorkspace();
+    const offset = append ? current.rows.length : 0;
+    try {
+      const { data } = await request(`${universalBase(context.tenantId)}/sources/${encodeURIComponent(current.sourceId)}/ingestions/${encodeURIComponent(current.ingestionId)}/rows?limit=50&offset=${offset}`);
+      if (!workspaceIsCurrent(context) || state.universalCurrent?.ingestionId !== current.ingestionId) return;
+      current.rows = append ? [...current.rows, ...(data.items || [])] : (data.items || []);
+      current.rowsTotal = data.total || 0;
+      state.universalRowsOffset = current.rows.length;
+      state.universalRowsTotal = current.rowsTotal;
+      renderUniversalRows();
+    } catch (error) {
+      if (workspaceIsCurrent(context)) setUniversalStatus(error.message || "Ingestion rows could not be loaded.", "is-error");
+    }
+  }
+
+  async function openUniversalIngestion(sourceId, ingestionId) {
+    if (!state.tenant) return;
+    const context = captureWorkspace();
+    const reviewSequence = ++state.universalReviewSequence;
+    setUniversalStatus("Loading immutable ingestion evidence and review state…");
+    try {
+      const [detailResult, rowsResult] = await Promise.all([
+        request(`${universalBase(context.tenantId)}/sources/${encodeURIComponent(sourceId)}/ingestions/${encodeURIComponent(ingestionId)}`),
+        request(`${universalBase(context.tenantId)}/sources/${encodeURIComponent(sourceId)}/ingestions/${encodeURIComponent(ingestionId)}/rows?limit=50&offset=0`),
+      ]);
+      if (!workspaceIsCurrent(context) || state.universalReviewSequence !== reviewSequence) return;
+      const detail = detailResult.data;
+      state.universalCurrent = {
+        sourceId,
+        ingestionId,
+        detail,
+        rows: rowsResult.data?.items || [],
+        rowsTotal: rowsResult.data?.total || 0,
+      };
+      state.universalMappingDraft = createUniversalMappingDraft(detail.mapping_profile_version);
+      $("#ud-profile-key").value = detail.mapping_profile_version?.profile_key || "";
+      $("#ud-profile-name").value = detail.mapping_profile_version?.display_name || "";
+      renderUniversalIngestion();
+      await loadUniversalMappings(sourceId);
+      if (!workspaceIsCurrent(context) || state.universalReviewSequence !== reviewSequence) return;
+      $("#ud-review-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+      setUniversalStatus(`Ingestion ${detail.ingestion.id} loaded · source profile and mapping versions are preserved in its lineage.`);
+      updateRoleUi();
+    } catch (error) {
+      if (workspaceIsCurrent(context) && state.universalReviewSequence === reviewSequence) setUniversalStatus(error.message || "The Universal ingestion could not be opened.", "is-error");
+    }
+  }
+
+  function buildUniversalMappingBody() {
+    const current = state.universalCurrent;
+    if (!current) throw new Error("Open an ingestion before saving a mapping.");
+    const entityType = $("#ud-entity-type").value;
+    const worksheetName = $("#ud-worksheet").value;
+    const worksheet = (current.detail.available_worksheets || []).find((sheet) => sheet.name === worksheetName);
+    if (!worksheet) throw new Error("Choose a worksheet from the uploaded file.");
+    const draft = state.universalMappingDraft || { assignments: {}, field_options: {} };
+    const fieldMapping = {};
+    const ignoredColumns = [];
+    for (const header of worksheet.headers || []) {
+      const assignment = draft.assignments[header];
+      if (!assignment) throw new Error(`Choose a field or explicitly ignore “${header}”.`);
+      if (assignment === "__ignore__") ignoredColumns.push(header);
+      else {
+        if (fieldMapping[assignment]) throw new Error(`Only one source column may map to “${assignment}”.`);
+        fieldMapping[assignment] = header;
+      }
+    }
+    const fieldOptions = {};
+    for (const [field, options] of Object.entries(draft.field_options || {})) {
+      if (fieldMapping[field] && options && Object.keys(options).length) fieldOptions[field] = options;
+    }
+    return {
+      profile_key: $("#ud-profile-key").value.trim(),
+      display_name: $("#ud-profile-name").value.trim(),
+      entity_type: entityType,
+      worksheet_name: worksheetName,
+      field_mapping: fieldMapping,
+      ignored_columns: ignoredColumns,
+      field_options: fieldOptions,
+    };
+  }
+
+  async function saveUniversalMapping(event) {
+    event.preventDefault();
+    const current = state.universalCurrent;
+    if (!current || !state.canWrite) return;
+    const context = captureWorkspace();
+    let body;
+    try {
+      body = buildUniversalMappingBody();
+    } catch (error) {
+      setUniversalStatus(error.message, "is-error");
+      return;
+    }
+    const button = $("#ud-map-button");
+    button.disabled = true;
+    setUniversalStatus("Saving an immutable mapping-profile version and attaching it to this ingestion…");
+    try {
+      await request(`${universalBase(context.tenantId)}/sources/${encodeURIComponent(current.sourceId)}/ingestions/${encodeURIComponent(current.ingestionId)}/mapping`, { method: "POST", body });
+      if (!workspaceIsCurrent(context)) return;
+      await openUniversalIngestion(current.sourceId, current.ingestionId);
+      setUniversalStatus("Mapping version saved. The displayed source columns were either mapped or explicitly ignored.", "is-success");
+    } catch (error) {
+      if (workspaceIsCurrent(context)) setUniversalStatus(error.message || "The mapping could not be saved.", "is-error");
+    } finally {
+      if (workspaceIsCurrent(context)) button.disabled = !state.canWrite;
+    }
+  }
+
+  async function applyUniversalMapping() {
+    const current = state.universalCurrent;
+    const versionId = $("#ud-existing-mapping").value;
+    if (!current || !versionId || !state.canWrite) return;
+    const context = captureWorkspace();
+    const button = $("#ud-apply-mapping");
+    button.disabled = true;
+    try {
+      await request(`${universalBase(context.tenantId)}/sources/${encodeURIComponent(current.sourceId)}/ingestions/${encodeURIComponent(current.ingestionId)}/mapping`, {
+        method: "PUT",
+        body: { mapping_profile_version_id: versionId },
+      });
+      if (!workspaceIsCurrent(context)) return;
+      await openUniversalIngestion(current.sourceId, current.ingestionId);
+      setUniversalStatus("The selected immutable mapping version was applied to this ingestion.", "is-success");
+    } catch (error) {
+      if (workspaceIsCurrent(context)) setUniversalStatus(error.message || "The saved mapping version could not be applied.", "is-error");
+    } finally {
+      if (workspaceIsCurrent(context)) renderUniversalConnectorMode();
+    }
+  }
+
+  async function validateUniversalIngestion() {
+    const current = state.universalCurrent;
+    if (!current || !state.canWrite) return;
+    const context = captureWorkspace();
+    const button = $("#ud-validate-button");
+    button.disabled = true;
+    setUniversalStatus("Validating rows against the versioned contract and mapping…");
+    try {
+      const { data } = await request(`${universalBase(context.tenantId)}/sources/${encodeURIComponent(current.sourceId)}/ingestions/${encodeURIComponent(current.ingestionId)}/validate`, { method: "POST" });
+      if (!workspaceIsCurrent(context)) return;
+      await openUniversalIngestion(current.sourceId, current.ingestionId);
+      const counts = data.ingestion.counts;
+      setUniversalStatus(`Validation complete · ${counts.valid_rows} valid · ${counts.invalid_rows} invalid · ${counts.warning_rows} warning · ${counts.duplicate_rows} duplicate.`, counts.invalid_rows ? "is-error" : "is-success");
+    } catch (error) {
+      if (workspaceIsCurrent(context)) setUniversalStatus(error.message || "Validation could not be completed.", "is-error");
+    } finally {
+      if (workspaceIsCurrent(context)) updateRoleUi();
+    }
+  }
+
+  async function promoteUniversalIngestion() {
+    const current = state.universalCurrent;
+    if (!current || !state.canWrite) return;
+    const context = captureWorkspace();
+    const body = {
+      acknowledge_warnings: $("#ud-acknowledge").checked,
+      correction_reason: $("#ud-correction-reason").value.trim() || null,
+    };
+    const button = $("#ud-promote-button");
+    button.disabled = true;
+    setUniversalStatus("Recording owner/admin review and applying qualified rows with full source lineage…");
+    try {
+      const { data } = await request(`${universalBase(context.tenantId)}/sources/${encodeURIComponent(current.sourceId)}/ingestions/${encodeURIComponent(current.ingestionId)}/promote`, { method: "POST", body });
+      if (!workspaceIsCurrent(context)) return;
+      await openUniversalIngestion(current.sourceId, current.ingestionId);
+      await loadUniversalIngestions(current.sourceId);
+      await loadUniversalRecords();
+      setUniversalStatus(`Promotion recorded · ${data.created_records} created · ${data.revised_records} revised · ${data.unchanged_records} unchanged · ${data.withheld_duplicate_rows} duplicate row(s) withheld. No Core Financials facts were created.`, "is-success");
+    } catch (error) {
+      if (workspaceIsCurrent(context)) setUniversalStatus(error.message || "Promotion was not completed.", "is-error");
+    } finally {
+      if (workspaceIsCurrent(context)) updateRoleUi();
+    }
+  }
+
+  async function downloadUniversalEvidence() {
+    const current = state.universalCurrent;
+    if (!current) return;
+    const context = captureWorkspace();
+    try {
+      const blob = await requestBlob(`${universalBase(context.tenantId)}/sources/${encodeURIComponent(current.sourceId)}/ingestions/${encodeURIComponent(current.ingestionId)}/evidence`);
+      if (!workspaceIsCurrent(context)) return;
+      const objectUrl = URL.createObjectURL(blob);
+      const link = node("a");
+      link.href = objectUrl;
+      link.download = current.detail.ingestion.file_name;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (error) {
+      if (workspaceIsCurrent(context)) setUniversalStatus(error.message || "Original source evidence could not be downloaded.", "is-error");
+    }
+  }
+
+  function renderUniversalRecords() {
+    const target = $("#ud-record-list");
+    if (!target) return;
+    const count = $("#ud-record-count");
+    count.textContent = state.universalRecordTotal
+      ? `Showing ${state.universalRecords.length} of ${state.universalRecordTotal} canonical records.`
+      : "";
+    const more = $("#ud-records-load-more");
+    more.hidden = state.universalRecords.length >= state.universalRecordTotal;
+    more.disabled = !state.tenant || state.universalRecords.length >= state.universalRecordTotal;
+    target.replaceChildren();
+    if (!state.universalRecords.length) {
+      target.append(node("p", "df-empty", "No canonical records are available for the selected filter. This is not evidence that the business has no such data."));
+      return;
+    }
+    for (const record of state.universalRecords) {
+      const item = node("article", "df-record-item");
+      const heading = node("div", "df-record-heading");
+      heading.append(node("strong", "", `${record.entity_type} · ${record.source_record_id}`));
+      heading.append(badge(`revision ${record.revision}`, "passed"));
+      item.append(heading);
+      item.append(node("p", "", `Source ${record.source_id} · ingestion ${record.ingestion_id} · ${shortHash(record.attributes_hash)}`));
+      const attributes = node("pre");
+      attributes.textContent = shortJson(record.attributes, 1200);
+      item.append(attributes);
+      const lineageButton = node("button", "button button-quiet button-small", "View revision lineage");
+      lineageButton.type = "button";
+      lineageButton.addEventListener("click", () => loadUniversalRecordLineage(record.id));
+      item.append(lineageButton);
+      target.append(item);
+    }
+  }
+
+  async function loadUniversalRecords({ append = false } = {}) {
+    if (!state.tenant) return;
+    const context = captureWorkspace();
+    const entityType = $("#ud-record-entity").value;
+    if (append && state.universalRecordFilter !== entityType) return;
+    const filterChanged = state.universalRecordFilter !== entityType;
+    state.universalRecordFilter = entityType;
+    const offset = append ? state.universalRecords.length : 0;
+    if (filterChanged && !append) {
+      state.universalRecords = [];
+      state.universalRecordTotal = 0;
+      $("#ud-record-count").textContent = "";
+      state.universalRecordLineageId = null;
+      $("#ud-record-lineage").replaceChildren();
+      $("#ud-record-lineage").hidden = true;
+      $("#ud-records-load-more").hidden = true;
+      $("#ud-records-load-more").disabled = true;
+      $("#ud-record-list").replaceChildren(node("p", "loading", "Loading canonical records…"));
+    }
+    const query = new URLSearchParams({ limit: "50", offset: String(offset) });
+    if (entityType) query.set("entity_type", entityType);
+    try {
+      const { data } = await request(`${universalBase(context.tenantId)}/records?${query.toString()}`);
+      if (!workspaceIsCurrent(context) || state.universalRecordFilter !== entityType ||
+        (append && state.universalRecords.length !== offset)) return;
+      const items = data?.items || [];
+      state.universalRecords = append ? [...state.universalRecords, ...items] : items;
+      state.universalRecordTotal = data?.total || 0;
+      renderUniversalRecords();
+    } catch (error) {
+      if (workspaceIsCurrent(context) && state.universalRecordFilter === entityType) {
+        if (append) setUniversalStatus(error.message || "Additional canonical records could not be loaded.", "is-error");
+        else $("#ud-record-list").replaceChildren(node("p", "df-empty", error.message || "Canonical records could not be loaded."));
+      }
+    } finally {
+      if (append && workspaceIsCurrent(context) && state.universalRecordFilter === entityType) renderUniversalRecords();
+    }
+  }
+
+  async function loadMoreUniversalRecords() {
+    const button = $("#ud-records-load-more");
+    if (!state.tenant || button.disabled || state.universalRecords.length >= state.universalRecordTotal) return;
+    button.disabled = true;
+    await loadUniversalRecords({ append: true });
+  }
+
+  async function loadUniversalRecordLineage(recordId) {
+    const context = captureWorkspace();
+    state.universalRecordLineageId = recordId;
+    const target = $("#ud-record-lineage");
+    target.replaceChildren(node("p", "loading", "Loading immutable revision lineage…"));
+    target.hidden = false;
+    try {
+      const { data } = await request(`${universalBase(context.tenantId)}/records/${encodeURIComponent(recordId)}/lineage?limit=50&offset=0`);
+      if (!workspaceIsCurrent(context) || state.universalRecordLineageId !== recordId) return;
+      target.replaceChildren(node("h4", "", "Immutable revision lineage"));
+      for (const revision of data?.items || []) {
+        const item = node("article", "df-history-item");
+        item.append(node("h5", "", `Revision ${revision.revision} · ${revision.source_record_id}`));
+        item.append(node("p", "", `${revision.file_name} · ${revision.worksheet_name}, row ${revision.row_number} · captured ${dateTimeText(revision.captured_at)} · promoted ${dateTimeText(revision.promoted_at)}`));
+        item.append(node("p", "", `Mapping ${revision.mapping_profile_id} v${revision.mapping_version} · source profile v${revision.source_profile_version} · reviewer ${revision.promoted_by_user_id}`));
+        item.append(node("p", "", `Row ${shortHash(revision.row_hash)} · validation ${shortHash(revision.validation_hash)} · attributes ${shortHash(revision.attributes_hash)}`));
+        target.append(item);
+      }
+      target.hidden = false;
+    } catch (error) {
+      if (workspaceIsCurrent(context) && state.universalRecordLineageId === recordId) {
+        target.replaceChildren(node("p", "df-finding", error.message || "Record lineage could not be loaded."));
+        setUniversalStatus(error.message || "Record lineage could not be loaded.", "is-error");
+      }
+    }
+  }
+
+  async function loadMoreUniversalRows() {
+    const current = state.universalCurrent;
+    const button = $("#ud-rows-load-more");
+    if (!current || button.disabled || current.rows.length >= current.rowsTotal) return;
+    button.disabled = true;
+    await loadUniversalRows({ append: true });
+    if (state.universalCurrent?.ingestionId === current.ingestionId) {
+      button.disabled = current.rows.length >= current.rowsTotal;
+    }
+  }
+
+  async function bindEvents() {
     $("#company-picker").addEventListener("change", async (event) => {
       const tenant = state.tenants.find((item) => item.id === event.target.value);
       if (!tenant) return;
@@ -1188,6 +2330,53 @@
     $("#load-more-sources-button").addEventListener("click", loadMoreSources);
     $("#load-more-imports-button").addEventListener("click", loadMoreImports);
     $("#close-evidence-button").addEventListener("click", () => { $("#evidence-panel").hidden = true; });
+    $("#ud-refresh-button").addEventListener("click", loadWorkspace);
+    $("#ud-source-form").addEventListener("submit", registerUniversalSource);
+    $("#ud-upload-form").addEventListener("submit", stageUniversalFile);
+    $("#ud-sync-form").addEventListener("submit", stageUniversalLocalFile);
+    $("#ud-upload-source").addEventListener("change", (event) => {
+      const sourceId = event.target.value;
+      if (sourceId && state.universalSources.some((source) => source.source_id === sourceId)) {
+        $("#ud-history-source").value = sourceId;
+        void loadUniversalIngestions(sourceId);
+      }
+      renderUniversalConnectorMode();
+    });
+    $("#ud-history-source").addEventListener("change", (event) => {
+      const sourceId = event.target.value;
+      if (sourceId) void loadUniversalIngestions(sourceId);
+      else {
+        state.universalIngestionsSourceId = null;
+        state.universalIngestions = [];
+        state.universalIngestionTotal = 0;
+        renderUniversalIngestions();
+      }
+    });
+    $("#ud-mapping-form").addEventListener("submit", saveUniversalMapping);
+    $("#ud-entity-type").addEventListener("change", () => {
+      state.universalMappingDraft = { assignments: {}, field_options: {} };
+      renderUniversalMappingFields();
+    });
+    $("#ud-worksheet").addEventListener("change", renderUniversalMappingFields);
+    $("#ud-existing-mapping").addEventListener("change", renderUniversalConnectorMode);
+    $("#ud-apply-mapping").addEventListener("click", applyUniversalMapping);
+    $("#ud-validate-button").addEventListener("click", validateUniversalIngestion);
+    $("#ud-promote-button").addEventListener("click", promoteUniversalIngestion);
+    $("#ud-acknowledge").addEventListener("change", updateRoleUi);
+    $("#ud-download-evidence").addEventListener("click", downloadUniversalEvidence);
+    $("#ud-close-review").addEventListener("click", () => {
+      state.universalReviewSequence += 1;
+      state.universalCurrent = null;
+      state.universalMappingDraft = null;
+      $("#ud-review-panel").hidden = true;
+      updateRoleUi();
+    });
+    $("#ud-rows-load-more").addEventListener("click", loadMoreUniversalRows);
+    $("#ud-record-entity").addEventListener("change", loadUniversalRecords);
+    $("#ud-records-refresh").addEventListener("click", () => loadUniversalRecords());
+    $("#ud-sources-load-more").addEventListener("click", loadMoreUniversalSources);
+    $("#ud-ingestions-load-more").addEventListener("click", loadMoreUniversalIngestions);
+    $("#ud-records-load-more").addEventListener("click", loadMoreUniversalRecords);
   }
 
   async function bootstrap() {

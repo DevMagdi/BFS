@@ -52,6 +52,16 @@ def _upload_body_limit(scope: Scope, max_file_bytes: int) -> _UploadBodyLimit | 
                 "The import upload request exceeds the configured size limit.",
             )
         if (
+            len(parts) == 9
+            and parts[4:7] == ["company-data", "universal", "sources"]
+            and parts[7]
+            and parts[8] == "ingestions"
+        ):
+            return _UploadBodyLimit(
+                multipart_upload_request_body_limit(max_file_bytes),
+                "The Universal Data upload request exceeds the configured size limit.",
+            )
+        if (
             len(parts) == 8
             and parts[4:6] == ["company-data", "customer-commitments"]
             and parts[6]

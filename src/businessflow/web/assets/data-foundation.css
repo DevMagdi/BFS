@@ -110,3 +110,56 @@
   .df-evidence-form { align-items: stretch; flex-direction: column; }
   .df-commitment-card-heading { flex-direction: column; }
 }
+
+.df-universal-panel { margin-top: 20px; }
+.df-universal-boundary { margin: 12px 0 14px; }
+.df-universal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.df-universal-card, .df-universal-subpanel { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #fbfdfb; }
+.df-universal-subpanel { margin-top: 14px; background: #fff; }
+.df-universal-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.df-universal-form .field { margin-bottom: 10px; }
+.df-universal-wide { grid-column: 1 / -1; }
+.df-local-sync-form { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.df-universal-toolbar { display: flex; align-items: center; gap: 8px; }
+.df-universal-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 8px 0 12px; }
+.df-universal-summary-item { min-width: 0; padding: 9px; border-radius: 8px; background: #edf3ef; }
+.df-universal-summary-item span { display: block; color: var(--muted); font-size: 9px; text-transform: uppercase; }
+.df-universal-summary-item strong { display: block; margin-top: 4px; color: var(--ink); font-size: 12px; overflow-wrap: anywhere; }
+.df-inspection-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-bottom: 13px; }
+.df-inspection-sheet { min-width: 0; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.df-inspection-sheet h4 { margin: 0 0 6px; font-size: 13px; }
+.df-inspection-sheet p { margin: 2px 0; color: var(--muted); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.df-mapping-form { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #f8fbf9; }
+.df-mapping-fields { display: grid; gap: 7px; }
+.df-mapping-row { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(160px, 1fr) minmax(150px, 1fr); gap: 9px; align-items: center; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.df-mapping-row > strong { min-width: 0; font-size: 11px; overflow-wrap: anywhere; }
+.df-mapping-inference { color: var(--soft); font-size: 9px; line-height: 1.4; }
+.df-mapping-row select { min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: #fff; font: inherit; font-size: 10px; }
+.df-mapping-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.df-mapping-options label { display: grid; gap: 3px; color: var(--muted); font-size: 9px; }
+.df-existing-mapping-action { display: flex; align-items: end; justify-content: space-between; }
+.df-validation-summary { margin: 12px 0; }
+.df-validation-summary p { margin: 5px 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.df-universal-review-actions { display: grid; gap: 4px; margin: 10px 0 14px; padding: 12px; border: 1px solid #d9e4de; border-radius: 10px; background: #f4faf6; }
+.df-row-list, .df-ingestion-list, .df-record-list { display: grid; gap: 8px; }
+.df-row-item, .df-ingestion-item, .df-record-item { min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: #fbfdfb; }
+.df-row-heading, .df-ingestion-heading, .df-record-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.df-row-item p, .df-ingestion-item p, .df-record-item p { margin: 4px 0; color: var(--muted); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.df-row-item pre { max-height: 120px; overflow: auto; padding: 8px; border-radius: 6px; color: #415a54; background: #f1f5f2; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 9px; }
+.df-record-lineage { display: grid; gap: 7px; margin-top: 10px; }
+.df-record-lineage h4 { margin: 0; font-size: 13px; }
+.df-profile-history { display: grid; gap: 7px; margin-top: 10px; }
+.df-ingestion-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.df-universal-bottom-grid { margin-top: 14px; }
+.df-universal-bottom-grid .field { margin-bottom: 10px; }
+@media (max-width: 900px) {
+  .df-universal-grid { grid-template-columns: 1fr; }
+  .df-inspection-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 650px) {
+  .df-universal-form { grid-template-columns: 1fr; }
+  .df-universal-wide { grid-column: 1; }
+  .df-universal-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .df-mapping-row { grid-template-columns: 1fr; }
+  .df-universal-toolbar { align-items: stretch; flex-direction: column; }
+}

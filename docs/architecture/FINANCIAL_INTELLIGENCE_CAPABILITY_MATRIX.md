@@ -2,7 +2,7 @@
 
 - **Assessment date:** 2026-11-21 (UTC)
 - **Repository state assessed:** `arena/11962b80-bfs`, based on `4e16ecd26d0ae7beb36c596d2a0fcee93e08b6c0`
-- **Current migration note:** This historical assessment predates the Phase 1 manual customer-commitment increment. Current migration head is `0018_customer_commitments`; it adds a separate Company Data workflow and does not change Core Financials tables, measures, or inputs.
+- **Current migration note:** This historical finance assessment predates the Phase 1 manual customer-commitment and Phase 2 Universal Data increments. Current migration head is `0019_universal_data_foundation`; 0018 and 0019 add separate Company Data workflows and do not change Core Financials tables, measures, or inputs.
 - **Purpose:** distinguish implementation and test artifacts from partial behavior, research, roadmap proposals, and missing business foundations. This is not finance-owner approval, accounting advice, customer-data authorization, or milestone acceptance.
 
 ## How to read the status

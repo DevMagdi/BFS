@@ -13,7 +13,7 @@ The owner-directed strategy is not yet validated with customers. The repository 
 
 BusinessFlow must be able to start from different data realities:
 
-- **Fragmented systems:** later governed source integrations should connect selected ERP, CRM, accounting, HR, and operations evidence; no live connector is currently implemented.
+- **Fragmented systems:** later governed source integrations should connect selected ERP, CRM, accounting, HR, and operations evidence. No remote/live system connector or synchronization service is implemented; Phase 2 provides only a bounded, operator-provisioned local-directory reader.
 - **Excel/document-led processes:** make mapping, validation, source identity, quality, and lineage explicit. Current M4 supports six workforce/project CSV/XLSX datasets only; it is not document extraction or general import.
 - **No established systems:** offer a small structured capture flow for the selected use case, not a replacement ERP. That guided foundation is a target, not current functionality.
 

@@ -19,7 +19,7 @@
           <span>business<span class="wordmark-light">flow</span></span>
         </a>
         <div class="topbar-right">
-          <span class="demo-stamp">COMPANY DATA · M4 IMPORTS &amp; MANUAL CAPTURE</span>
+          <span class="demo-stamp">COMPANY DATA · M4 · UNIVERSAL DATA · MANUAL CAPTURE</span>
           <span id="user-label" class="user-label" hidden></span>
           <a class="button button-quiet button-small" href="/capacity-workspace.html">Capacity workflow</a>
           <a class="button button-quiet button-small" href="/">Main workspace</a>
@@ -105,6 +105,78 @@
               <label class="field" for="source-as-of"><span>Source data as-of (optional)</span><input id="source-as-of" type="datetime-local"><small id="timezone-note">If entered, interpreted in the browser's local time zone. This is a user assertion, not independently verified.</small></label>
               <div class="df-form-actions"><button id="record-ingestion-button" class="button button-primary" type="submit">Record evidence</button></div>
             </form>
+          </section>
+
+          <section class="panel df-panel df-universal-panel" aria-labelledby="universal-title">
+            <div class="df-section-heading">
+              <div><p class="eyebrow">UNIVERSAL DATA · GOVERNED SOURCE WORKFLOW</p><h2 id="universal-title">Universal Data Hub</h2></div>
+              <button id="ud-refresh-button" class="button button-quiet button-small" type="button">Refresh Hub</button>
+            </div>
+            <p class="df-intro">Register Company-owned data sources, retain original CSV/XLSX evidence, inspect sheets and columns, version explicit mappings, validate rows, review conflicts, and promote only through an authorized human action. Records remain source-scoped and never enter Core Financials automatically.</p>
+            <div class="notice notice-demo df-universal-boundary" role="note"><span class="notice-symbol" aria-hidden="true">!</span><p><strong>Evidence and suggestions are not authority.</strong> Schema detection is advisory; it never chooses a mapping or fills missing values. Candidate matches are not merged. CSV/XLSX uploads and a configured local-directory connector are supported here. Remote ERP/CRM/API connectors, PDF extraction and scanned-document OCR are not enabled in this build.</p></div>
+            <div id="ud-status" class="df-status" role="status" aria-live="polite"></div>
+            <div class="df-universal-grid">
+              <section class="df-universal-card" aria-labelledby="ud-register-title">
+                <div class="df-section-heading df-commitment-subheading"><div><p class="eyebrow">APPEND-ONLY PROFILE HISTORY</p><h3 id="ud-register-title">Register a Universal source</h3></div></div>
+                <form id="ud-source-form" class="df-universal-form">
+                  <label class="field" for="ud-source-key"><span>Source key</span><input id="ud-source-key" minlength="2" maxlength="64" pattern="[a-z0-9][a-z0-9._-]{1,63}" placeholder="crm.customer-export" required></label>
+                  <label class="field" for="ud-source-name"><span>Display name</span><input id="ud-source-name" minlength="1" maxlength="160" placeholder="Monthly customer export" required></label>
+                  <label class="field" for="ud-source-type"><span>Source type</span><select id="ud-source-type"><option value="csv">CSV upload</option><option value="xlsx">XLSX upload</option><option value="local_directory">Configured local directory</option></select></label>
+                  <label class="field" for="ud-source-domain"><span>Business domain (optional)</span><input id="ud-source-domain" maxlength="64" placeholder="sales, procurement, operations"></label>
+                  <label class="field" for="ud-source-authority"><span>Owner-declared authority classification</span><select id="ud-source-authority"><option value="unclassified">Unclassified</option><option value="owner_asserted_primary">Owner says primary</option><option value="supporting">Supporting</option><option value="third_party">Third party</option><option value="manual_assertion">Manual assertion</option></select></label>
+                  <label class="field" for="ud-source-freshness"><span>Maximum age in hours (optional)</span><input id="ud-source-freshness" type="number" min="1" step="1"></label>
+                  <p class="df-contract-line df-universal-wide">Local-directory sources use a server-provisioned Company folder beneath the operator-configured root and a fixed connector reference. No remote network connection or credential is stored by this local integration. Authority labels are unverified owner assertions.</p>
+                  <div class="df-form-actions"><button id="ud-register-source-button" class="button button-primary" type="submit">Register source</button></div>
+                </form>
+              </section>
+              <section class="df-universal-card" aria-labelledby="ud-stage-title">
+                <div class="df-section-heading df-commitment-subheading"><div><p class="eyebrow">RAW SOURCE EVIDENCE · IDEMPOTENT INGESTION</p><h3 id="ud-stage-title">Stage a file</h3></div></div>
+                <form id="ud-upload-form" class="df-universal-form">
+                  <label class="field" for="ud-upload-source"><span>Universal source</span><select id="ud-upload-source" required></select></label>
+                  <label class="field" for="ud-upload-file"><span>CSV or XLSX file</span><input id="ud-upload-file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required><small>The server enforces the configured upload and row limits.</small></label>
+                  <label class="field" for="ud-delimiter"><span>CSV delimiter</span><select id="ud-delimiter"><option value=",">Comma</option><option value=";">Semicolon</option><option value="&#9;">Tab</option><option value="|">Pipe</option></select></label>
+                  <label class="field" for="ud-encoding"><span>CSV encoding</span><select id="ud-encoding"><option value="utf-8-sig">UTF-8 (BOM allowed)</option><option value="utf-16">UTF-16</option><option value="cp1252">Windows-1252</option></select></label>
+                  <label class="field" for="ud-header-row"><span>Header row</span><input id="ud-header-row" type="number" min="1" max="25" value="1" required></label>
+                  <div class="df-form-actions"><button id="ud-upload-button" class="button button-primary" type="submit">Inspect and stage</button></div>
+                </form>
+                <form id="ud-sync-form" class="df-universal-form df-local-sync-form">
+                  <label class="field df-universal-wide" for="ud-sync-path"><span>Local connector relative file path</span><input id="ud-sync-path" maxlength="512" placeholder="incoming/customer-export.csv"><small>Read-only within this Company’s server-provisioned directory; absolute paths, traversal and symlinks are rejected. CSV delimiter, encoding and header-row selections above apply to local sync too.</small></label>
+                  <div class="df-form-actions"><button id="ud-sync-button" class="button button-secondary" type="submit">Stage from local connector</button></div>
+                </form>
+              </section>
+            </div>
+            <section class="df-universal-subpanel" aria-labelledby="ud-sources-title">
+              <div class="df-section-heading df-commitment-subheading"><div><p class="eyebrow">COMPANY-SCOPED SOURCE REGISTRY</p><h3 id="ud-sources-title">Universal sources</h3></div><button id="ud-sources-load-more" class="button button-quiet button-small" type="button" hidden>Load more sources</button></div>
+              <div id="ud-source-list" class="df-source-list"><p class="loading">Loading Universal sources…</p></div>
+              <div id="ud-profile-history" class="df-profile-history" hidden></div>
+            </section>
+            <section id="ud-review-panel" class="df-universal-subpanel" aria-labelledby="ud-review-title" hidden>
+              <div class="df-section-heading df-commitment-subheading"><div><p class="eyebrow">INSPECTION · MAPPING · QUALITY · GOVERNED PROMOTION</p><h3 id="ud-review-title">Ingestion review</h3></div><div class="df-universal-toolbar"><button id="ud-download-evidence" class="button button-secondary button-small" type="button">Download original evidence</button><button id="ud-close-review" class="button button-quiet button-small" type="button">Close</button></div></div>
+              <div id="ud-ingestion-summary" class="df-universal-summary"></div>
+              <div id="ud-inspection" class="df-inspection-grid"></div>
+              <form id="ud-mapping-form" class="df-universal-form df-mapping-form">
+                <label class="field" for="ud-entity-type"><span>Canonical entity</span><select id="ud-entity-type" required></select></label>
+                <label class="field" for="ud-worksheet"><span>Worksheet</span><select id="ud-worksheet" required></select></label>
+                <label class="field" for="ud-profile-key"><span>Mapping profile key</span><input id="ud-profile-key" minlength="2" maxlength="64" pattern="[a-z0-9][a-z0-9._-]{1,63}" placeholder="crm.customer.v1" required></label>
+                <label class="field" for="ud-profile-name"><span>Mapping profile name</span><input id="ud-profile-name" minlength="1" maxlength="160" placeholder="Customer export mapping" required></label>
+                <label class="field" for="ud-existing-mapping"><span>Reuse a saved version (optional)</span><select id="ud-existing-mapping"><option value="">Create a new mapping version</option></select></label>
+                <div class="field df-existing-mapping-action"><span>Saved profiles</span><button id="ud-apply-mapping" class="button button-quiet button-small" type="button">Apply selected version</button></div>
+                <div id="ud-mapping-fields" class="df-mapping-fields df-universal-wide"></div>
+                <div class="df-form-actions"><button id="ud-map-button" class="button button-secondary" type="submit">Save mapping version</button></div>
+              </form>
+              <div id="ud-validation-summary" class="df-validation-summary" aria-live="polite"></div>
+              <div class="df-universal-review-actions">
+                <button id="ud-validate-button" class="button button-secondary" type="button">Validate rows</button>
+                <label class="df-acknowledge"><input id="ud-acknowledge" type="checkbox"><span>I reviewed and acknowledge the displayed warnings and unresolved duplicate candidates; no entities will be automatically merged.</span></label>
+                <label class="field" for="ud-correction-reason"><span>Reviewer reason for changed existing source records (optional unless revising)</span><textarea id="ud-correction-reason" rows="2" maxlength="500" placeholder="Explain why this new source revision is accepted"></textarea></label>
+                <button id="ud-promote-button" class="button button-primary" type="button">Promote qualified rows</button>
+              </div>
+              <div class="df-universal-subpanel"><div class="df-section-heading df-commitment-subheading"><div><p class="eyebrow">ROW-LEVEL EVIDENCE · VALIDATION FINDINGS</p><h4>Rows</h4></div><button id="ud-rows-load-more" class="button button-quiet button-small" type="button" hidden>Load more rows</button></div><div id="ud-row-list" class="df-row-list"></div></div>
+            </section>
+            <div class="df-universal-grid df-universal-bottom-grid">
+              <section class="df-universal-card" aria-labelledby="ud-history-title"><div class="df-section-heading df-commitment-subheading"><div><p class="eyebrow">IMMUTABLE EXECUTIONS</p><h3 id="ud-history-title">Ingestion history</h3></div></div><label class="field" for="ud-history-source"><span>Source</span><select id="ud-history-source"></select></label><div id="ud-ingestion-list" class="df-ingestion-list"><p class="df-empty">Select a source to review its runs.</p></div><button id="ud-ingestions-load-more" class="button button-quiet button-small" type="button" hidden>Load older ingestions</button></section>
+              <section class="df-universal-card" aria-labelledby="ud-records-title"><div class="df-section-heading df-commitment-subheading"><div><p class="eyebrow">SOURCE-SCOPED CANONICAL REVISIONS</p><h3 id="ud-records-title">Canonical records</h3></div><button id="ud-records-refresh" class="button button-quiet button-small" type="button">Refresh</button></div><label class="field" for="ud-record-entity"><span>Entity filter</span><select id="ud-record-entity"></select></label><div id="ud-record-count" class="df-contract-line" aria-live="polite"></div><div id="ud-record-list" class="df-record-list"><p class="df-empty">No canonical records loaded.</p></div><button id="ud-records-load-more" class="button button-quiet button-small" type="button" hidden>Load more records</button><div id="ud-record-lineage" class="df-record-lineage" hidden></div></section>
+            </div>
           </section>
 
           <section class="panel df-panel df-commitments-panel" aria-labelledby="commitments-title">

@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+
+def test_company_data_foundation_page_exposes_scoped_inventory_and_existing_workflows(client, app):
+    page = client.get("/data-foundation.html")
+    script = client.get("/assets/data-foundation.js")
+    styles = client.get("/assets/data-foundation.css")
+    capacity_page = client.get("/capacity-workspace.html")
+
+    assert page.status_code == 200
+    assert "COMPANY DATA FOUNDATION" in page.text
+    assert "Bounded inventory, not a readiness score." in page.text
+    assert "Register an expected source" in page.text
+    assert "Record an applied import" in page.text
+    assert "user-reported" in page.text
+    assert "script-src 'self'" in page.headers["Content-Security-Policy"]
+    assert page.text.index("/assets/api_client.js") < page.text.index("/assets/data-foundation.js")
+
+    assert script.status_code == 200
+    assert "const base = `/tenants/${encodeURIComponent(tenantId)}/company-data`" in script.text
+    assert "request(`${base}/coverage`)" in script.text
+    assert "const $$ = (selector, root = document)" in script.text
+    assert "company-data/sources/${encodeURIComponent(sourceId)}/ingestions" in script.text
+    assert "function clearTenantWorkspace()" in script.text
+    assert "if (changedWorkspace) clearTenantWorkspace();" in script.text
+    assert "state.tenantDataReady = false;" in script.text
+    assert "textContent" in script.text
+    assert "innerHTML" not in script.text
+    assert "http://localhost" not in script.text
+    assert styles.status_code == 200
+    assert ".df-coverage-grid" in styles.text
+
+    assert capacity_page.status_code == 200
+    assert 'href="/data-foundation.html"' in capacity_page.text
+
+    paths = app.openapi()["paths"]
+    coverage_path = "/api/v1/tenants/{tenant_id}/company-data/coverage"
+    assert coverage_path in paths
+    assert set(paths[coverage_path]) == {"get"}

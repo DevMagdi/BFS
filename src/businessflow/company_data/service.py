@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, text
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.orm import Session
 
 from businessflow.audit import record_event
@@ -24,6 +25,12 @@ from businessflow.company_data.quality import (
 from businessflow.company_data.schemas import (
     CompanyDataContractListResponse,
     CompanyDataContractResponse,
+    CompanyDataContractVersionSummary,
+    CompanyDataCoverageFreshnessCounts,
+    CompanyDataCoverageIngestionCounts,
+    CompanyDataCoverageQualityCounts,
+    CompanyDataCoverageResponse,
+    CompanyDataDatasetCoverage,
     CompanyDataFreshnessStatus,
     CompanyDataIngestionCreateRequest,
     CompanyDataIngestionListResponse,
@@ -37,7 +44,9 @@ from businessflow.company_data.schemas import (
     CompanyDataSourceListResponse,
     CompanyDataSourceSummary,
 )
+from businessflow.data_imports.catalog import DATASETS
 from businessflow.data_imports.models import DataImport, DataImportRecordLink, DataImportRow
+from businessflow.data_imports.schemas import ImportDataset
 from businessflow.errors import ApiError
 from businessflow.metrics.snapshot import content_hash
 from businessflow.models import TenantMembership, UserAccount
@@ -257,6 +266,24 @@ def _source_summary(
     )
 
 
+@dataclass(slots=True)
+class _DatasetCoverageAccumulator:
+    registered_source_count: int = 0
+    sources_without_ingestion_count: int = 0
+    succeeded: int = 0
+    succeeded_with_warnings: int = 0
+    blocked: int = 0
+    quality_passed: int = 0
+    quality_warning: int = 0
+    quality_failed: int = 0
+    freshness_fresh: int = 0
+    freshness_stale: int = 0
+    freshness_policy_missing: int = 0
+    freshness_source_as_of_missing: int = 0
+    freshness_future_as_of: int = 0
+    latest_ingestion_at: datetime | None = None
+
+
 def list_sources(
     session: Session,
     user: UserAccount,
@@ -289,6 +316,166 @@ def list_sources(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+def get_company_data_coverage(
+    session: Session, user: UserAccount, tenant_id: UUID
+) -> CompanyDataCoverageResponse:
+    """Summarize registered M12 evidence without implying business-data completeness."""
+    access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    evaluated_at = datetime.now(UTC)
+    accumulators = {dataset: _DatasetCoverageAccumulator() for dataset in DATASETS}
+    contract_versions: dict[ImportDataset, list[CompanyDataContractVersionSummary]] = {
+        dataset: [] for dataset in DATASETS
+    }
+
+    contracts = session.scalars(
+        select(CompanyDataContract).order_by(
+            CompanyDataContract.dataset_type,
+            CompanyDataContract.contract_key,
+            CompanyDataContract.version,
+        )
+    )
+    for contract in contracts:
+        _contract_snapshot(contract)
+        if contract.dataset_type in contract_versions:
+            contract_versions[contract.dataset_type].append(
+                CompanyDataContractVersionSummary(
+                    contract_key=contract.contract_key,
+                    version=contract.version,
+                    definition_hash=contract.definition_hash,
+                )
+            )
+
+    latest_ingestions = (
+        select(
+            CompanyDataIngestion.source_id.label("source_id"),
+            CompanyDataIngestion.ingestion_status.label("ingestion_status"),
+            CompanyDataIngestion.quality_status.label("quality_status"),
+            CompanyDataIngestion.source_as_of_at.label("source_as_of_at"),
+            CompanyDataIngestion.freshness_max_age_hours_snapshot.label("freshness_max_age_hours"),
+            CompanyDataIngestion.created_at.label("created_at"),
+            func.row_number()
+            .over(
+                partition_by=CompanyDataIngestion.source_id,
+                order_by=(CompanyDataIngestion.created_at.desc(), CompanyDataIngestion.id.desc()),
+            )
+            .label("sequence_number"),
+        )
+        .where(
+            CompanyDataIngestion.tenant_id == tenant_id,
+            CompanyDataIngestion.company_id == access.company.id,
+        )
+        .subquery("latest_company_data_ingestions")
+    )
+    source_states = session.execute(
+        select(
+            CompanyDataSource.dataset_type,
+            latest_ingestions.c.ingestion_status,
+            latest_ingestions.c.quality_status,
+            latest_ingestions.c.source_as_of_at,
+            latest_ingestions.c.freshness_max_age_hours,
+            latest_ingestions.c.created_at.label("latest_ingestion_at"),
+        )
+        .select_from(CompanyDataSource)
+        .outerjoin(
+            latest_ingestions,
+            and_(
+                CompanyDataSource.id == latest_ingestions.c.source_id,
+                latest_ingestions.c.sequence_number == 1,
+            ),
+        )
+        .where(
+            CompanyDataSource.tenant_id == tenant_id,
+            CompanyDataSource.company_id == access.company.id,
+        )
+    ).yield_per(500)
+
+    for row in source_states:
+        dataset_type = cast(ImportDataset, row.dataset_type)
+        accumulator = accumulators[dataset_type]
+        accumulator.registered_source_count += 1
+        if row.ingestion_status is None:
+            accumulator.sources_without_ingestion_count += 1
+            continue
+
+        if row.ingestion_status == "succeeded":
+            accumulator.succeeded += 1
+        elif row.ingestion_status == "succeeded_with_warnings":
+            accumulator.succeeded_with_warnings += 1
+        elif row.ingestion_status == "blocked":
+            accumulator.blocked += 1
+
+        if row.quality_status == "passed":
+            accumulator.quality_passed += 1
+        elif row.quality_status == "warning":
+            accumulator.quality_warning += 1
+        elif row.quality_status == "failed":
+            accumulator.quality_failed += 1
+
+        freshness = evaluate_freshness(
+            max_age_hours=row.freshness_max_age_hours,
+            source_as_of_at=row.source_as_of_at,
+            evaluated_at=evaluated_at,
+        )
+        if freshness == "fresh":
+            accumulator.freshness_fresh += 1
+        elif freshness == "stale":
+            accumulator.freshness_stale += 1
+        elif freshness == "policy_missing":
+            accumulator.freshness_policy_missing += 1
+        elif freshness == "source_as_of_missing":
+            accumulator.freshness_source_as_of_missing += 1
+        else:
+            accumulator.freshness_future_as_of += 1
+
+        latest_at = row.latest_ingestion_at
+        if latest_at is not None and (
+            accumulator.latest_ingestion_at is None or latest_at > accumulator.latest_ingestion_at
+        ):
+            accumulator.latest_ingestion_at = latest_at
+
+    datasets = [
+        CompanyDataDatasetCoverage(
+            dataset_type=dataset_type,
+            contract_versions=contract_versions[dataset_type],
+            registered_source_count=accumulator.registered_source_count,
+            sources_without_ingestion_count=accumulator.sources_without_ingestion_count,
+            latest_ingestion_counts=CompanyDataCoverageIngestionCounts(
+                succeeded=accumulator.succeeded,
+                succeeded_with_warnings=accumulator.succeeded_with_warnings,
+                blocked=accumulator.blocked,
+            ),
+            latest_quality_counts=CompanyDataCoverageQualityCounts(
+                passed=accumulator.quality_passed,
+                warning=accumulator.quality_warning,
+                failed=accumulator.quality_failed,
+            ),
+            current_freshness_counts=CompanyDataCoverageFreshnessCounts(
+                fresh=accumulator.freshness_fresh,
+                stale=accumulator.freshness_stale,
+                policy_missing=accumulator.freshness_policy_missing,
+                source_as_of_missing=accumulator.freshness_source_as_of_missing,
+                future_as_of=accumulator.freshness_future_as_of,
+            ),
+            latest_ingestion_at=accumulator.latest_ingestion_at,
+        )
+        for dataset_type, accumulator in accumulators.items()
+    ]
+    return CompanyDataCoverageResponse(
+        tenant_id=tenant_id,
+        company_id=access.company.id,
+        evaluated_at=evaluated_at,
+        note=(
+            "Counts describe only registered M12 sources and each source's latest ingestion "
+            "for the six supported M4 workforce/project datasets. No registered source means "
+            "not tracked in BusinessFlow, not proof that the business has no data. Source-as-of "
+            "timestamps are user-reported assertions. This inventory does not establish source "
+            "authority, business completeness, accounting correctness, or readiness for any "
+            "analysis."
+        ),
+        datasets=datasets,
     )
 
 

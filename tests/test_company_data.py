@@ -17,12 +17,14 @@ def _company_data_path(tenant_id: str) -> str:
     return f"/api/v1/tenants/{tenant_id}/company-data"
 
 
-def _apply_employee_import(client, tenant_id: str, headers: dict[str, str]) -> str:
+def _apply_employee_import(
+    client, tenant_id: str, headers: dict[str, str], *, employee_code: str = "M12-EMP-001"
+) -> str:
     base = f"/api/v1/tenants/{tenant_id}/imports"
     content = (
-        b"employee_code,full_name,job_title,standard_weekly_capacity_hours,employment_status\n"
-        b"M12-EMP-001,Company Data Test Employee,Analyst,40.00,active\n"
-    )
+        "employee_code,full_name,job_title,standard_weekly_capacity_hours,employment_status\n"
+        f"{employee_code},Company Data Test Employee,Analyst,40.00,active\n"
+    ).encode()
     staged = client.post(
         base,
         files={"file": ("employees.csv", content, "text/csv")},
@@ -357,3 +359,120 @@ def test_company_data_registry_binds_m4_quality_freshness_lineage_and_tenant_sco
             ),
             {"hash": "0" * 64, "key": employee_contract["contract_key"], "version": "1.0.0"},
         )
+
+
+def test_company_data_coverage_counts_each_sources_latest_snapshot_and_checks_company_access(
+    client,
+):
+    owner = register_user(client, "m12-coverage-owner@example.com")
+    headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="M12 Coverage Tenant",
+        company_name="M12 Coverage Company",
+        key="m12-coverage-tenant-001",
+    )
+    tenant_id = tenant["id"]
+    base = _company_data_path(tenant_id)
+
+    empty_coverage = client.get(f"{base}/coverage", headers=headers)
+    assert empty_coverage.status_code == 200, empty_coverage.text
+    assert len(empty_coverage.json()["datasets"]) == 6
+    assert "not proof that the business has no data" in empty_coverage.json()["note"]
+    assert all(item["registered_source_count"] == 0 for item in empty_coverage.json()["datasets"])
+
+    contract = next(
+        item
+        for item in client.get(f"{base}/contracts", headers=headers).json()["items"]
+        if item["dataset_type"] == "employees"
+    )
+    source = client.post(
+        f"{base}/sources",
+        json={
+            "source_key": "hr-monthly",
+            "display_name": "Monthly HR export",
+            "dataset_type": "employees",
+            "contract_version": contract["version"],
+            "freshness_max_age_hours": 24,
+        },
+        headers=headers,
+    )
+    assert source.status_code == 201, source.text
+
+    older_import_id = _apply_employee_import(client, tenant_id, headers)
+    stale_as_of = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+    older_ingestion = client.post(
+        f"{base}/sources/{source.json()['id']}/ingestions",
+        json={"import_id": older_import_id, "source_as_of_at": stale_as_of},
+        headers=headers,
+    )
+    assert older_ingestion.status_code == 201, older_ingestion.text
+    assert older_ingestion.json()["ingestion"]["current_freshness_status"] == "stale"
+
+    newer_import_id = _apply_employee_import(
+        client, tenant_id, headers, employee_code="M12-EMP-002"
+    )
+    newer_ingestion = client.post(
+        f"{base}/sources/{source.json()['id']}/ingestions",
+        json={"import_id": newer_import_id, "source_as_of_at": datetime.now(UTC).isoformat()},
+        headers=headers,
+    )
+    assert newer_ingestion.status_code == 201, newer_ingestion.text
+    assert newer_ingestion.json()["ingestion"]["current_freshness_status"] == "fresh"
+
+    pending_source = client.post(
+        f"{base}/sources",
+        json={
+            "source_key": "hr-next-cycle",
+            "display_name": "Next HR cycle",
+            "dataset_type": "employees",
+            "contract_version": contract["version"],
+        },
+        headers=headers,
+    )
+    assert pending_source.status_code == 201, pending_source.text
+
+    coverage = client.get(f"{base}/coverage", headers=headers)
+    assert coverage.status_code == 200, coverage.text
+    datasets = {item["dataset_type"]: item for item in coverage.json()["datasets"]}
+    employee_coverage = datasets["employees"]
+    assert employee_coverage["registered_source_count"] == 2
+    assert employee_coverage["sources_without_ingestion_count"] == 1
+    assert employee_coverage["latest_ingestion_counts"] == {
+        "succeeded": 1,
+        "succeeded_with_warnings": 0,
+        "blocked": 0,
+    }
+    assert employee_coverage["latest_quality_counts"] == {
+        "passed": 1,
+        "warning": 0,
+        "failed": 0,
+    }
+    assert employee_coverage["current_freshness_counts"]["fresh"] == 1
+    assert employee_coverage["current_freshness_counts"]["stale"] == 0
+    assert (
+        employee_coverage["latest_ingestion_at"]
+        == newer_ingestion.json()["ingestion"]["created_at"]
+    )
+    assert len(employee_coverage["contract_versions"]) == 1
+    assert datasets["skills"]["registered_source_count"] == 0
+
+    member = register_user(client, "m12-coverage-member@example.com")
+    create_member(client, owner, tenant_id, "m12-coverage-member@example.com")
+    member_coverage = client.get(f"{base}/coverage", headers=auth_headers(member))
+    assert member_coverage.status_code == 200, member_coverage.text
+
+    other_owner = register_user(client, "m12-coverage-other@example.com")
+    other_tenant = create_tenant(
+        client,
+        other_owner,
+        name="M12 Other Coverage Tenant",
+        company_name="M12 Other Coverage Company",
+        key="m12-other-coverage-tenant-001",
+    )
+    cross_tenant = client.get(
+        f"{_company_data_path(other_tenant['id'])}/coverage",
+        headers=auth_headers(other_owner),
+    )
+    assert cross_tenant.status_code == 404

@@ -1,0 +1,56 @@
+.df-heading { align-items: end; }
+.df-heading-actions { display: flex; align-items: end; gap: 10px; }
+.df-heading h1 { font-size: clamp(36px, 4.8vw, 54px); }
+.df-gate { max-width: 720px; margin: 70px auto 0; }
+.df-boundary { margin-bottom: 18px; }
+.df-role-notice { margin: 0 0 16px; padding: 12px 15px; border: 1px solid #c7d9d0; border-radius: 11px; color: #3e5d58; background: #f4faf6; font-size: 12px; line-height: 1.55; }
+.df-status { min-height: 22px; margin: 0 0 15px; color: var(--muted); font-size: 12px; }
+.df-status.is-error { color: var(--red); }
+.df-status.is-success { color: var(--green); }
+.df-panel { margin-bottom: 19px; }
+.df-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 13px; padding-bottom: 13px; border-bottom: 1px solid var(--line); }
+.df-section-heading h2 { font-size: clamp(25px, 3vw, 33px); }
+.df-meta { max-width: 320px; color: var(--soft); font-size: 10px; text-align: right; }
+.df-intro { max-width: 900px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.df-coverage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.df-coverage-card, .df-source-card, .df-evidence-block { min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: #fbfdfb; }
+.df-coverage-heading, .df-source-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.df-coverage-heading h3, .df-source-heading h3 { margin: 0; font-size: 19px; overflow-wrap: anywhere; }
+.df-source-count { color: var(--teal-dark); font-size: 11px; font-weight: 800; text-align: right; }
+.df-count-group { margin-top: 10px; }
+.df-count-title { margin: 0 0 5px; color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.df-count-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.df-count-cell { min-width: 0; padding: 8px; border-radius: 8px; background: #edf3ef; }
+.df-count-cell span { display: block; color: var(--muted); font-size: 9px; line-height: 1.35; }
+.df-count-cell strong { display: block; margin-top: 3px; color: var(--ink); font-size: 13px; }
+.df-contract-line { margin: 7px 0 0; color: var(--soft); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.df-contract-line code, .df-code { color: #405b55; font-size: 10px; overflow-wrap: anywhere; }
+.df-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; max-width: 980px; }
+.df-form .field { margin-bottom: 11px; }
+.df-form .field small { font-size: 10px; }
+.df-form-actions { display: flex; align-items: center; grid-column: 1 / -1; padding-top: 2px; }
+.df-load-more-imports { align-self: start; margin: 0 0 12px; }
+.df-source-list { display: grid; gap: 10px; }
+.df-source-key { margin: 4px 0 0; color: var(--soft); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; overflow-wrap: anywhere; }
+.df-status-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.df-badge { display: inline-flex; align-items: center; min-height: 23px; padding: 3px 8px; border: 1px solid #d7e2dc; border-radius: 99px; color: #50615e; background: #f2f6f3; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.df-badge.is-warning { border-color: #e8d69e; color: var(--amber); background: var(--amber-bg); }
+.df-badge.is-failed { border-color: #e7c3bf; color: var(--red); background: var(--red-bg); }
+.df-badge.is-passed { border-color: #c8dfd0; color: var(--green); background: var(--green-bg); }
+.df-source-meta { margin: 8px 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.df-source-actions { display: flex; align-items: center; gap: 8px; }
+.df-evidence-content { display: grid; gap: 10px; }
+.df-evidence-block h3 { margin: 0 0 7px; font-size: 17px; }
+.df-evidence-block p { margin: 0 0 5px; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.df-finding-list, .df-lineage-list { display: grid; gap: 7px; margin: 8px 0 0; padding-left: 20px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.df-empty { margin: 0; padding: 14px; border: 1px dashed #cbd7d1; border-radius: 10px; color: var(--muted); background: #fafcfa; font-size: 12px; line-height: 1.55; }
+@media (max-width: 760px) {
+  .df-heading, .df-heading-actions { align-items: stretch; flex-direction: column; }
+  .df-heading-actions { width: 100%; }
+  .df-heading-actions .company-picker { width: 100%; }
+  .df-coverage-grid, .df-form { grid-template-columns: 1fr; }
+  .df-form-actions { grid-column: 1; }
+  .df-source-heading { flex-direction: column; }
+  .df-status-badges { justify-content: flex-start; }
+  .df-meta { text-align: left; }
+}

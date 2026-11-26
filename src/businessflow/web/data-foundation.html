@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="description" content="Company-scoped source registration, import quality and lineage evidence.">
+    <title>Company Data Foundation · BusinessFlow</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <link rel="stylesheet" href="/assets/data-foundation.css">
+    <script src="/assets/api_client.js" defer></script>
+    <script src="/assets/data-foundation.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="wordmark" href="/" aria-label="BusinessFlow home">
+          <span class="mark" aria-hidden="true">B</span>
+          <span>business<span class="wordmark-light">flow</span></span>
+        </a>
+        <div class="topbar-right">
+          <span class="demo-stamp">COMPANY DATA · SOURCE EVIDENCE</span>
+          <span id="user-label" class="user-label" hidden></span>
+          <a class="button button-quiet button-small" href="/capacity-workspace.html">Capacity workflow</a>
+          <a class="button button-quiet button-small" href="/">Main workspace</a>
+        </div>
+      </header>
+
+      <main>
+        <section id="auth-required" class="panel df-gate" aria-labelledby="auth-title" hidden>
+          <p class="eyebrow">AUTHENTICATION REQUIRED</p>
+          <h1 id="auth-title">Sign in to review Company data.</h1>
+          <p class="lede">Use your existing BusinessFlow account and active Company membership.</p>
+          <a class="button button-primary" href="/">Return to sign in <span aria-hidden="true">→</span></a>
+        </section>
+        <section id="empty-workspace" class="panel df-gate" aria-labelledby="empty-title" hidden>
+          <p class="eyebrow">NO COMPANY WORKSPACE</p>
+          <h1 id="empty-title">Choose a Company workspace first.</h1>
+          <p class="lede">Create or join a tenant in the main workspace, then come back here.</p>
+          <a class="button button-primary" href="/">Open the main workspace <span aria-hidden="true">→</span></a>
+        </section>
+
+        <section id="data-foundation" hidden>
+          <div class="workspace-heading df-heading">
+            <div>
+              <p class="eyebrow">COMPANY DATA FOUNDATION</p>
+              <h1>Know what is <em>recorded.</em></h1>
+              <p id="company-caption" class="lede"></p>
+            </div>
+            <div class="df-heading-actions">
+              <label id="company-picker-wrap" class="company-picker" hidden>
+                <span>Company workspace</span>
+                <select id="company-picker" aria-label="Choose a Company workspace"></select>
+              </label>
+              <button id="refresh-button" class="button button-quiet" type="button">Refresh evidence</button>
+            </div>
+          </div>
+
+          <div class="notice notice-demo df-boundary" role="note">
+            <span class="notice-symbol" aria-hidden="true">!</span>
+            <p><strong>Bounded inventory, not a readiness score.</strong> This view covers only the six current M4 workforce/project datasets and M12 source registrations. “Not tracked” does not mean the business has no data. As-of timestamps are user-reported; file hashes and quality checks do not authenticate a source or prove business completeness, accounting correctness, or analytical readiness.</p>
+          </div>
+
+          <div id="role-notice" class="df-role-notice" role="status" hidden></div>
+          <div id="workspace-status" class="df-status" role="status" aria-live="polite"></div>
+          <div id="global-message" class="global-message" role="status" aria-live="polite" hidden></div>
+
+          <section class="panel df-panel" aria-labelledby="coverage-title">
+            <div class="df-section-heading">
+              <div>
+                <p class="eyebrow">VERSIONED M12 CONTRACTS · LATEST SOURCE EVIDENCE</p>
+                <h2 id="coverage-title">Coverage by supported dataset</h2>
+              </div>
+              <span id="coverage-evaluated-at" class="df-meta"></span>
+            </div>
+            <p class="df-intro">Counts are per registered source, using its latest ingestion only. Quality and freshness are separate. A newer blocked import can supersede an older successful snapshot in this view; history remains immutable.</p>
+            <p id="coverage-note" class="df-intro"></p>
+            <div id="coverage-grid" class="df-coverage-grid" aria-live="polite"></div>
+          </section>
+
+          <section class="panel df-panel" aria-labelledby="source-registration-title">
+            <div class="df-section-heading">
+              <div><p class="eyebrow">SOURCE STEWARDSHIP</p><h2 id="source-registration-title">Register an expected source</h2></div>
+            </div>
+            <p class="df-intro">Registration records a Company owner, dataset contract, and optional freshness policy; it does not connect to an ERP/CRM or verify authority. Prepare a CSV/XLSX through the <a href="/capacity-workspace.html#imports-panel">M4 import workflow</a>.</p>
+            <form id="source-form" class="df-form">
+              <label class="field" for="source-dataset"><span>Supported dataset</span><select id="source-dataset" required></select></label>
+              <label class="field" for="source-contract"><span>Contract version</span><select id="source-contract" required></select></label>
+              <label class="field" for="source-key"><span>Source key</span><input id="source-key" type="text" minlength="2" maxlength="64" pattern="[a-z0-9][a-z0-9._-]{1,63}" autocomplete="off" placeholder="hr.monthly-export" required><small>Company-unique lowercase identifier; letters, numbers, dot, underscore and hyphen.</small></label>
+              <label class="field" for="source-name"><span>Source name</span><input id="source-name" type="text" minlength="1" maxlength="160" placeholder="Monthly HR roster export" required></label>
+              <label class="field" for="source-freshness-age"><span>Maximum age in hours (optional)</span><input id="source-freshness-age" type="number" min="1" step="1" inputmode="numeric"><small>Leave blank unless the source owner has set a freshness policy.</small></label>
+              <div class="df-form-actions"><button id="register-source-button" class="button button-primary" type="submit">Register source</button></div>
+            </form>
+          </section>
+
+          <section class="panel df-panel" aria-labelledby="ingestion-title">
+            <div class="df-section-heading">
+              <div><p class="eyebrow">M4 → M12 · CONTROLLED EVIDENCE PROMOTION</p><h2 id="ingestion-title">Record an applied import</h2></div>
+            </div>
+            <p class="df-intro">Only an already-applied M4 import with the same dataset can be linked. Each Company import can be recorded once. This creates immutable contract, quality, freshness and lineage evidence; it does not replace M4 canonical records.</p>
+            <form id="ingestion-form" class="df-form">
+              <label class="field" for="ingestion-source"><span>Registered source</span><select id="ingestion-source" required></select></label>
+              <label class="field" for="ingestion-import"><span>Applied M4 import</span><select id="ingestion-import" required></select><small id="import-picker-note"></small></label>
+              <button id="load-more-imports-button" class="button button-quiet button-small df-load-more-imports" type="button" hidden>Load more M4 imports</button>
+              <label class="field" for="source-as-of"><span>Source data as-of (optional)</span><input id="source-as-of" type="datetime-local"><small id="timezone-note">If entered, interpreted in the browser's local time zone. This is a user assertion, not independently verified.</small></label>
+              <div class="df-form-actions"><button id="record-ingestion-button" class="button button-primary" type="submit">Record evidence</button></div>
+            </form>
+          </section>
+
+          <section class="panel df-panel" aria-labelledby="sources-title">
+            <div class="df-section-heading">
+              <div><p class="eyebrow">COMPANY-SCOPED · IMMUTABLE REGISTRY</p><h2 id="sources-title">Registered sources</h2></div>
+              <button id="load-more-sources-button" class="button button-quiet button-small" type="button" hidden>Load more sources</button>
+            </div>
+            <div id="source-list" class="df-source-list" aria-live="polite"><p class="loading">Loading Company data evidence…</p></div>
+          </section>
+
+          <section id="evidence-panel" class="panel df-panel" aria-labelledby="evidence-title" hidden>
+            <div class="df-section-heading">
+              <div><p class="eyebrow">HASH-VERIFIED M12 SNAPSHOT</p><h2 id="evidence-title">Ingestion evidence</h2></div>
+              <button id="close-evidence-button" class="button button-quiet button-small" type="button">Close</button>
+            </div>
+            <div id="evidence-content" class="df-evidence-content"></div>
+          </section>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <span>Evidence before answers.</span>
+        <span>Source registration · Quality · Freshness · Lineage</span>
+      </footer>
+    </div>
+  </body>
+</html>

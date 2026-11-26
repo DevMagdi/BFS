@@ -99,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "/",
             "/core-financials.html",
             "/capacity-workspace.html",
+            "/data-foundation.html",
         } or request.url.path.startswith("/assets/"):
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; base-uri 'self'; object-src 'none'; "

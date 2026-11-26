@@ -12,7 +12,7 @@ Current business data is narrow: employees, tenant-owned skills, employee skill 
 
 ## 2. Target architectural posture
 
-The M9 product target is a **company-wide BI & Decision Platform built incrementally from optional domain modules**, not a generic arbitrary-SQL workbench or an all-at-once enterprise schema. M10 is a separately scoped synthetic-only demonstration, not an implementation of the broad target. Preserve the modular monolith, PostgreSQL, forced RLS, backend authorization, immutable evidence/history, deterministic calculations, and human-controlled decisions. Apply **Evidence Before Answers — No evidence, no confident answer** to any future AI response. Keep self-hosted/on-prem-first deployment and cloud portability; local/on-prem AI inference is a target requirement for any separately approved AI capability, not an implemented feature. No LLM, inference runtime, or provider is selected; no new infrastructure is justified by this assessment.
+The owner-directed target is an **integrated BI, Financial, Operational, and Decision Intelligence platform** built incrementally from optional domain modules, not an arbitrary-SQL workbench, chatbot, dashboard-only product, or ERP replacement. It must accommodate fragmented data and companies with little or no digital foundation. Preserve the modular monolith, PostgreSQL, forced RLS, backend authorization, immutable evidence/history, deterministic calculations, and human-controlled decisions. Apply **Evidence Before Answers — No evidence, no confident answer**: AI is an evidence-grounded interface/reasoning layer, not a fact or calculation authority. Local/on-prem inference is a future requirement; no AI runtime is implemented.
 
 ```mermaid
 flowchart LR
@@ -30,7 +30,7 @@ flowchart LR
     SEC -. governs .-> VIEW
 ```
 
-This is a target flow, not a system diagram of the whole implemented platform. Current code implements the bounded M2–M8 slices, separate M10 synthetic workflow, M11 pure calculation/verification core, M12 company-data registration/evidence, M13 metric comparisons, M14 manual finance-source intake, a default-disabled M15 exact-subtotal prototype, and a default-disabled M16 caller-asserted direct-cash schedule. It does not implement the general company-level read model, approved finance policy, broad domain coverage, live connectors, or AI flow shown above.
+This is a target flow, not a system diagram of the whole platform. Existing code has bounded M2–M8/M10–M16 capabilities, default-disabled Core Financials, and the PR #26 capacity workspace. This branch adds the Company Data Foundation coverage/source-evidence workflow. The product still lacks broad domain coverage, live connectors, a general company-level read model, approved finance policy, and AI retrieval.
 
 ## 3. Architecture rules
 
@@ -41,7 +41,7 @@ This is a target flow, not a system diagram of the whole implemented platform. C
 - **Evidence Before Answers.** Future AI retrieval must authorize before data access, attach source and calculation provenance, disclose assumptions/uncertainty/limitations, abstain on incomplete or unreliable evidence, and preserve input/calculation/policy/evidence versions for important assessments. No AI runtime implements these guarantees today.
 - **Keep PostgreSQL and security controls central.** Backend authorization complements forced RLS, composite scope constraints, transaction-local verified context, and non-privileged runtime/migrator separation.
 - **Do not over-architect.** Start with a domain-owned vertical slice in the current modular monolith and PostgreSQL. Add a warehouse, cache, semantic engine, message broker, workflow engine, or microservice only after a measured requirement and separate review.
-- **Treat general UI and integrations as future choices.** M10 adds only a narrow internal synthetic-data browser walkthrough; there is no general-purpose customer frontend or live connector framework. Their data flows and security requirements must be scoped before implementation.
+- **Treat UI and integrations as typed workflow surfaces.** Narrow static workflows exist for synthetic M10, capacity decisions (PR #26), and experimental Core Financials; this branch adds Company Data Foundation evidence review. They are not a unified BI workspace. No live connector framework exists; scope each integration and security boundary around a real use case.
 
 ## 4. Product and architecture links
 

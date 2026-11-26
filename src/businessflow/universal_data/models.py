@@ -576,6 +576,13 @@ class CanonicalBusinessRecord(Base):
             name="uq_udf_canonical_source_record",
         ),
         UniqueConstraint("tenant_id", "company_id", "id", name="uq_udf_canonical_record_scope_id"),
+        UniqueConstraint(
+            "tenant_id",
+            "company_id",
+            "source_id",
+            "id",
+            name="uq_udf_canonical_record_source_scope_id",
+        ),
         _source_fk("fk_udf_canonical_record_source"),
         ForeignKeyConstraint(
             ["tenant_id", "company_id", "id", "current_revision"],
@@ -647,6 +654,14 @@ class CanonicalBusinessRecordRevision(Base):
             name="uq_udf_canonical_record_revision",
         ),
         UniqueConstraint("tenant_id", "company_id", "id", name="uq_udf_record_revision_scope_id"),
+        UniqueConstraint(
+            "tenant_id",
+            "company_id",
+            "source_id",
+            "record_id",
+            "revision",
+            name="uq_udf_record_revision_source_scope",
+        ),
         _scope_fk(
             ["tenant_id", "company_id", "record_id"],
             [

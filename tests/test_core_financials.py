@@ -478,7 +478,7 @@ def test_core_financial_transfer_migration_downgrade_is_safe(
 
     with admin_engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0019_universal_data_foundation"
+            "0020_business_semantic_layer"
         )
         assert (
             connection.scalar(

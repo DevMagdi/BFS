@@ -179,7 +179,7 @@ def test_manual_customer_commitment_lifecycle_correction_evidence_history_and_co
     repaired_dates = client.put(
         f"{base}/{commitment_id}",
         json={
-            **_valid_fields(),
+            **_valid_fields(customer_reference=None, requested_delivery_date=None),
             "expected_revision": invalid_record["commitment"]["current_revision"],
         },
         headers=member_headers,

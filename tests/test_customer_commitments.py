@@ -451,13 +451,13 @@ def test_manual_customer_commitment_lifecycle_correction_evidence_history_and_co
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", migration_url.replace("%", "%%"))
     with pytest.raises(
-        Exception,
+        DBAPIError,
         match="cannot downgrade while manual customer-commitment source or record history exists",
     ):
         command.downgrade(config, "0017_core_financial_transfers")
     with admin_engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0020_business_semantic_layer"
+            "0022_bi_config_analysis"
         )
 
 

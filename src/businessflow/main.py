@@ -16,6 +16,7 @@ from businessflow.api.auth_routes import router as auth_router
 from businessflow.api.company_context_routes import router as company_context_router
 from businessflow.api.company_data_routes import router as company_data_router
 from businessflow.api.core_financial_routes import router as core_financial_router
+from businessflow.api.customer_commitment_routes import router as customer_commitment_router
 from businessflow.api.data_import_routes import router as data_import_router
 from businessflow.api.direct_cash_forecast_routes import router as direct_cash_forecast_router
 from businessflow.api.finance_source_routes import router as finance_source_router
@@ -158,6 +159,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(tenant_router, prefix="/api/v1")
     application.include_router(company_context_router, prefix="/api/v1")
     application.include_router(company_data_router, prefix="/api/v1")
+    application.include_router(customer_commitment_router, prefix="/api/v1")
     application.include_router(core_financial_router, prefix="/api/v1")
     application.include_router(data_import_router, prefix="/api/v1")
     application.include_router(metrics_router, prefix="/api/v1")

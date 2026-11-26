@@ -51,6 +51,17 @@ def _upload_body_limit(scope: Scope, max_file_bytes: int) -> _UploadBodyLimit | 
                 multipart_upload_request_body_limit(max_file_bytes),
                 "The import upload request exceeds the configured size limit.",
             )
+        if (
+            len(parts) == 8
+            and parts[4:6] == ["company-data", "customer-commitments"]
+            and parts[6]
+            and parts[7] == "evidence"
+        ):
+            evidence_file_limit = min(max_file_bytes, 10 * 1024 * 1024)
+            return _UploadBodyLimit(
+                multipart_upload_request_body_limit(evidence_file_limit),
+                "The customer commitment evidence request exceeds the 10 MiB file limit.",
+            )
         if len(parts) == 6 and parts[4:] == ["position-reviews", "financial-imports"]:
             return _UploadBodyLimit(
                 multipart_upload_request_body_limit(max_file_bytes),

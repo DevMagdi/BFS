@@ -14,12 +14,21 @@ CompanyDataIngestionStatus = Literal["succeeded", "succeeded_with_warnings", "bl
 CompanyDataFreshnessStatus = Literal[
     "fresh", "stale", "policy_missing", "source_as_of_missing", "future_as_of"
 ]
+CompanyDataDatasetType = Literal[
+    "employees",
+    "skills",
+    "employee_skills",
+    "weekly_capacity",
+    "projects",
+    "resource_assignments",
+    "customer_commitments",
+]
 
 
 class CompanyDataContractResponse(StrictModel):
     contract_key: str
     version: str
-    dataset_type: ImportDataset
+    dataset_type: CompanyDataDatasetType
     definition: dict[str, object]
     definition_hash: str
     created_at: datetime
@@ -79,7 +88,7 @@ class CompanyDataSourceCreateRequest(StrictModel):
         str, StringConstraints(min_length=2, max_length=64, pattern=r"^[a-z0-9][a-z0-9._-]{1,63}$")
     ]
     display_name: Annotated[str, StringConstraints(min_length=1, max_length=160)]
-    dataset_type: ImportDataset
+    dataset_type: CompanyDataDatasetType
     contract_version: Annotated[str, StringConstraints(min_length=1, max_length=32)]
     owner_user_id: UUID | None = None
     freshness_max_age_hours: int | None = Field(default=None, gt=0)
@@ -91,7 +100,7 @@ class CompanyDataSourceSummary(StrictModel):
     company_id: UUID
     source_key: str
     display_name: str
-    dataset_type: ImportDataset
+    dataset_type: CompanyDataDatasetType
     contract_key: str
     contract_version: str
     owner_user_id: UUID

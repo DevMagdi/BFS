@@ -31,7 +31,7 @@ def require_company_context_access(
     tenant_access = require_tenant_access(
         session, user, tenant_id, permission, request_id=request_id
     )
-    if permission.endswith(":write") or permission == "decision:approve":
+    if permission.endswith((":write", ":review")) or permission == "decision:approve":
         tenant_access = lock_and_revalidate_access(session, tenant_access, permission)
     company = session.scalar(
         select(Company).where(

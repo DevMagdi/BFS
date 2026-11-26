@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-M12 adds a bounded, Company-scoped data-source registry and immutable ingestion evidence for the existing M4 file-import path. It does not add a second parser, copy raw data into a new store, or implement a connector, scheduler, sync worker, general data warehouse, company-wide fact model, or production data integration. The six registered contracts are frozen projections of the M4 dataset catalog; existing M4 imports, M5 snapshots, and M4 source-row lineage remain the source of truth.
+M12 adds a bounded, Company-scoped data-source registry and immutable ingestion evidence for the existing M4 file-import path. It does not add a second parser, copy raw data into a new store, or implement a connector, scheduler, sync worker, general data warehouse, company-wide fact model, or production data integration. Its six M4 contracts are frozen projections of the M4 dataset catalog; existing M4 imports, M5 snapshots, and M4 source-row lineage remain the source of truth. The later Phase 1 manual customer-commitment increment adds a separate `manual_entry` contract to the shared catalog; it is not an M4 dataset and does not change M12 coverage or ingestion semantics. See [`COMPANY_DATA_FOUNDATION_PHASE1.md`](COMPANY_DATA_FOUNDATION_PHASE1.md) for that separate workflow.
 
 The registry is usable with the existing M4 workforce/project datasets. The separately scoped M10 workflow remains synthetic-only and continues to accept only its exact built-in templates. M12 does not relax M10's upload, mapping, canonical-write, finance, or disposition safeguards.
 
@@ -23,7 +23,7 @@ All routes are under `/api/v1/tenants/{tenant_id}/company-data` and require auth
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /contracts` | Read the published, versioned M4 contracts. |
+| `GET /contracts` | Read the published contract catalog: six versioned M4 contracts plus the separate Phase 1 manual contract. |
 | `POST /sources` | Register an immutable Company source and bind its dataset/contract/freshness policy. |
 | `GET /sources` | Page through Company sources with latest and last-successful ingestion summaries. |
 | `GET /sources/{source_id}` | Read one Company-scoped source summary. |

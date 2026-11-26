@@ -25,6 +25,9 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "audit:read",
             "company_context:read",
             "company_context:write",
+            "customer_commitment:read",
+            "customer_commitment:write",
+            "customer_commitment:review",
             "decision:read",
             "decision:write",
             "decision:approve",
@@ -43,6 +46,9 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "audit:read",
             "company_context:read",
             "company_context:write",
+            "customer_commitment:read",
+            "customer_commitment:write",
+            "customer_commitment:review",
             "decision:read",
             "decision:write",
             "decision:approve",
@@ -50,7 +56,16 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "finance:write",
         }
     ),
-    "member": frozenset({"tenant:read", "company:read", "company_context:read", "decision:read"}),
+    "member": frozenset(
+        {
+            "tenant:read",
+            "company:read",
+            "company_context:read",
+            "customer_commitment:read",
+            "customer_commitment:write",
+            "decision:read",
+        }
+    ),
 }
 
 

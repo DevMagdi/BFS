@@ -15,6 +15,17 @@
     weekly_capacity: "Weekly capacity",
     projects: "Projects",
     resource_assignments: "Resource assignments",
+    customer_commitments: "Customer commitments (manual)",
+  };
+  const M4_DATASET_TYPES = new Set([
+    "employees", "skills", "employee_skills", "weekly_capacity", "projects", "resource_assignments",
+  ]);
+  const COMMITMENT_STATUS_LABELS = {
+    draft: "Draft",
+    submitted: "Submitted",
+    changes_requested: "Changes requested",
+    accepted: "Accepted",
+    rejected: "Rejected",
   };
   const state = {
     accessToken: sessionStorage.getItem(SESSION_KEYS.access),
@@ -23,6 +34,7 @@
     tenants: [],
     tenant: null,
     canWrite: false,
+    canCommitmentWrite: false,
     tenantDataReady: false,
     loadSequence: 0,
     contracts: [],
@@ -31,6 +43,13 @@
     sourceTotal: 0,
     imports: [],
     importTotal: 0,
+    commitments: [],
+    commitmentTotal: 0,
+    commitmentFilter: "",
+    selectedCommitment: null,
+    commitmentHistory: [],
+    commitmentHistoryOffset: 0,
+    commitmentHistoryTotal: 0,
     messageTimer: null,
   };
 
@@ -73,7 +92,7 @@
     apiErrorMessage,
     onAuthCleared: showSignedOut,
   });
-  const { clearAuth, request } = api;
+  const { clearAuth, request, requestBlob } = api;
 
   function setStatus(message, kind = "muted") {
     const target = $("#workspace-status");
@@ -139,16 +158,27 @@
   function updateRoleUi() {
     const roleCanWrite = ["owner", "admin"].includes(state.tenant?.role);
     state.canWrite = roleCanWrite && state.tenantDataReady;
+    state.canCommitmentWrite = Boolean(state.tenantDataReady && state.tenant);
     const notice = $("#role-notice");
     notice.textContent = !state.tenantDataReady
       ? "Loading Company permissions and evidence. Write actions stay disabled until the selected workspace is loaded."
       : roleCanWrite
-        ? "Owner/admin write access is active. The server remains authoritative for source registration, import linking, and all Company permissions."
-        : "Read-only Company membership. You can inspect source and quality evidence; source registration and ingestion recording require an authorized owner/admin. The server remains authoritative for every permission check.";
+        ? "Owner/admin write access is active for M12 source registration and M4 import evidence. The server remains authoritative for every permission check."
+        : "M12 source registration and M4 ingestion recording are read-only for members. Active members can still create and submit their own manual customer-commitment drafts; only an owner/admin can review them.";
     notice.hidden = state.canWrite;
     for (const selector of ["#source-form", "#ingestion-form"]) {
       for (const field of $$("input, select, button", $(selector))) field.disabled = !state.canWrite;
     }
+    const commitmentNotice = $("#commitment-role-notice");
+    commitmentNotice.textContent = !state.tenantDataReady
+      ? "Loading Company permissions. Manual workflow actions stay disabled until the selected workspace is loaded."
+      : roleCanWrite
+        ? "Active members can create and correct their own drafts. Owner/admin reviewers can accept, request correction, or reject; the server enforces all actions."
+        : "You can create, edit, and submit your own drafts. An owner/admin must independently review submissions; the server enforces Company scope and every transition.";
+    commitmentNotice.hidden = !state.tenantDataReady;
+    $("#new-commitment-button").disabled = !state.canCommitmentWrite;
+    $("#commitment-status-filter").disabled = !state.tenantDataReady;
+    updateCommitmentEditorUi();
   }
 
   function clearTenantWorkspace() {
@@ -159,10 +189,22 @@
     state.sourceTotal = 0;
     state.imports = [];
     state.importTotal = 0;
+    state.commitments = [];
+    state.commitmentTotal = 0;
+    state.commitmentFilter = "";
+    state.selectedCommitment = null;
+    state.commitmentHistory = [];
+    state.commitmentHistoryOffset = 0;
+    state.commitmentHistoryTotal = 0;
+    $("#commitment-status-filter").value = "";
+    clearCommitmentEditor();
     $("#coverage-evaluated-at").textContent = "";
     $("#coverage-note").textContent = "";
     $("#coverage-grid").replaceChildren(node("p", "df-empty", "Loading evidence for the selected Company…"));
     $("#source-list").replaceChildren(node("p", "loading", "Loading Company data evidence…"));
+    $("#commitment-list").replaceChildren(node("p", "loading", "Loading customer commitments…"));
+    $("#commitment-list-load-more").hidden = true;
+    $("#commitment-list-load-more").disabled = true;
     $("#evidence-panel").hidden = true;
     $("#evidence-content").replaceChildren();
     $("#global-message").hidden = true;
@@ -234,7 +276,8 @@
 
   function renderContractOptions() {
     const selectedDataset = $("#source-dataset").value;
-    const versions = state.contracts.filter((contract) => contract.dataset_type === selectedDataset);
+    const versions = state.contracts.filter((contract) =>
+      contract.dataset_type === selectedDataset && M4_DATASET_TYPES.has(contract.dataset_type));
     const select = $("#source-contract");
     select.replaceChildren();
     const placeholder = node("option", "", versions.length ? "Choose a published version…" : "No contract available");
@@ -254,7 +297,7 @@
     const seen = new Set();
     select.replaceChildren();
     for (const contract of state.contracts) {
-      if (seen.has(contract.dataset_type)) continue;
+      if (!M4_DATASET_TYPES.has(contract.dataset_type) || seen.has(contract.dataset_type)) continue;
       seen.add(contract.dataset_type);
       const option = node("option", "", DATASET_LABELS[contract.dataset_type] || contract.dataset_type);
       option.value = contract.dataset_type;
@@ -276,7 +319,7 @@
     const placeholder = node("option", "", source ? "Choose an applied M4 import…" : "Choose a source first…");
     placeholder.value = "";
     select.append(placeholder);
-    const eligible = source ? state.imports.filter((item) =>
+    const eligible = source && M4_DATASET_TYPES.has(source.dataset_type) ? state.imports.filter((item) =>
       item.dataset_type === source.dataset_type && ["applied", "applied_with_warnings"].includes(item.status)) : [];
     for (const item of eligible) {
       const option = node("option", "", `${item.file_name} · ${item.status.replaceAll("_", " ")} · ${dateTimeText(item.created_at)}`);
@@ -297,15 +340,16 @@
     const select = $("#ingestion-source");
     const previous = select.value;
     select.replaceChildren();
-    const placeholder = node("option", "", state.sources.length ? "Choose a registered source…" : "Register a source first…");
+    const m4Sources = state.sources.filter((source) => M4_DATASET_TYPES.has(source.dataset_type));
+    const placeholder = node("option", "", m4Sources.length ? "Choose a registered M4 source…" : "Register an M4 source first…");
     placeholder.value = "";
     select.append(placeholder);
-    for (const source of state.sources) {
+    for (const source of m4Sources) {
       const option = node("option", "", `${source.display_name} · ${DATASET_LABELS[source.dataset_type] || source.dataset_type}`);
       option.value = source.id;
       select.append(option);
     }
-    if (previous && state.sources.some((source) => source.id === previous)) select.value = previous;
+    if (previous && m4Sources.some((source) => source.id === previous)) select.value = previous;
     renderIngestionImportOptions();
     const more = $("#load-more-sources-button");
     more.hidden = state.sources.length >= state.sourceTotal;
@@ -333,7 +377,8 @@
       );
       heading.append(identity);
       const statuses = node("div", "df-status-badges");
-      if (!source.latest_ingestion_status) statuses.append(badge("No ingestion"));
+      if (source.dataset_type === "customer_commitments") statuses.append(badge("Manual capture", "warning"));
+      else if (!source.latest_ingestion_status) statuses.append(badge("No ingestion"));
       else {
         const ingestionKind = source.latest_ingestion_status === "blocked" ? "failed" :
           source.latest_ingestion_status === "succeeded_with_warnings" ? "warning" : "passed";
@@ -349,9 +394,11 @@
       }
       heading.append(statuses);
       card.append(heading);
-      card.append(node("p", "df-source-meta", source.latest_ingestion_at
-        ? `Latest ingestion ${dateTimeText(source.latest_ingestion_at)} · last successful ${dateTimeText(source.last_successful_ingestion_at)} · source owner ${source.owner_user_id}`
-        : `Registered ${dateTimeText(source.created_at)} · no ingestion evidence recorded yet.`));
+      card.append(node("p", "df-source-meta", source.dataset_type === "customer_commitments"
+        ? `Registered ${dateTimeText(source.created_at)} · manual records and review history are tracked in the Customer commitment intake above; this source does not accept M4 imports.`
+        : source.latest_ingestion_at
+          ? `Latest ingestion ${dateTimeText(source.latest_ingestion_at)} · last successful ${dateTimeText(source.last_successful_ingestion_at)} · source owner ${source.owner_user_id}`
+          : `Registered ${dateTimeText(source.created_at)} · no ingestion evidence recorded yet.`));
       if (source.latest_ingestion_id) {
         const actions = node("div", "df-source-actions");
         const review = node("button", "button button-secondary button-small", "Review latest evidence and lineage");
@@ -372,6 +419,7 @@
     renderDatasetOptions();
     renderSourceOptions();
     renderSources();
+    renderCommitments();
     updateRoleUi();
   }
 
@@ -384,11 +432,15 @@
     $("#evidence-content").replaceChildren();
     setStatus("Loading Company-scoped source and M4 evidence…");
     try {
-      const [contractsResult, coverageResult, sourcesResult, importsResult] = await Promise.all([
+      const commitmentPath = `${base}/customer-commitments`;
+      const commitmentFilter = $("#commitment-status-filter").value;
+      const commitmentQuery = commitmentFilter ? `&status=${encodeURIComponent(commitmentFilter)}` : "";
+      const [contractsResult, coverageResult, sourcesResult, importsResult, commitmentsResult] = await Promise.all([
         request(`${base}/contracts`),
         request(`${base}/coverage`),
         request(`${base}/sources?limit=${PAGE_SIZE}&offset=0`),
         request(`/tenants/${encodeURIComponent(tenantId)}/imports?limit=${PAGE_SIZE}&offset=0`),
+        request(`${commitmentPath}?limit=${PAGE_SIZE}&offset=0${commitmentQuery}`),
       ]);
       if (sequence !== state.loadSequence || state.tenant?.id !== tenantId) return;
       state.contracts = contractsResult.data?.items || [];
@@ -397,6 +449,9 @@
       state.sourceTotal = sourcesResult.data?.total || 0;
       state.imports = importsResult.data?.items || [];
       state.importTotal = importsResult.data?.total || 0;
+      state.commitments = commitmentsResult.data?.items || [];
+      state.commitmentTotal = commitmentsResult.data?.total || 0;
+      state.commitmentFilter = commitmentFilter;
       state.tenantDataReady = true;
       renderWorkspace();
       setStatus(`Company data evidence loaded · ${state.tenant.role || "member"} · ${state.sourceTotal} registered sources · ${state.importTotal} M4 imports in history.`, "is-success");
@@ -620,6 +675,478 @@
     }
   }
 
+  function commitmentPath(tenantId = state.tenant?.id) {
+    return `/tenants/${encodeURIComponent(tenantId)}/company-data/customer-commitments`;
+  }
+
+  function setCommitmentStatus(message, kind = "muted") {
+    const target = $("#commitment-status");
+    target.textContent = message;
+    target.classList.remove("is-error", "is-success");
+    if (kind === "is-error" || kind === "is-success") target.classList.add(kind);
+  }
+
+  function clearCommitmentEditor() {
+    state.selectedCommitment = null;
+    state.commitmentHistory = [];
+    state.commitmentHistoryOffset = 0;
+    state.commitmentHistoryTotal = 0;
+    $("#commitment-form").reset();
+    $("#commitment-editor-title").textContent = "New draft";
+    $("#commitment-revision").textContent = "";
+    $("#commitment-validation").replaceChildren(
+      node("p", "df-contract-line", "Required fields are checked by the server before submission. Drafts may be incomplete."),
+    );
+    $("#commitment-evidence-panel").hidden = true;
+    $("#commitment-review-panel").hidden = true;
+    $("#commitment-history-panel").hidden = true;
+    $("#commitment-evidence-list").replaceChildren();
+    $("#commitment-history-list").replaceChildren();
+    $("#commitment-review-comment").value = "";
+    $("#commitment-acknowledge-wrap").hidden = true;
+    $("#commitment-review-acknowledge-wrap").hidden = true;
+    updateCommitmentEditorUi();
+  }
+
+  function commitmentFormValues() {
+    const clean = (selector) => $(selector).value.trim() || null;
+    return {
+      customer_name: clean("#commitment-customer-name"),
+      customer_reference: clean("#commitment-reference"),
+      order_date: $("#commitment-order-date").value || null,
+      requested_delivery_date: $("#commitment-delivery-date").value || null,
+      summary: clean("#commitment-summary"),
+      notes: clean("#commitment-notes"),
+    };
+  }
+
+  function updateCommitmentEditorUi() {
+    const record = state.selectedCommitment;
+    const roleCanReview = ["owner", "admin"].includes(state.tenant?.role);
+    const editableStatus = !record || ["draft", "changes_requested"].includes(record.status);
+    const isOwnerOrAdmin = roleCanReview;
+    const isRecordEditor = !record || isOwnerOrAdmin || record.created_by_user_id === state.user?.id;
+    const editable = Boolean(state.canCommitmentWrite && editableStatus && isRecordEditor);
+    const canReview = Boolean(
+      state.tenantDataReady && roleCanReview && record?.status === "submitted" &&
+      record.submitted_by_user_id !== state.user?.id,
+    );
+    for (const field of $$("input, textarea", $("#commitment-form"))) field.disabled = !editable;
+    $("#commitment-save-button").disabled = !editable;
+    $("#commitment-submit-button").disabled = !editable;
+    $("#new-commitment-button").disabled = !state.canCommitmentWrite;
+    $("#commitment-evidence-panel").hidden = !record;
+    $("#commitment-evidence-form").hidden = !editable;
+    for (const field of $$("input, button", $("#commitment-evidence-form"))) field.disabled = !editable;
+    $("#commitment-review-panel").hidden = !canReview;
+    for (const field of $$("textarea, input, button", $("#commitment-review-panel"))) field.disabled = !canReview;
+    $("#commitment-history-panel").hidden = !record;
+    $("#commitment-reset-button").disabled = !state.tenantDataReady;
+    if (record) {
+      $("#commitment-editor-title").textContent = record.customer_name || "Untitled customer commitment";
+      $("#commitment-revision").textContent = `Revision ${record.current_revision} · ${COMMITMENT_STATUS_LABELS[record.status] || record.status}`;
+      if (record.status === "submitted" && record.submitted_by_user_id === state.user?.id && roleCanReview) {
+        $("#commitment-review-title").textContent = "Independent reviewer required";
+      } else {
+        $("#commitment-review-title").textContent = "Review submission";
+      }
+    } else {
+      $("#commitment-editor-title").textContent = "New draft";
+      $("#commitment-revision").textContent = "";
+    }
+  }
+
+  function renderCommitmentFindings(validation) {
+    const target = $("#commitment-validation");
+    target.replaceChildren();
+    const errors = validation?.errors || [];
+    const warnings = validation?.warnings || [];
+    if (!errors.length && !warnings.length) {
+      target.append(node("p", "df-contract-line", "Required intake fields are complete; no optional-information or evidence warnings are outstanding."));
+    }
+    for (const [items, heading, kind] of [
+      [errors, "Errors · fix before submission", ""],
+      [warnings, "Warnings · optional information or evidence missing", "is-warning"],
+    ]) {
+      if (!items.length) continue;
+      const group = node("section", `df-finding${kind ? ` ${kind}` : ""}`);
+      group.append(node("p", "df-finding-heading", heading));
+      const list = node("ul", "df-finding-list");
+      for (const finding of items) {
+        list.append(node("li", "", `${finding.field ? `${finding.field.replaceAll("_", " ")}: ` : ""}${finding.message}`));
+      }
+      group.append(list);
+      target.append(group);
+    }
+    $("#commitment-acknowledge-wrap").hidden = warnings.length === 0;
+    $("#commitment-review-acknowledge-wrap").hidden = warnings.length === 0;
+  }
+
+  function renderCommitmentEvidence(evidence) {
+    const target = $("#commitment-evidence-list");
+    target.replaceChildren();
+    if (!evidence?.length) {
+      target.append(node("p", "df-contract-line", "No file evidence attached. Missing evidence is a warning, not proof that the commitment is false."));
+      return;
+    }
+    for (const item of evidence) {
+      const row = node("div", "df-evidence-item");
+      const info = node("p");
+      info.append(node("strong", "", item.file_name));
+      info.append(document.createTextNode(` · ${item.media_type} · ${Number(item.file_size_bytes).toLocaleString()} bytes · SHA-256 ${shortHash(item.file_hash)} · added ${dateTimeText(item.created_at)}`));
+      row.append(info);
+      const button = node("button", "button button-quiet button-small", "Download");
+      button.type = "button";
+      button.addEventListener("click", () => downloadCommitmentEvidence(item));
+      row.append(button);
+      target.append(row);
+    }
+  }
+
+  function renderCommitmentHistory() {
+    const target = $("#commitment-history-list");
+    target.replaceChildren();
+    if (!state.commitmentHistory.length) {
+      target.append(node("li", "df-empty", "No history events are available."));
+    }
+    for (const event of state.commitmentHistory) {
+      const item = node("li", "df-history-item");
+      const action = String(event.event_type || "event").replaceAll("_", " ");
+      item.append(node("h5", "", `${action} · ${COMMITMENT_STATUS_LABELS[event.status_after] || event.status_after}`));
+      item.append(node("p", "", `Revision ${event.current_revision} · ${dateTimeText(event.occurred_at)} · actor ${event.actor_user_id}`));
+      if (event.comment) item.append(node("p", "", `Comment: ${event.comment}`));
+      const snapshot = event.snapshot || {};
+      const evidenceCount = Array.isArray(snapshot.evidence) ? snapshot.evidence.length : 0;
+      item.append(node("p", "", `${snapshot.customer_name || "Customer name missing"} · ${snapshot.summary || "Commitment summary missing"} · order date ${snapshot.order_date || "not recorded"} · requested delivery ${snapshot.requested_delivery_date || "not recorded"} · ${evidenceCount} evidence file(s)`));
+      const context = snapshot.action_context || {};
+      if (context.process_criteria_confirmed === true) {
+        item.append(node("p", "", "Reviewer confirmed the intake criteria; this does not verify the underlying event."));
+      }
+      if (context.warnings_acknowledged === true) item.append(node("p", "", "Outstanding warnings were explicitly acknowledged."));
+      item.append(node("p", "", `Snapshot ${shortHash(event.snapshot_hash)} · event ${shortHash(event.event_hash)} · previous ${shortHash(event.previous_event_hash)}`));
+      target.append(item);
+    }
+    const more = $("#commitment-history-load-more");
+    more.hidden = state.commitmentHistoryOffset >= state.commitmentHistoryTotal;
+    more.disabled = more.hidden || !state.selectedCommitment;
+  }
+
+  function renderCommitments() {
+    const target = $("#commitment-list");
+    const more = $("#commitment-list-load-more");
+    target.replaceChildren();
+    more.hidden = state.commitments.length >= state.commitmentTotal;
+    more.disabled = more.hidden || !state.tenantDataReady;
+    if (!state.commitments.length) {
+      target.append(node("p", "df-empty", state.commitmentFilter
+        ? "No customer commitments match this status filter."
+        : "No manually captured customer commitments are recorded yet. Create a draft to register the manual source in the Company Data Foundation."));
+      return;
+    }
+    for (const record of state.commitments) {
+      const card = node("article", `df-commitment-card${state.selectedCommitment?.id === record.id ? " is-selected" : ""}`);
+      const heading = node("div", "df-commitment-card-heading");
+      heading.append(node("h4", "", record.customer_name || "Customer name missing"));
+      const kind = record.status === "accepted" ? "passed" :
+        ["rejected"].includes(record.status) ? "failed" :
+          record.status === "changes_requested" ? "warning" : "";
+      heading.append(badge(COMMITMENT_STATUS_LABELS[record.status] || record.status, kind));
+      card.append(heading);
+      card.append(node("p", "", `${record.summary || "Commitment summary missing"}`));
+      card.append(node("p", "", `Manual source · revision ${record.current_revision} · order date ${record.order_date || "not recorded"} · updated ${dateTimeText(record.updated_at)}`));
+      const actions = node("div", "df-commitment-card-actions");
+      const open = node("button", "button button-secondary button-small", state.selectedCommitment?.id === record.id ? "Refresh record" : "Open record");
+      open.type = "button";
+      open.addEventListener("click", () => openCommitment(record.id));
+      actions.append(open);
+      card.append(actions);
+      target.append(card);
+    }
+    if (state.commitmentTotal > state.commitments.length) {
+      target.append(node("p", "df-contract-line", `Showing ${state.commitments.length} of ${state.commitmentTotal} records in this view.`));
+    }
+  }
+
+  function renderCommitmentDetail(detail, { preserveAcknowledgement = false } = {}) {
+    const record = detail.commitment;
+    const sameRecord = state.selectedCommitment?.id === record.id;
+    state.selectedCommitment = record;
+    $("#commitment-customer-name").value = record.customer_name || "";
+    $("#commitment-reference").value = record.customer_reference || "";
+    $("#commitment-order-date").value = record.order_date || "";
+    $("#commitment-delivery-date").value = record.requested_delivery_date || "";
+    $("#commitment-summary").value = record.summary || "";
+    $("#commitment-notes").value = record.notes || "";
+    $("#commitment-review-comment").value = record.review_comment || "";
+    if (!preserveAcknowledgement && !sameRecord) {
+      $("#commitment-acknowledge").checked = false;
+      $("#commitment-review-acknowledge").checked = false;
+      $("#commitment-review-criteria").checked = false;
+    }
+    renderCommitmentFindings(detail.validation);
+    renderCommitmentEvidence(detail.evidence);
+    $("#commitment-status-filter").value = state.commitmentFilter;
+    updateCommitmentEditorUi();
+    renderCommitments();
+  }
+
+  async function loadCommitmentList(tenantId = state.tenant?.id) {
+    if (!tenantId) return;
+    const context = captureWorkspace();
+    const status = $("#commitment-status-filter").value;
+    const suffix = status ? `&status=${encodeURIComponent(status)}` : "";
+    try {
+      const { data } = await request(`${commitmentPath(tenantId)}?limit=${PAGE_SIZE}&offset=0${suffix}`);
+      if (state.tenant?.id !== tenantId || context.sequence !== state.loadSequence ||
+          $("#commitment-status-filter").value !== status) return;
+      state.commitments = data?.items || [];
+      state.commitmentTotal = data?.total || 0;
+      state.commitmentFilter = status;
+      renderCommitments();
+    } catch (error) {
+      if (state.tenant?.id === tenantId) {
+        setCommitmentStatus(error.message || "Customer commitments could not be loaded.", "is-error");
+      }
+    }
+  }
+
+  async function loadMoreCommitments() {
+    const context = captureWorkspace();
+    if (!context.tenantId || state.commitments.length >= state.commitmentTotal) return;
+    const status = state.commitmentFilter;
+    const suffix = status ? `&status=${encodeURIComponent(status)}` : "";
+    const button = $("#commitment-list-load-more");
+    button.disabled = true;
+    try {
+      const { data } = await request(
+        `${commitmentPath(context.tenantId)}?limit=${PAGE_SIZE}&offset=${state.commitments.length}${suffix}`,
+      );
+      if (!workspaceIsCurrent(context) || state.commitmentFilter !== status) return;
+      const existing = new Set(state.commitments.map((item) => item.id));
+      state.commitments.push(...(data?.items || []).filter((item) => !existing.has(item.id)));
+      state.commitmentTotal = data?.total || state.commitmentTotal;
+      renderCommitments();
+    } catch (error) {
+      if (workspaceIsCurrent(context)) {
+        showMessage(error.message || "Additional customer commitments could not be loaded.");
+      }
+    } finally {
+      if (workspaceIsCurrent(context) && state.commitmentFilter === status) {
+        button.disabled = state.commitments.length >= state.commitmentTotal;
+      }
+    }
+  }
+
+  async function openCommitment(commitmentId, { preserveAcknowledgement = false } = {}) {
+    if (!state.tenant) return;
+    const context = captureWorkspace();
+    setCommitmentStatus("Loading the company-scoped record, evidence, and hash-linked history…");
+    try {
+      const path = `${commitmentPath(context.tenantId)}/${encodeURIComponent(commitmentId)}`;
+      const [detailResult, historyResult] = await Promise.all([
+        request(path),
+        request(`${path}/history?limit=50&offset=0`),
+      ]);
+      if (!workspaceIsCurrent(context)) return;
+      state.commitmentHistory = historyResult.data?.items || [];
+      state.commitmentHistoryOffset = state.commitmentHistory.length;
+      state.commitmentHistoryTotal = historyResult.data?.total || 0;
+      renderCommitmentDetail(detailResult.data, { preserveAcknowledgement });
+      renderCommitmentHistory();
+      $("#commitment-history-panel").hidden = false;
+      setCommitmentStatus(`Record opened · ${state.commitmentHistoryTotal} history event(s) hash-checked by the server.`, "is-success");
+    } catch (error) {
+      if (workspaceIsCurrent(context)) {
+        setCommitmentStatus(error.message || "The customer commitment could not be opened.", "is-error");
+        showMessage(error.message || "The customer commitment could not be opened.");
+      }
+    }
+  }
+
+  async function refreshCommitmentsAfterWrite(tenantId) {
+    const status = $("#commitment-status-filter").value;
+    const suffix = status ? `&status=${encodeURIComponent(status)}` : "";
+    const { data } = await request(`${commitmentPath(tenantId)}?limit=${PAGE_SIZE}&offset=0${suffix}`);
+    if (state.tenant?.id !== tenantId) return;
+    state.commitments = data?.items || [];
+    state.commitmentTotal = data?.total || 0;
+    state.commitmentFilter = status;
+    renderCommitments();
+  }
+
+  async function saveCurrentCommitment({ quiet = false, preserveAcknowledgement = false } = {}) {
+    if (!state.canCommitmentWrite || !state.tenant) {
+      showMessage("An active Company membership is required to save a manual customer-commitment draft.");
+      return null;
+    }
+    const context = captureWorkspace();
+    const current = state.selectedCommitment;
+    const body = commitmentFormValues();
+    const button = $("#commitment-save-button");
+    button.disabled = true;
+    setCommitmentStatus("Saving the draft and recording its provenance…");
+    try {
+      let result;
+      if (current) {
+        result = await request(`${commitmentPath(context.tenantId)}/${encodeURIComponent(current.id)}`, {
+          method: "PUT",
+          body: { ...body, expected_revision: current.current_revision },
+        });
+      } else {
+        result = await request(commitmentPath(context.tenantId), { method: "POST", body });
+      }
+      if (!workspaceIsCurrent(context)) return null;
+      const commitmentId = result.data.commitment.id;
+      await refreshCommitmentsAfterWrite(context.tenantId);
+      await openCommitment(commitmentId, { preserveAcknowledgement });
+      if (!quiet) setCommitmentStatus("Draft saved. Required fields, optional warnings, and evidence remain distinct.", "is-success");
+      return state.selectedCommitment;
+    } catch (error) {
+      if (workspaceIsCurrent(context)) {
+        setCommitmentStatus(error.message || "The draft could not be saved.", "is-error");
+        showMessage(error.message || "The draft could not be saved.");
+      }
+      return null;
+    } finally {
+      if (workspaceIsCurrent(context)) updateCommitmentEditorUi();
+    }
+  }
+
+  async function submitCommitment() {
+    const warningsAcknowledged = $("#commitment-acknowledge").checked;
+    const record = await saveCurrentCommitment({ quiet: true, preserveAcknowledgement: true });
+    if (!record || !state.tenant) return;
+    const context = captureWorkspace();
+    setCommitmentStatus("Checking required fields and recording submission…");
+    try {
+      const { data } = await request(`${commitmentPath(context.tenantId)}/${encodeURIComponent(record.id)}/submit`, {
+        method: "POST",
+        body: { expected_revision: record.current_revision, acknowledge_warnings: warningsAcknowledged },
+      });
+      if (!workspaceIsCurrent(context)) return;
+      await refreshCommitmentsAfterWrite(context.tenantId);
+      await openCommitment(data.commitment.id, { preserveAcknowledgement: true });
+      setCommitmentStatus("Submitted for independent review. This records the submitter's assertion; it is not factual verification.", "is-success");
+    } catch (error) {
+      if (workspaceIsCurrent(context)) {
+        setCommitmentStatus(error.message || "The record could not be submitted.", "is-error");
+        showMessage(error.message || "The record could not be submitted.");
+        if (state.selectedCommitment?.id === record.id) await openCommitment(record.id, { preserveAcknowledgement: true });
+      }
+    }
+  }
+
+  async function uploadCommitmentEvidence(event) {
+    event.preventDefault();
+    const record = state.selectedCommitment;
+    if (!record || !state.canCommitmentWrite) return;
+    const file = $("#commitment-evidence-file").files?.[0];
+    if (!file) {
+      showMessage("Choose a PDF, PNG, JPEG, or UTF-8 text evidence file.");
+      return;
+    }
+    const context = captureWorkspace();
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const button = $("#commitment-evidence-upload-button");
+    button.disabled = true;
+    setCommitmentStatus("Hashing and storing the user-supplied evidence file…");
+    try {
+      await request(`${commitmentPath(context.tenantId)}/${encodeURIComponent(record.id)}/evidence`, {
+        method: "POST",
+        body: form,
+      });
+      if (!workspaceIsCurrent(context)) return;
+      $("#commitment-evidence-form").reset();
+      await refreshCommitmentsAfterWrite(context.tenantId);
+      await openCommitment(record.id);
+      setCommitmentStatus("Evidence attached and recorded in the append-only history. Its hash does not authenticate its source.", "is-success");
+    } catch (error) {
+      if (workspaceIsCurrent(context)) {
+        setCommitmentStatus(error.message || "The evidence file could not be attached.", "is-error");
+        showMessage(error.message || "The evidence file could not be attached.");
+      }
+    } finally {
+      if (workspaceIsCurrent(context)) updateCommitmentEditorUi();
+    }
+  }
+
+  async function downloadCommitmentEvidence(evidence) {
+    if (!state.tenant || !state.selectedCommitment) return;
+    const context = captureWorkspace();
+    const path = `${commitmentPath(context.tenantId)}/${encodeURIComponent(state.selectedCommitment.id)}/evidence/${encodeURIComponent(evidence.id)}`;
+    try {
+      const blob = await requestBlob(path);
+      if (!workspaceIsCurrent(context)) return;
+      const objectUrl = URL.createObjectURL(blob);
+      const link = node("a");
+      link.href = objectUrl;
+      link.download = evidence.file_name;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (error) {
+      if (workspaceIsCurrent(context)) showMessage(error.message || "The evidence file could not be downloaded.");
+    }
+  }
+
+  async function reviewCommitment(decision) {
+    const record = state.selectedCommitment;
+    if (!record || !state.tenant) return;
+    const context = captureWorkspace();
+    const body = {
+      expected_revision: record.current_revision,
+      decision,
+      comment: $("#commitment-review-comment").value.trim() || null,
+      criteria_confirmed: decision === "accept" && $("#commitment-review-criteria").checked,
+      acknowledge_warnings: $("#commitment-review-acknowledge").checked,
+    };
+    const buttonId = decision === "accept" ? "#commitment-accept-button" :
+      decision === "reject" ? "#commitment-reject-button" : "#commitment-request-correction-button";
+    const button = $(buttonId);
+    button.disabled = true;
+    setCommitmentStatus(`Recording owner/admin review: ${decision.replaceAll("_", " ")}…`);
+    try {
+      const { data } = await request(`${commitmentPath(context.tenantId)}/${encodeURIComponent(record.id)}/review`, {
+        method: "POST",
+        body,
+      });
+      if (!workspaceIsCurrent(context)) return;
+      await refreshCommitmentsAfterWrite(context.tenantId);
+      await openCommitment(data.commitment.id);
+      setCommitmentStatus(`Review recorded · ${COMMITMENT_STATUS_LABELS[data.commitment.status] || data.commitment.status}. The review confirms process criteria, not the underlying event.`, "is-success");
+    } catch (error) {
+      if (workspaceIsCurrent(context)) {
+        setCommitmentStatus(error.message || "The review decision could not be recorded.", "is-error");
+        showMessage(error.message || "The review decision could not be recorded.");
+      }
+    } finally {
+      if (workspaceIsCurrent(context)) updateCommitmentEditorUi();
+    }
+  }
+
+  async function loadMoreCommitmentHistory() {
+    const record = state.selectedCommitment;
+    if (!record || state.commitmentHistoryOffset >= state.commitmentHistoryTotal || !state.tenant) return;
+    const context = captureWorkspace();
+    const button = $("#commitment-history-load-more");
+    button.disabled = true;
+    try {
+      const path = `${commitmentPath(context.tenantId)}/${encodeURIComponent(record.id)}/history?limit=50&offset=${state.commitmentHistoryOffset}`;
+      const { data } = await request(path);
+      if (!workspaceIsCurrent(context) || state.selectedCommitment?.id !== record.id) return;
+      state.commitmentHistory.push(...(data?.items || []));
+      state.commitmentHistoryOffset += (data?.items || []).length;
+      state.commitmentHistoryTotal = data?.total || state.commitmentHistoryTotal;
+      renderCommitmentHistory();
+    } catch (error) {
+      if (workspaceIsCurrent(context)) showMessage(error.message || "Older record history could not be loaded.");
+    } finally {
+      if (workspaceIsCurrent(context)) renderCommitmentHistory();
+    }
+  }
+
   function bindEvents() {
     $("#company-picker").addEventListener("change", async (event) => {
       const tenant = state.tenants.find((item) => item.id === event.target.value);
@@ -636,6 +1163,28 @@
     $("#source-form").addEventListener("submit", registerSource);
     $("#ingestion-source").addEventListener("change", renderIngestionImportOptions);
     $("#ingestion-form").addEventListener("submit", recordIngestion);
+    $("#new-commitment-button").addEventListener("click", () => {
+      clearCommitmentEditor();
+      $("#commitment-customer-name").focus();
+      setCommitmentStatus("New draft opened. Save it to register the manual source and preserve its history.");
+    });
+    $("#commitment-reset-button").addEventListener("click", () => {
+      clearCommitmentEditor();
+      setCommitmentStatus("Editor cleared. Saved records remain unchanged.");
+    });
+    $("#commitment-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      saveCurrentCommitment();
+    });
+    $("#commitment-save-button").addEventListener("click", () => saveCurrentCommitment());
+    $("#commitment-submit-button").addEventListener("click", submitCommitment);
+    $("#commitment-evidence-form").addEventListener("submit", uploadCommitmentEvidence);
+    $("#commitment-accept-button").addEventListener("click", () => reviewCommitment("accept"));
+    $("#commitment-request-correction-button").addEventListener("click", () => reviewCommitment("request_correction"));
+    $("#commitment-reject-button").addEventListener("click", () => reviewCommitment("reject"));
+    $("#commitment-history-load-more").addEventListener("click", loadMoreCommitmentHistory);
+    $("#commitment-list-load-more").addEventListener("click", loadMoreCommitments);
+    $("#commitment-status-filter").addEventListener("change", () => loadCommitmentList());
     $("#load-more-sources-button").addEventListener("click", loadMoreSources);
     $("#load-more-imports-button").addEventListener("click", loadMoreImports);
     $("#close-evidence-button").addEventListener("click", () => { $("#evidence-panel").hidden = true; });

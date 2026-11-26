@@ -266,10 +266,19 @@ class CoreFinancialImport(Base):
     file_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     source_archive_status: Mapped[str] = mapped_column(
-        String(24), nullable=False, server_default="legacy_unavailable"
+        String(24),
+        nullable=False,
+        server_default="legacy_unavailable",
+        comment="retained for new imports; legacy_unavailable only for pre-archive imports.",
     )
     original_content: Mapped[bytes | None] = mapped_column(
-        LargeBinary, nullable=True, deferred=True
+        LargeBinary,
+        nullable=True,
+        deferred=True,
+        comment=(
+            "Exact uploaded CSV bytes; immutable and protected by the import row "
+            "tenant/company RLS."
+        ),
     )
     mapping_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     mapping_version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -501,7 +510,10 @@ class CoreFinancialRun(Base):
     policy_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     policy_version: Mapped[int] = mapped_column(Integer, nullable=False)
     policy_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    idempotency_key_hash: Mapped[str | None] = mapped_column(String(64))
+    idempotency_key_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        comment="SHA-256 of the request Idempotency-Key; plaintext keys are never persisted.",
+    )
     request_fingerprint: Mapped[str | None] = mapped_column(String(64))
     ledger_import_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     bank_import_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))

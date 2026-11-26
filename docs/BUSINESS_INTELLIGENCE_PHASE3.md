@@ -113,16 +113,10 @@ Local verification (2026-11-21): the database-independent suite passes (**228 pa
 formatted; mypy reports no issues in **150 source files**; Python compileall and `git diff --check`
 pass. The full suite collects (**384 tests**) using syntactically valid placeholder PostgreSQL URLs;
 collection is not execution. The Business Intelligence OpenAPI surface registers **12 paths / 15
-operations**. Offline `alembic upgrade head --sql` renders through
-`0022_bi_config_analysis` (**5,446 lines**), which checks migration
-generation only. This workspace has no configured PostgreSQL test URLs or local PostgreSQL server,
-so live migration, database/API integration, RLS/grant/trigger, and schema-drift checks must run in the
-required PostgreSQL 18.7 candidate CI. The first pushed candidate (run **45878630379**) passed
-formatting/lint, mypy, schema upgrade, and drift checks but failed five BI integration tests. Review
-identified nullable formula JSONB fields being encoded as JSON `null` and a test mapping that omitted
-its required decimal separator; both are corrected and regression-covered where possible. The second
-candidate (run **45879422697**) passed formatting/lint, mypy, schema upgrade, and drift checks; its full
-suite exposed one BI test-harness bug that indexed a FastAPI response as a dictionary. That test is
-corrected; a final PostgreSQL 18.7 candidate run is still required. `alembic upgrade head`, `alembic
-check`, and full `pytest` must pass before any PR is opened. No PR or merge is present. Software checks
-do not approve source authority, finance policy, production use, or customer-data authorization.
+operations**. Offline `alembic upgrade head --sql` renders through `0022_bi_config_analysis`
+(**5,446 lines**), which checks migration generation only. The required PostgreSQL 18.7 candidate CI
+(run **45879884607**) passes formatting/lint, mypy, `alembic upgrade head`, `alembic check`, and the
+full PostgreSQL integration suite, including RLS/grant/trigger checks. No local PostgreSQL server is
+available, so these database gates were verified in CI rather than locally. The latest candidate is
+ready for PR review; no PR or merge is present at this verification point. Software checks do not
+approve source authority, finance policy, production use, or customer-data authorization.

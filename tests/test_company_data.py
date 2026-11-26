@@ -471,8 +471,13 @@ def test_company_data_coverage_counts_each_sources_latest_snapshot_and_checks_co
         company_name="M12 Other Coverage Company",
         key="m12-other-coverage-tenant-001",
     )
-    cross_tenant = client.get(
+    other_owner_coverage = client.get(
         f"{_company_data_path(other_tenant['id'])}/coverage",
         headers=auth_headers(other_owner),
+    )
+    assert other_owner_coverage.status_code == 200, other_owner_coverage.text
+    cross_tenant = client.get(
+        f"{_company_data_path(other_tenant['id'])}/coverage",
+        headers=auth_headers(owner),
     )
     assert cross_tenant.status_code == 404

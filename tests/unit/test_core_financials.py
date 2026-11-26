@@ -22,7 +22,11 @@ from businessflow.core_financials.calculations import (
     SourceImportState,
     calculate_financial_metrics,
 )
-from businessflow.core_financials.catalog import illustrative_policy_template
+from businessflow.core_financials.catalog import (
+    LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
+    PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION,
+    illustrative_policy_template,
+)
 from businessflow.core_financials.contracts import (
     BANK_FIELDS,
     LEDGER_FIELDS,
@@ -34,7 +38,10 @@ from businessflow.core_financials.contracts import (
     CoreFinancialRunEvidenceResponse,
     MetricControl,
 )
-from businessflow.core_financials.service import ensure_core_financials_enabled
+from businessflow.core_financials.service import (
+    _run_result_snapshot,
+    ensure_core_financials_enabled,
+)
 from businessflow.data_imports.parsers import parse_file
 from businessflow.errors import ApiError
 
@@ -859,6 +866,32 @@ def test_legacy_v2_replay_preserves_revenue_currency_exclusion_semantics() -> No
 
     with pytest.raises(ValueError, match="only for the Revenue measure"):
         _run(requested_metrics=("net_profit",), legacy_v2_replay=True)
+
+
+def test_v2_and_v3_snapshots_preserve_their_legacy_reconciliation_shape() -> None:
+    results, analysis, _lines, state = _run(requested_metrics=("revenue",))
+    current_snapshot = _run_result_snapshot(state=state, metrics=results, analysis=analysis)
+    current_metrics = current_snapshot["metrics"]
+    assert isinstance(current_metrics, list) and isinstance(current_metrics[0], dict)
+    current_reconciliation = current_metrics[0]["reconciliation"]
+    assert isinstance(current_reconciliation, dict)
+    assert current_reconciliation["arithmetic_comparison"] == "not_computed"
+
+    for engine_version in (
+        LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
+        PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION,
+    ):
+        legacy_snapshot = _run_result_snapshot(
+            state=state,
+            metrics=results,
+            analysis=analysis,
+            engine_version=engine_version,
+        )
+        legacy_metrics = legacy_snapshot["metrics"]
+        assert isinstance(legacy_metrics, list) and isinstance(legacy_metrics[0], dict)
+        legacy_reconciliation = legacy_metrics[0]["reconciliation"]
+        assert isinstance(legacy_reconciliation, dict)
+        assert "arithmetic_comparison" not in legacy_reconciliation
 
 
 def test_revenue_measure_keeps_exact_control_arithmetic_and_evidence() -> None:

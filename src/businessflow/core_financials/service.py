@@ -1795,7 +1795,9 @@ def _run_result_snapshot(
         PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION,
     ):
         for item in metric_payloads:
-            item.pop("arithmetic_comparison", None)
+            reconciliation = item.get("reconciliation")
+            if isinstance(reconciliation, dict):
+                reconciliation.pop("arithmetic_comparison", None)
     if engine_version == LEGACY_CORE_FINANCIAL_ENGINE_VERSION:
         for item in metric_payloads:
             item.pop("excluded_transfer_count", None)

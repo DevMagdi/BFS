@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
@@ -215,7 +215,7 @@ def _create_core_financial_revenue_run(
             "period_end": "2026-11-30",
             "currency_code": "USD",
         },
-        headers=owner_headers,
+        headers={**owner_headers, "Idempotency-Key": f"bi-core-run-{uuid4().hex}"},
     )
     assert run.status_code == 201, run.text
     return run.json()
@@ -247,14 +247,17 @@ def test_business_intelligence_metric_migration_downgrade_refuses_retained_defin
     config.set_main_option("sqlalchemy.url", migration_url.replace("%", "%%"))
     with pytest.raises(
         DBAPIError,
-        match="Cannot downgrade while business metric definition data is retained",
+        match=(
+            r"archived source bytes or idempotent runs remain|"
+            r"business metric definition data is retained"
+        ),
     ):
         command.downgrade(config, "0020_business_semantic_layer")
 
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0022_bi_config_analysis"
+            == "0023_core_financial_guardrails"
         )
         assert (
             connection.scalar(
@@ -992,14 +995,17 @@ def test_business_intelligence_migration_downgrade_refuses_retained_evidence(
 
     with pytest.raises(
         DBAPIError,
-        match="Cannot downgrade while Company configuration or BI evidence is retained",
+        match=(
+            r"archived source bytes or idempotent runs remain|"
+            r"Company configuration or BI evidence is retained"
+        ),
     ):
         command.downgrade(config, "0021_bi_registry")
 
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0022_bi_config_analysis"
+            == "0023_core_financial_guardrails"
         )
         assert (
             connection.scalar(

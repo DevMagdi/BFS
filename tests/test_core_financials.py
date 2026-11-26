@@ -15,8 +15,12 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
 
+from businessflow.api.dependencies import get_settings
 from businessflow.core_financials.calculations import calculate_financial_metrics
-from businessflow.core_financials.catalog import LEGACY_CORE_FINANCIAL_ENGINE_VERSION
+from businessflow.core_financials.catalog import (
+    LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
+    PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION,
+)
 from businessflow.core_financials.contracts import (
     BANK_FIELDS,
     FINANCIAL_MEASURES,
@@ -50,6 +54,11 @@ from tests.helpers import auth_headers, create_member, create_tenant, register_u
 
 def _base(tenant_id: str) -> str:
     return f"/api/v1/tenants/{tenant_id}/core-financials"
+
+
+def _run_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Give each integration-test run request a unique persisted idempotency key."""
+    return {**headers, "Idempotency-Key": f"financial-run-{uuid4().hex}"}
 
 
 def _create_revenue_policy(
@@ -431,6 +440,114 @@ def _persist_legacy_v2_run(session, import_id: UUID) -> tuple[CoreFinancialRun, 
     return run, input_hash, result_hash
 
 
+def _persist_legacy_v3_cash_flow_run(session, import_id: UUID) -> CoreFinancialRun:
+    source_import = session.get(CoreFinancialImport, import_id)
+    assert source_import is not None
+    _mapping, policy_row, records = _verify_import_integrity(session, source_import)
+    policy = _verify_policy(policy_row)
+    run_request = CoreFinancialRunCreateRequest(
+        policy_id=policy_row.id,
+        measure="cash_flow",
+        bank_import_id=source_import.id,
+        period_start=source_import.period_start,
+        period_end=source_import.period_end,
+        currency_code="USD",
+    )
+    facts = tuple(
+        _fact_from_record(record, source_import)
+        for record in records
+        if record.row_status == "accepted"
+    )
+    metrics, analysis, lines, state = calculate_financial_metrics(
+        policy=policy,
+        policy_version=policy_row.version,
+        request_period_start=run_request.period_start,
+        request_period_end=run_request.period_end,
+        currency_code=run_request.currency_code,
+        ledger_import=None,
+        bank_import=_source_import_state(source_import),
+        facts=facts,
+        controls=run_request.controls,
+        requested_metrics=("cash_flow",),
+        legacy_reconciliation_replay=True,
+        require_source_archive=False,
+    )
+    assert state == "calculated"
+    assert metrics[0].exact_value == "650"
+
+    run_id = uuid4()
+    created_at = datetime.now(UTC)
+    input_snapshot = _run_input_snapshot(
+        tenant_id=source_import.tenant_id,
+        company_id=source_import.company_id,
+        policy_row=policy_row,
+        policy=policy,
+        request=run_request,
+        imports=(None, (source_import, records)),
+        facts=facts,
+        engine_version=PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION,
+    )
+    result_snapshot = _run_result_snapshot(
+        state=state,
+        metrics=metrics,
+        analysis=analysis,
+        engine_version=PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION,
+    )
+    input_hash = content_hash(input_snapshot)
+    result_hash = content_hash(result_snapshot)
+    evidence_payload = sorted(
+        (_line_payload(line) for line in lines),
+        key=lambda item: (str(item["metric"]), str(item["record_id"])),
+    )
+    trace_hash = _trace_hash(
+        run_id=run_id,
+        input_hash=input_hash,
+        result_hash=result_hash,
+        evidence_hash=content_hash(evidence_payload),
+        created_at=created_at,
+        engine_version=PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION,
+    )
+    run = CoreFinancialRun(
+        id=run_id,
+        tenant_id=source_import.tenant_id,
+        company_id=source_import.company_id,
+        requested_by_user_id=source_import.requested_by_user_id,
+        policy_id=policy_row.id,
+        policy_version=policy_row.version,
+        policy_hash=policy_row.definition_hash,
+        ledger_import_id=None,
+        bank_import_id=source_import.id,
+        period_start=run_request.period_start,
+        period_end=run_request.period_end,
+        currency_code=run_request.currency_code,
+        state=state,
+        input_hash=input_hash,
+        result_hash=result_hash,
+        trace_hash=trace_hash,
+        input_snapshot=input_snapshot,
+        result_snapshot=result_snapshot,
+        created_at=created_at,
+    )
+    session.add(run)
+    session.flush()
+    for line in lines:
+        session.add(
+            CoreFinancialRunEvidence(
+                id=uuid4(),
+                tenant_id=source_import.tenant_id,
+                company_id=source_import.company_id,
+                run_id=run_id,
+                metric=line.metric,
+                record_id=line.fact.id,
+                formula_coefficient=line.coefficient,
+                contribution_amount=line.contribution_amount,
+                created_at=created_at,
+            )
+        )
+    session.flush()
+    return run
+
+
 def test_core_financial_transfer_migration_downgrade_is_safe(
     client,
     admin_engine,
@@ -467,6 +584,32 @@ def test_core_financial_transfer_migration_downgrade_is_safe(
         bank_mapping,
     )
 
+    with pytest.raises(
+        DBAPIError,
+        match="archived source bytes or idempotent runs remain",
+    ):
+        command.downgrade(config, "0022_bi_config_analysis")
+
+    # The disposable migration test DB explicitly discards the new archive only so it can
+    # continue to exercise the older transfer-evidence downgrade guard in migration 0017.
+    with admin_engine.begin() as connection:
+        connection.exec_driver_sql(
+            "ALTER TABLE core_financial_imports DISABLE TRIGGER "
+            "trg_core_financial_imports_append_only"
+        )
+        connection.execute(
+            text(
+                "UPDATE core_financial_imports "
+                "SET original_content = NULL, source_archive_status = 'legacy_unavailable' "
+                "WHERE id = :import_id"
+            ),
+            {"import_id": bank_import["id"]},
+        )
+        connection.exec_driver_sql(
+            "ALTER TABLE core_financial_imports ENABLE TRIGGER "
+            "trg_core_financial_imports_append_only"
+        )
+    command.downgrade(config, "0022_bi_config_analysis")
     try:
         with pytest.raises(
             DBAPIError,
@@ -478,7 +621,7 @@ def test_core_financial_transfer_migration_downgrade_is_safe(
 
     with admin_engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0022_bi_config_analysis"
+            "0023_core_financial_guardrails"
         )
         assert (
             connection.scalar(
@@ -497,6 +640,111 @@ def test_core_financial_transfer_migration_downgrade_is_safe(
             )
         ).one()
         assert security.relrowsecurity and security.relforcerowsecurity
+
+    # Reconstruct one authentic pre-archive v3 snapshot shape on the disposable DB. The
+    # migrated status is explicit, the missing bytes are not fabricated, and a v4 run abstains.
+    admin_factory = sessionmaker(admin_engine, expire_on_commit=False)
+    with admin_factory.begin() as session:
+        session.execute(
+            text(
+                "ALTER TABLE core_financial_imports DISABLE TRIGGER "
+                "trg_core_financial_imports_append_only"
+            )
+        )
+        legacy_row = session.get(CoreFinancialImport, UUID(bank_import["id"]))
+        assert legacy_row is not None
+        legacy_mapping = session.get(CoreFinancialMapping, legacy_row.mapping_id)
+        legacy_policy = session.get(CoreFinancialPolicy, legacy_row.policy_id)
+        assert legacy_mapping is not None and legacy_policy is not None
+        legacy_records = list(
+            session.scalars(
+                select(CoreFinancialRecord)
+                .where(CoreFinancialRecord.import_id == legacy_row.id)
+                .order_by(CoreFinancialRecord.source_row_number)
+            )
+        )
+        blank_rows_ignored = legacy_row.input_snapshot["file"]["blank_rows_ignored"]
+        legacy_input = _build_import_input_snapshot(
+            tenant_id=legacy_row.tenant_id,
+            company_id=legacy_row.company_id,
+            source_key=legacy_row.source_key,
+            source_type=legacy_row.source_type,
+            period_start=legacy_row.period_start,
+            period_end=legacy_row.period_end,
+            period_completeness=legacy_row.period_completeness,
+            file_name=legacy_row.file_name,
+            file_hash=legacy_row.file_hash,
+            file_size_bytes=legacy_row.file_size_bytes,
+            row_count=legacy_row.total_rows,
+            blank_rows_ignored=blank_rows_ignored,
+            mapping=legacy_mapping,
+            policy=legacy_policy,
+            source_row_hashes=[
+                {"row_number": item.source_row_number, "row_hash": item.source_row_hash}
+                for item in legacy_records
+            ],
+            engine_version=PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION,
+            source_archive_status="legacy_unavailable",
+            schema_version=1,
+        )
+        legacy_result = _import_result_snapshot(
+            [_record_snapshot(item) for item in legacy_records],
+            quality_status=legacy_row.quality_status,
+            engine_version=PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION,
+        )
+        legacy_row.input_snapshot = legacy_input
+        legacy_row.result_snapshot = legacy_result
+        legacy_row.input_hash = content_hash(legacy_input)
+        legacy_row.result_hash = content_hash(legacy_result)
+        legacy_row.source_archive_status = "legacy_unavailable"
+        legacy_row.original_content = None
+        session.flush()
+        session.execute(
+            text(
+                "ALTER TABLE core_financial_imports ENABLE TRIGGER "
+                "trg_core_financial_imports_append_only"
+            )
+        )
+
+    legacy_download = client.get(
+        f"{_base(tenant['id'])}/imports/{bank_import['id']}/source",
+        headers=headers,
+    )
+    assert legacy_download.status_code == 410
+    assert legacy_download.json()["error"]["code"] == "core_financial_source_artifact_unavailable"
+    readiness = client.get(f"{_base(tenant['id'])}/readiness", headers=headers)
+    assert readiness.status_code == 200, readiness.text
+    assert readiness.json()["legacy_imports_without_original_bytes"] >= 1
+    new_legacy_run = client.post(
+        f"{_base(tenant['id'])}/runs",
+        json={
+            "policy_id": policy["id"],
+            "measure": "cash_flow",
+            "bank_import_id": bank_import["id"],
+            "period_start": "2026-11-01",
+            "period_end": "2026-11-30",
+            "currency_code": "USD",
+        },
+        headers=_run_headers(headers),
+    )
+    assert new_legacy_run.status_code == 201, new_legacy_run.text
+    assert new_legacy_run.json()["state"] == "incomplete"
+    assert new_legacy_run.json()["metrics"][0]["exact_value"] is None
+    assert (
+        "original_source_artifact_not_retained"
+        in new_legacy_run.json()["metrics"][0]["reason_codes"]
+    )
+
+    with admin_factory.begin() as session:
+        v3_run = _persist_legacy_v3_cash_flow_run(session, UUID(bank_import["id"]))
+        v3_run_id = v3_run.id
+    v3_detail = client.get(f"{_base(tenant['id'])}/runs/{v3_run_id}", headers=headers)
+    assert v3_detail.status_code == 200, v3_detail.text
+    assert v3_detail.json()["engine_version"] == PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION
+    assert v3_detail.json()["metrics"][0]["exact_value"] == "650"
+    v3_replay = client.post(f"{_base(tenant['id'])}/runs/{v3_run_id}/verify", headers=headers)
+    assert v3_replay.status_code == 200, v3_replay.text
+    assert v3_replay.json()["passed"] is True
 
 
 def test_revenue_only_workflow_imports_calculates_reconciles_traces_and_replays(client):
@@ -612,7 +860,9 @@ def test_revenue_only_workflow_imports_calculates_reconciles_traces_and_replays(
             }
         ],
     }
-    created = client.post(f"{_base(tenant['id'])}/runs", json=run_request, headers=headers)
+    created = client.post(
+        f"{_base(tenant['id'])}/runs", json=run_request, headers=_run_headers(headers)
+    )
     assert created.status_code == 201, created.text
     run = created.json()
     assert run["authority"] == "illustrative_not_authoritative"
@@ -625,8 +875,10 @@ def test_revenue_only_workflow_imports_calculates_reconciles_traces_and_replays(
     assert revenue["exact_value"] == "900"
     assert revenue["reported_value"] == "900"
     assert revenue["category_totals"] == {"revenue": "1000", "revenue_reduction": "100"}
-    assert revenue["reconciliation"]["state"] == "passed"
+    assert revenue["reconciliation"]["state"] == "not_verifiable"
+    assert revenue["reconciliation"]["arithmetic_comparison"] == "within_tolerance"
     assert revenue["reconciliation"]["variance"] == "0"
+    assert revenue["reconciliation"]["reason_codes"] == ["control_source_independence_not_verified"]
     assert revenue["reconciliation"]["source_independence"] == "caller_asserted_not_verified"
 
     evidence = client.get(
@@ -732,7 +984,7 @@ def test_six_measure_workflow_binds_ledger_and_bank_lineage_and_replays(client):
             "period_end": "2026-11-30",
             "currency_code": "USD",
         },
-        headers=headers,
+        headers=_run_headers(headers),
     )
     assert wrong_ledger_source.status_code == 409
     assert wrong_ledger_source.json()["error"]["code"] == "core_financial_run_reference_mismatch"
@@ -747,7 +999,7 @@ def test_six_measure_workflow_binds_ledger_and_bank_lineage_and_replays(client):
             "period_end": "2026-11-30",
             "currency_code": "USD",
         },
-        headers=headers,
+        headers=_run_headers(headers),
     )
     assert wrong_bank_source.status_code == 409
     assert wrong_bank_source.json()["error"]["code"] == "core_financial_run_reference_mismatch"
@@ -771,7 +1023,7 @@ def test_six_measure_workflow_binds_ledger_and_bank_lineage_and_replays(client):
                 "period_end": "2026-11-30",
                 "currency_code": "USD",
             },
-            headers=headers,
+            headers=_run_headers(headers),
         )
         assert response.status_code == 201, response.text
         run = response.json()
@@ -793,7 +1045,7 @@ def test_six_measure_workflow_binds_ledger_and_bank_lineage_and_replays(client):
             "period_end": "2026-11-30",
             "currency_code": "USD",
         },
-        headers=headers,
+        headers=_run_headers(headers),
     )
     assert cash_response.status_code == 201, cash_response.text
     cash_run = cash_response.json()
@@ -828,6 +1080,175 @@ def test_six_measure_workflow_binds_ledger_and_bank_lineage_and_replays(client):
         replay = client.post(f"{_base(tenant['id'])}/runs/{run['id']}/verify", headers=headers)
         assert replay.status_code == 200, replay.text
         assert replay.json()["passed"] is True, f"{measure}: {replay.text}"
+
+
+def test_run_idempotency_archived_source_and_readiness_contract(client, admin_engine):
+    owner = register_user(client, f"core-financials-idempotency-{uuid4().hex}@example.com")
+    headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="Core Financials Idempotency Test",
+        company_name="Synthetic Idempotency Company",
+        key=f"core-financials-idempotency-{uuid4().hex}",
+    )
+    policy = _create_revenue_policy(client, tenant["id"], headers)
+    mapping = _create_mapping(client, tenant["id"], headers)
+    imported, original_content = _import_revenue_ledger(
+        client, tenant["id"], headers, policy, mapping
+    )
+    assert imported["source_archive_status"] == "retained"
+    assert imported["source_identity_status"] == "caller_asserted_not_verified"
+    assert imported["source_authority_status"] == "not_established"
+
+    source_response = client.get(
+        f"{_base(tenant['id'])}/imports/{imported['id']}/source",
+        headers=headers,
+    )
+    assert source_response.status_code == 200, source_response.text
+    assert source_response.content == original_content
+    assert source_response.headers["x-content-sha256"] == imported["file_hash"]
+    assert source_response.headers["cache-control"] == "private, no-store"
+    with admin_engine.connect() as connection:
+        download_audit = connection.execute(
+            text(
+                "SELECT event_type, target_id, request_id, metadata FROM audit_events "
+                "WHERE target_id = :import_id AND event_type = 'core_financials.source_downloaded'"
+            ),
+            {"import_id": imported["id"]},
+        ).one()
+    assert download_audit.event_type == "core_financials.source_downloaded"
+    assert str(download_audit.target_id) == imported["id"]
+    assert str(download_audit.request_id) == source_response.headers["x-request-id"]
+    assert download_audit.metadata["source_file_hash"] == imported["file_hash"]
+    assert download_audit.metadata["source_archive_status"] == "retained"
+    assert download_audit.metadata["file_size_bytes"] == len(original_content)
+    assert "original_content" not in download_audit.metadata
+
+    corrupted_content = b"X" + original_content[1:]
+    try:
+        with admin_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER TABLE core_financial_imports DISABLE TRIGGER "
+                "trg_core_financial_imports_append_only"
+            )
+            connection.execute(
+                text(
+                    "UPDATE core_financial_imports SET original_content = :content "
+                    "WHERE id = :import_id"
+                ),
+                {"content": corrupted_content, "import_id": imported["id"]},
+            )
+            connection.exec_driver_sql(
+                "ALTER TABLE core_financial_imports ENABLE TRIGGER "
+                "trg_core_financial_imports_append_only"
+            )
+        corrupted_download = client.get(
+            f"{_base(tenant['id'])}/imports/{imported['id']}/source",
+            headers=headers,
+        )
+        assert corrupted_download.status_code == 409, corrupted_download.text
+        assert corrupted_download.json()["error"]["code"] == "core_financial_evidence_unverifiable"
+    finally:
+        with admin_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER TABLE core_financial_imports DISABLE TRIGGER "
+                "trg_core_financial_imports_append_only"
+            )
+            connection.execute(
+                text(
+                    "UPDATE core_financial_imports SET original_content = :content "
+                    "WHERE id = :import_id"
+                ),
+                {"content": original_content, "import_id": imported["id"]},
+            )
+            connection.exec_driver_sql(
+                "ALTER TABLE core_financial_imports ENABLE TRIGGER "
+                "trg_core_financial_imports_append_only"
+            )
+
+    run_request = {
+        "policy_id": policy["id"],
+        "measure": "revenue",
+        "ledger_import_id": imported["id"],
+        "period_start": "2026-11-01",
+        "period_end": "2026-11-30",
+        "currency_code": "USD",
+    }
+    idempotency_key = f"financial-run-{uuid4().hex}"
+    keyed_headers = {**headers, "Idempotency-Key": idempotency_key}
+    first = client.post(
+        f"{_base(tenant['id'])}/runs",
+        json=run_request,
+        headers=keyed_headers,
+    )
+    assert first.status_code == 201, first.text
+    assert first.json()["replayed"] is False
+    retry = client.post(
+        f"{_base(tenant['id'])}/runs",
+        json=run_request,
+        headers=keyed_headers,
+    )
+    assert retry.status_code == 201, retry.text
+    assert retry.json()["replayed"] is True
+    assert retry.json()["id"] == first.json()["id"]
+    assert retry.json()["input_hash"] == first.json()["input_hash"]
+    assert retry.json()["result_hash"] == first.json()["result_hash"]
+    with admin_engine.connect() as connection:
+        stored_idempotency = connection.execute(
+            text(
+                "SELECT idempotency_key_hash, request_fingerprint FROM core_financial_runs "
+                "WHERE id = :run_id"
+            ),
+            {"run_id": first.json()["id"]},
+        ).one()
+    assert stored_idempotency.idempotency_key_hash == sha256(idempotency_key.encode()).hexdigest()
+    assert stored_idempotency.request_fingerprint != idempotency_key
+    assert len(stored_idempotency.request_fingerprint) == 64
+
+    conflicting_request = {**run_request, "measure": "expenses"}
+    conflict = client.post(
+        f"{_base(tenant['id'])}/runs",
+        json=conflicting_request,
+        headers=keyed_headers,
+    )
+    assert conflict.status_code == 409, conflict.text
+    assert conflict.json()["error"]["code"] == "idempotency_key_conflict"
+    history = client.get(f"{_base(tenant['id'])}/runs?limit=10&offset=0", headers=headers)
+    assert history.status_code == 200, history.text
+    assert history.json()["total"] == 1
+
+    readiness = client.get(f"{_base(tenant['id'])}/readiness", headers=headers)
+    assert readiness.status_code == 200, readiness.text
+    readiness_body = readiness.json()
+    assert readiness_body["readiness_status"] == "blocked"
+    assert readiness_body["production_status"] == "blocked"
+    assert readiness_body["supported_measures"] == list(FINANCIAL_MEASURES)
+    assert readiness_body["cash_flow_scope"] == "observed_bank_net_movement_only"
+    assert "source_authority_not_established" in readiness_body["blocker_codes"]
+
+
+def test_readiness_endpoint_is_available_when_feature_flag_is_disabled(client, settings):
+    owner = register_user(client, f"core-financials-readiness-{uuid4().hex}@example.com")
+    headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="Core Financials Readiness Test",
+        company_name="Synthetic Readiness Company",
+        key=f"core-financials-readiness-{uuid4().hex}",
+    )
+    client.app.dependency_overrides[get_settings] = lambda: settings.model_copy(
+        update={"core_financials_enabled": False}
+    )
+    try:
+        response = client.get(f"{_base(tenant['id'])}/readiness", headers=headers)
+    finally:
+        client.app.dependency_overrides.pop(get_settings, None)
+    assert response.status_code == 200, response.text
+    assert response.json()["feature_status"] == "disabled"
+    assert "feature_flag_disabled" in response.json()["blocker_codes"]
+    assert response.json()["production_status"] == "blocked"
 
 
 def test_persisted_period_comparison_reports_variances_margins_contributors_and_traceability(
@@ -963,7 +1384,9 @@ def test_persisted_period_comparison_reports_variances_margins_contributors_and_
                 "period_end": end,
                 "currency_code": "USD",
             }
-            response = client.post(f"{_base(tenant['id'])}/runs", json=run_request, headers=headers)
+            response = client.post(
+                f"{_base(tenant['id'])}/runs", json=run_request, headers=_run_headers(headers)
+            )
             assert response.status_code == 201, response.text
             run = response.json()
             assert run["metrics"][0]["exact_value"] == expected[key][measure]
@@ -979,7 +1402,7 @@ def test_persisted_period_comparison_reports_variances_margins_contributors_and_
             "period_end": "2026-11-30",
             "currency_code": "USD",
         },
-        headers=headers,
+        headers=_run_headers(headers),
     )
     assert repeated_cash_flow.status_code == 201, repeated_cash_flow.text
     latest_cash_flow = max(
@@ -1232,7 +1655,7 @@ def test_legacy_v2_mixed_currency_import_and_run_remain_replay_verifiable(
         headers=headers,
     )
     assert verification.status_code == 200, verification.text
-    assert verification.json()["passed"] is True
+    assert verification.json()["passed"] is True, verification.text
     assert verification.json()["engine_version"] == LEGACY_CORE_FINANCIAL_ENGINE_VERSION
 
 
@@ -1305,7 +1728,7 @@ def test_fractional_and_max_precision_amounts_round_trip_through_import_run_and_
             "period_end": "2026-11-30",
             "currency_code": "USD",
         },
-        headers=headers,
+        headers=_run_headers(headers),
     )
     assert run_response.status_code == 201, run_response.text
     assert run_response.json()["state"] == "calculated"
@@ -1346,7 +1769,7 @@ def test_core_financials_authorization_and_company_scope_are_enforced(client):
             "period_end": "2026-11-30",
             "currency_code": "USD",
         },
-        headers=owner_headers,
+        headers=_run_headers(owner_headers),
     )
     assert bank_run.status_code == 201, bank_run.text
     assert bank_run.json()["metrics"][0]["exact_value"] == "650"
@@ -1365,7 +1788,7 @@ def test_core_financials_authorization_and_company_scope_are_enforced(client):
             "period_end": "2026-11-30",
             "currency_code": "USD",
         },
-        headers=owner_headers,
+        headers=_run_headers(owner_headers),
     )
     assert revenue_run.status_code == 201, revenue_run.text
 
@@ -1409,6 +1832,11 @@ def test_core_financials_authorization_and_company_scope_are_enforced(client):
         headers=auth_headers(member),
     )
     assert denied_bank_import.status_code == 403
+    denied_source = client.get(
+        f"{_base(tenant['id'])}/imports/{imported['id']}/source",
+        headers=auth_headers(member),
+    )
+    assert denied_source.status_code == 403
     denied_policy = client.get(
         f"{_base(tenant['id'])}/policies/{policy['id']}",
         headers=auth_headers(member),
@@ -1439,6 +1867,11 @@ def test_core_financials_authorization_and_company_scope_are_enforced(client):
         headers=other_headers,
     )
     assert hidden_bank_import.status_code == 404
+    hidden_source = client.get(
+        f"{_base(other_tenant['id'])}/imports/{imported['id']}/source",
+        headers=other_headers,
+    )
+    assert hidden_source.status_code == 404
     hidden_history = client.get(
         f"{_base(other_tenant['id'])}/imports?limit=100&offset=0",
         headers=other_headers,
@@ -1472,7 +1905,9 @@ def test_core_financial_tables_enforce_company_rls_runtime_grants_and_immutabili
     )
     policy = _create_revenue_policy(client, tenant["id"], headers)
     mapping = _create_mapping(client, tenant["id"], headers)
-    imported, _content = _import_revenue_ledger(client, tenant["id"], headers, policy, mapping)
+    imported, original_content = _import_revenue_ledger(
+        client, tenant["id"], headers, policy, mapping
+    )
     created_run = client.post(
         f"{_base(tenant['id'])}/runs",
         json={
@@ -1483,7 +1918,7 @@ def test_core_financial_tables_enforce_company_rls_runtime_grants_and_immutabili
             "period_end": "2026-11-30",
             "currency_code": "USD",
         },
-        headers=headers,
+        headers=_run_headers(headers),
     )
     assert created_run.status_code == 201, created_run.text
     run = created_run.json()
@@ -1504,6 +1939,17 @@ def test_core_financial_tables_enforce_company_rls_runtime_grants_and_immutabili
             {"run_id": run["id"]},
         ).scalar_one()
         assert bank_import_id is None
+        archive = connection.execute(
+            text(
+                "SELECT source_archive_status, original_content, file_hash, file_size_bytes "
+                "FROM core_financial_imports WHERE id = :import_id"
+            ),
+            {"import_id": imported["id"]},
+        ).one()
+        assert archive.source_archive_status == "retained"
+        assert archive.original_content == original_content
+        assert archive.file_hash == imported["file_hash"]
+        assert archive.file_size_bytes == len(original_content)
         security = connection.execute(
             text(
                 "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity, r.rolname AS owner "
@@ -1576,6 +2022,14 @@ def test_core_financial_tables_enforce_company_rls_runtime_grants_and_immutabili
         )
         for model, count in zip(models, expected_counts, strict=True):
             assert session.scalar(select(func.count()).select_from(model)) == count
+        assert (
+            session.scalar(
+                select(CoreFinancialImport.original_content).where(
+                    CoreFinancialImport.id == UUID(imported["id"])
+                )
+            )
+            == original_content
+        )
 
         session.execute(
             text("SELECT set_config('app.company_id', :company_id, true)"),
@@ -1583,6 +2037,14 @@ def test_core_financial_tables_enforce_company_rls_runtime_grants_and_immutabili
         )
         for model in models:
             assert session.scalar(select(func.count()).select_from(model)) == 0
+        assert (
+            session.scalar(
+                select(CoreFinancialImport.original_content).where(
+                    CoreFinancialImport.id == UUID(imported["id"])
+                )
+            )
+            is None
+        )
 
         session.execute(
             text("SELECT set_config('app.company_id', :company_id, true)"),
@@ -1599,6 +2061,14 @@ def test_core_financial_tables_enforce_company_rls_runtime_grants_and_immutabili
         connection.execute(
             text("UPDATE core_financial_runs SET state = 'incomplete' WHERE id = :run_id"),
             {"run_id": run["id"]},
+        )
+    with pytest.raises(DBAPIError), admin_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE core_financial_imports SET original_content = :content "
+                "WHERE id = :import_id"
+            ),
+            {"content": b"x" * len(original_content), "import_id": imported["id"]},
         )
     with pytest.raises(DBAPIError), factory.begin() as session:
         session.execute(

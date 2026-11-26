@@ -37,6 +37,8 @@ from businessflow.core_financials.catalog import (
     CORE_FINANCIAL_MAX_ROWS,
     ILLUSTRATIVE_POLICY_DISCLAIMER,
     LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
+    PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION,
+    SUPPORTED_CORE_FINANCIAL_ENGINE_VERSIONS,
     illustrative_policy_template,
 )
 from businessflow.core_financials.comparison import ComparisonRunData, build_period_comparison
@@ -64,6 +66,7 @@ from businessflow.core_financials.contracts import (
     CoreFinancialPolicyCreateRequest,
     CoreFinancialPolicyPage,
     CoreFinancialPolicyResponse,
+    CoreFinancialReadinessResponse,
     CoreFinancialRecordPage,
     CoreFinancialRecordResponse,
     CoreFinancialRunCreateRequest,
@@ -102,6 +105,13 @@ IDEMPOTENCY_PATTERN = re.compile(r"^[A-Za-z0-9._~:-]{16,128}$")
 MAX_PAGE_SIZE = 100
 MAX_PAGE_OFFSET = 100_000
 SNAPSHOT_SCHEMA_VERSION = 1
+SOURCE_IDENTITY_STATUS = "caller_asserted_not_verified"
+SOURCE_AUTHORITY_STATUS = "not_established"
+SOURCE_COMPLETENESS_STATUS = "caller_asserted_not_verified"
+
+
+def _financial_snapshot_schema(engine_version: str) -> int:
+    return 2 if engine_version == CORE_FINANCIAL_ENGINE_VERSION else SNAPSHOT_SCHEMA_VERSION
 
 
 def ensure_core_financials_enabled(settings: Settings | None) -> None:
@@ -268,6 +278,69 @@ def get_core_financial_template(
         policy_disclaimer=ILLUSTRATIVE_POLICY_DISCLAIMER,
         general_ledger_headers=LEDGER_FIELDS,
         bank_activity_headers=BANK_FIELDS,
+    )
+
+
+def get_core_financial_readiness(
+    session: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    *,
+    settings: Settings,
+) -> CoreFinancialReadinessResponse:
+    """Report explicit production blockers without treating caller assertions as approval."""
+    access = require_company_context_access(session, user, tenant_id, "finance:read")
+    legacy_imports = (
+        session.scalar(
+            select(func.count())
+            .select_from(CoreFinancialImport)
+            .where(
+                CoreFinancialImport.tenant_id == tenant_id,
+                CoreFinancialImport.company_id == access.company.id,
+                CoreFinancialImport.source_archive_status == "legacy_unavailable",
+            )
+        )
+        or 0
+    )
+    if settings.app_env == "production":
+        feature_status: Literal["disabled", "enabled_nonproduction", "production_hard_blocked"] = (
+            "production_hard_blocked"
+        )
+    elif settings.core_financials_enabled:
+        feature_status = "enabled_nonproduction"
+    else:
+        feature_status = "disabled"
+    blockers = [
+        "finance_owner_policy_approval_missing",
+        "source_identity_not_independently_verified",
+        "source_authority_not_established",
+        "period_completeness_is_caller_asserted",
+        "independent_control_provenance_not_verified",
+        "retention_schedule_not_approved",
+        "customer_data_processing_not_approved",
+    ]
+    if not settings.core_financials_enabled:
+        blockers.append("feature_flag_disabled")
+    if settings.app_env == "production":
+        blockers.append("production_environment_hard_block")
+    if legacy_imports:
+        blockers.append("legacy_original_source_bytes_unavailable")
+    return CoreFinancialReadinessResponse(
+        tenant_id=tenant_id,
+        company_id=access.company.id,
+        readiness_status="blocked",
+        feature_status=feature_status,
+        production_status="blocked",
+        policy_approval_status="illustrative_not_authoritative",
+        source_identity_status=SOURCE_IDENTITY_STATUS,
+        source_authority_status=SOURCE_AUTHORITY_STATUS,
+        source_completeness_status=SOURCE_COMPLETENESS_STATUS,
+        new_import_archive_status="original_bytes_retained_and_hash_checked",
+        retention_schedule_status="not_approved",
+        legacy_imports_without_original_bytes=legacy_imports,
+        supported_measures=FINANCIAL_MEASURES,
+        cash_flow_scope="observed_bank_net_movement_only",
+        blocker_codes=tuple(blockers),
     )
 
 
@@ -510,27 +583,34 @@ def _build_import_input_snapshot(
     policy: CoreFinancialPolicy,
     source_row_hashes: list[dict[str, object]],
     engine_version: str = CORE_FINANCIAL_ENGINE_VERSION,
+    source_archive_status: str = "retained",
+    schema_version: int | None = None,
 ) -> dict[str, object]:
-    return {
-        "schema_version": SNAPSHOT_SCHEMA_VERSION,
+    selected_schema = (
+        _financial_snapshot_schema(engine_version) if schema_version is None else schema_version
+    )
+    source_snapshot: dict[str, object] = {
+        "source_key": source_key,
+        "source_type": source_type,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "period_completeness": period_completeness,
+        "completeness_authority": SOURCE_COMPLETENESS_STATUS,
+    }
+    file_snapshot: dict[str, object] = {
+        "file_name": file_name,
+        "format": "csv",
+        "file_hash": file_hash,
+        "file_size_bytes": file_size_bytes,
+        "row_count": row_count,
+        "blank_rows_ignored": blank_rows_ignored,
+    }
+    snapshot: dict[str, object] = {
+        "schema_version": selected_schema,
         "engine_version": engine_version,
         "scope": {"tenant_id": str(tenant_id), "company_id": str(company_id)},
-        "source": {
-            "source_key": source_key,
-            "source_type": source_type,
-            "period_start": period_start.isoformat(),
-            "period_end": period_end.isoformat(),
-            "period_completeness": period_completeness,
-            "completeness_authority": "caller_asserted_not_verified",
-        },
-        "file": {
-            "file_name": file_name,
-            "format": "csv",
-            "file_hash": file_hash,
-            "file_size_bytes": file_size_bytes,
-            "row_count": row_count,
-            "blank_rows_ignored": blank_rows_ignored,
-        },
+        "source": source_snapshot,
+        "file": file_snapshot,
         "mapping": {
             "id": str(mapping.id),
             "source_key": mapping.source_key,
@@ -550,6 +630,18 @@ def _build_import_input_snapshot(
         },
         "source_row_hashes": source_row_hashes,
     }
+    if selected_schema >= 2:
+        source_snapshot["identity_status"] = SOURCE_IDENTITY_STATUS
+        source_snapshot["authority_status"] = SOURCE_AUTHORITY_STATUS
+        file_snapshot["archive_status"] = source_archive_status
+        snapshot["evidence_governance"] = {
+            "source_identity_status": SOURCE_IDENTITY_STATUS,
+            "source_authority_status": SOURCE_AUTHORITY_STATUS,
+            "period_completeness_status": SOURCE_COMPLETENESS_STATUS,
+            "original_file_status": source_archive_status,
+            "retention_schedule_status": "not_approved",
+        }
+    return snapshot
 
 
 def _import_input_snapshot(
@@ -561,12 +653,16 @@ def _import_input_snapshot(
     stored_file = row.input_snapshot.get("file") if isinstance(row.input_snapshot, dict) else None
     blank_rows = stored_file.get("blank_rows_ignored") if isinstance(stored_file, dict) else None
     engine_version = row.input_snapshot.get("engine_version")
+    schema_version = row.input_snapshot.get("schema_version")
     if (
         isinstance(blank_rows, bool)
         or not isinstance(blank_rows, int)
         or blank_rows < 0
-        or engine_version
-        not in (LEGACY_CORE_FINANCIAL_ENGINE_VERSION, CORE_FINANCIAL_ENGINE_VERSION)
+        or not isinstance(engine_version, str)
+        or engine_version not in SUPPORTED_CORE_FINANCIAL_ENGINE_VERSIONS
+        or isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != _financial_snapshot_schema(engine_version)
     ):
         raise _integrity_error()
     return _build_import_input_snapshot(
@@ -589,6 +685,8 @@ def _import_input_snapshot(
             for record in records
         ],
         engine_version=engine_version,
+        source_archive_status=row.source_archive_status,
+        schema_version=schema_version,
     )
 
 
@@ -648,7 +746,7 @@ def _import_result_snapshot(
     engine_version: str = CORE_FINANCIAL_ENGINE_VERSION,
 ) -> dict[str, object]:
     return {
-        "schema_version": SNAPSHOT_SCHEMA_VERSION,
+        "schema_version": _financial_snapshot_schema(engine_version),
         "engine_version": engine_version,
         "counts": _counts_for_rows(rows),
         "quality_status": quality_status,
@@ -705,16 +803,42 @@ def _verify_import_integrity(
     session: Session,
     source_import: CoreFinancialImport,
 ) -> tuple[CoreFinancialMapping, CoreFinancialPolicy, list[CoreFinancialRecord]]:
+    engine_version = (
+        source_import.input_snapshot.get("engine_version")
+        if isinstance(source_import.input_snapshot, dict)
+        else None
+    )
+    input_schema = (
+        source_import.input_snapshot.get("schema_version")
+        if isinstance(source_import.input_snapshot, dict)
+        else None
+    )
     if (
         not isinstance(source_import.input_snapshot, dict)
         or not isinstance(source_import.result_snapshot, dict)
         or content_hash(source_import.input_snapshot) != source_import.input_hash
         or content_hash(source_import.result_snapshot) != source_import.result_hash
-        or source_import.input_snapshot.get("engine_version")
-        not in (LEGACY_CORE_FINANCIAL_ENGINE_VERSION, CORE_FINANCIAL_ENGINE_VERSION)
-        or source_import.result_snapshot.get("engine_version")
-        != source_import.input_snapshot.get("engine_version")
+        or not isinstance(engine_version, str)
+        or engine_version not in SUPPORTED_CORE_FINANCIAL_ENGINE_VERSIONS
+        or isinstance(input_schema, bool)
+        or not isinstance(input_schema, int)
+        or input_schema != _financial_snapshot_schema(engine_version)
+        or source_import.result_snapshot.get("engine_version") != engine_version
+        or source_import.result_snapshot.get("schema_version") != input_schema
     ):
+        raise _integrity_error()
+    if source_import.source_archive_status == "retained":
+        original_content = source_import.original_content
+        if (
+            original_content is None
+            or len(original_content) != source_import.file_size_bytes
+            or hashlib.sha256(original_content).hexdigest() != source_import.file_hash
+        ):
+            raise _integrity_error()
+    elif source_import.source_archive_status == "legacy_unavailable":
+        if source_import.original_content is not None:
+            raise _integrity_error()
+    else:
         raise _integrity_error()
     mapping = session.scalar(
         select(CoreFinancialMapping).where(
@@ -839,6 +963,11 @@ def _import_response(
         requested_by_user_id=row.requested_by_user_id,
         source_key=row.source_key,
         source_type=cast(SourceType, row.source_type),
+        source_identity_status=SOURCE_IDENTITY_STATUS,
+        source_authority_status=SOURCE_AUTHORITY_STATUS,
+        source_archive_status=cast(
+            Literal["retained", "legacy_unavailable"], row.source_archive_status
+        ),
         file_name=row.file_name,
         file_hash=row.file_hash,
         file_size_bytes=row.file_size_bytes,
@@ -1209,6 +1338,8 @@ def create_core_financial_import(
         file_format="csv",
         file_hash=file_hash,
         file_size_bytes=len(content),
+        source_archive_status="retained",
+        original_content=content,
         mapping_id=mapping.id,
         mapping_version=mapping.version,
         mapping_hash=mapping.mapping_hash,
@@ -1363,6 +1494,50 @@ def get_core_financial_import(
     return _import_response(row)
 
 
+def get_core_financial_import_source(
+    session: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    import_id: UUID,
+    *,
+    settings: Settings,
+    request_id: UUID | None = None,
+) -> tuple[bytes, str, str]:
+    """Return verified original bytes only to an authorized same-Company finance reader."""
+    ensure_core_financials_enabled(settings)
+    access = require_company_context_access(
+        session, user, tenant_id, "finance:read", request_id=request_id
+    )
+    source_import = _get_scoped_import(
+        session,
+        tenant_id=tenant_id,
+        company_id=access.company.id,
+        import_id=import_id,
+    )
+    _verify_import_integrity(session, source_import)
+    if source_import.source_archive_status != "retained" or source_import.original_content is None:
+        raise ApiError(
+            410,
+            "core_financial_source_artifact_unavailable",
+            "The original CSV was not archived for this legacy import.",
+        )
+    record_event(
+        session,
+        "core_financials.source_downloaded",
+        tenant_id=tenant_id,
+        actor_user_id=user.id,
+        target_type="core_financial_import",
+        target_id=source_import.id,
+        request_id=request_id,
+        details={
+            "source_file_hash": source_import.file_hash,
+            "source_archive_status": source_import.source_archive_status,
+            "file_size_bytes": source_import.file_size_bytes,
+        },
+    )
+    return source_import.original_content, source_import.file_name, source_import.file_hash
+
+
 def list_core_financial_records(
     session: Session,
     user: UserAccount,
@@ -1440,6 +1615,7 @@ def _source_import_state(row: CoreFinancialImport) -> SourceImportState:
         accepted_rows=row.accepted_rows,
         rejected_rows=row.rejected_rows,
         duplicate_rows=row.duplicate_rows,
+        source_archive_status=row.source_archive_status,
     )
 
 
@@ -1497,10 +1673,22 @@ def _run_request_payload(request: CoreFinancialRunCreateRequest) -> dict[str, ob
     return request.model_dump(mode="json", exclude_none=True)
 
 
+def _run_request_fingerprint(*, user_id: UUID, request: CoreFinancialRunCreateRequest) -> str:
+    return content_hash(
+        {
+            "requested_by_user_id": str(user_id),
+            "request": _run_request_payload(request),
+        }
+    )
+
+
 def _run_import_payload(
-    row: CoreFinancialImport, records: list[CoreFinancialRecord]
+    row: CoreFinancialImport,
+    records: list[CoreFinancialRecord],
+    *,
+    engine_version: str,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "id": str(row.id),
         "source_key": row.source_key,
         "source_type": row.source_type,
@@ -1531,6 +1719,14 @@ def _run_import_payload(
             for record in records
         ],
     }
+    if engine_version == CORE_FINANCIAL_ENGINE_VERSION:
+        payload["source_evidence"] = {
+            "source_identity_status": SOURCE_IDENTITY_STATUS,
+            "source_authority_status": SOURCE_AUTHORITY_STATUS,
+            "period_completeness_status": SOURCE_COMPLETENESS_STATUS,
+            "original_file_status": row.source_archive_status,
+        }
+    return payload
 
 
 def _run_input_snapshot(
@@ -1545,7 +1741,7 @@ def _run_input_snapshot(
     engine_version: str = CORE_FINANCIAL_ENGINE_VERSION,
 ) -> dict[str, object]:
     source_imports = [
-        _run_import_payload(source_import, records)
+        _run_import_payload(source_import, records, engine_version=engine_version)
         for item in imports
         if item is not None
         for source_import, records in [item]
@@ -1560,8 +1756,8 @@ def _run_input_snapshot(
             str(item.id),
         ),
     )
-    return {
-        "schema_version": SNAPSHOT_SCHEMA_VERSION,
+    snapshot: dict[str, object] = {
+        "schema_version": _financial_snapshot_schema(engine_version),
         "engine_version": engine_version,
         "scope": {"tenant_id": str(tenant_id), "company_id": str(company_id)},
         "policy": {
@@ -1576,6 +1772,14 @@ def _run_input_snapshot(
         "imports": source_imports,
         "canonical_facts": [_fact_payload(item) for item in ordered_facts],
     }
+    if engine_version == CORE_FINANCIAL_ENGINE_VERSION:
+        snapshot["evidence_governance"] = {
+            "source_identity_status": SOURCE_IDENTITY_STATUS,
+            "source_authority_status": SOURCE_AUTHORITY_STATUS,
+            "period_completeness_status": SOURCE_COMPLETENESS_STATUS,
+            "production_readiness": "blocked",
+        }
+    return snapshot
 
 
 def _run_result_snapshot(
@@ -1586,11 +1790,19 @@ def _run_result_snapshot(
     engine_version: str = CORE_FINANCIAL_ENGINE_VERSION,
 ) -> dict[str, object]:
     metric_payloads = [item.model_dump(mode="json") for item in metrics]
+    if engine_version in (
+        LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
+        PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION,
+    ):
+        for item in metric_payloads:
+            reconciliation = item.get("reconciliation")
+            if isinstance(reconciliation, dict):
+                reconciliation.pop("arithmetic_comparison", None)
     if engine_version == LEGACY_CORE_FINANCIAL_ENGINE_VERSION:
         for item in metric_payloads:
             item.pop("excluded_transfer_count", None)
     return {
-        "schema_version": SNAPSHOT_SCHEMA_VERSION,
+        "schema_version": _financial_snapshot_schema(engine_version),
         "engine_version": engine_version,
         "state": state,
         "metrics": metric_payloads,
@@ -1630,7 +1842,7 @@ def _trace_hash(
 ) -> str:
     return content_hash(
         {
-            "schema_version": SNAPSHOT_SCHEMA_VERSION,
+            "schema_version": _financial_snapshot_schema(engine_version),
             "engine_version": engine_version,
             "run_id": str(run_id),
             "input_hash": input_hash,
@@ -1648,12 +1860,32 @@ def _verify_run_record(session: Session, row: CoreFinancialRun) -> list[CoreFina
         or content_hash(row.input_snapshot) != row.input_hash
         or content_hash(row.result_snapshot) != row.result_hash
         or row.state != row.result_snapshot.get("state")
-        or row.input_snapshot.get("engine_version")
-        not in (LEGACY_CORE_FINANCIAL_ENGINE_VERSION, CORE_FINANCIAL_ENGINE_VERSION)
+        or row.input_snapshot.get("engine_version") not in SUPPORTED_CORE_FINANCIAL_ENGINE_VERSIONS
         or row.result_snapshot.get("engine_version") != row.input_snapshot.get("engine_version")
+        or row.input_snapshot.get("schema_version")
+        != _financial_snapshot_schema(cast(str, row.input_snapshot.get("engine_version")))
+        or row.result_snapshot.get("schema_version") != row.input_snapshot.get("schema_version")
     ):
         raise _integrity_error()
     engine_version = cast(str, row.input_snapshot["engine_version"])
+    if (row.idempotency_key_hash is None) != (row.request_fingerprint is None):
+        raise _integrity_error()
+    if row.idempotency_key_hash is not None:
+        request_snapshot = row.input_snapshot.get("request")
+        if (
+            not re.fullmatch(r"[0-9a-f]{64}", row.idempotency_key_hash)
+            or row.request_fingerprint is None
+            or not re.fullmatch(r"[0-9a-f]{64}", row.request_fingerprint)
+            or not isinstance(request_snapshot, dict)
+            or content_hash(
+                {
+                    "requested_by_user_id": str(row.requested_by_user_id),
+                    "request": request_snapshot,
+                }
+            )
+            != row.request_fingerprint
+        ):
+            raise _integrity_error()
     evidence_rows = list(
         session.scalars(
             select(CoreFinancialRunEvidence)
@@ -1679,7 +1911,9 @@ def _verify_run_record(session: Session, row: CoreFinancialRun) -> list[CoreFina
     return evidence_rows
 
 
-def _run_response(session: Session, row: CoreFinancialRun) -> CoreFinancialRunResponse:
+def _run_response(
+    session: Session, row: CoreFinancialRun, *, replayed: bool = False
+) -> CoreFinancialRunResponse:
     _verify_run_record(session, row)
     snapshot = row.result_snapshot
     try:
@@ -1717,6 +1951,7 @@ def _run_response(session: Session, row: CoreFinancialRun) -> CoreFinancialRunRe
             result_hash=row.result_hash,
             trace_hash=row.trace_hash,
             created_at=row.created_at,
+            replayed=replayed,
         )
     except (ValidationError, TypeError):
         raise _integrity_error() from None
@@ -1799,6 +2034,7 @@ def create_core_financial_run(
     user: UserAccount,
     tenant_id: UUID,
     request: CoreFinancialRunCreateRequest,
+    idempotency_key: str,
     request_id: UUID,
     now: datetime,
     settings: Settings,
@@ -1808,6 +2044,49 @@ def create_core_financial_run(
     access = require_company_context_access(
         session, user, tenant_id, "finance:write", request_id=request_id
     )
+    if not IDEMPOTENCY_PATTERN.fullmatch(idempotency_key):
+        raise ApiError(
+            422,
+            "invalid_idempotency_key",
+            "Idempotency-Key must be 16 to 128 ASCII letters, digits, or . _ ~ : - characters.",
+        )
+    idempotency_key_hash = hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
+    request_fingerprint = _run_request_fingerprint(user_id=user.id, request=request)
+    _lock_for_key(
+        session,
+        namespace="core-financial-run-idempotency",
+        tenant_id=tenant_id,
+        company_id=access.company.id,
+        key=idempotency_key_hash,
+    )
+    existing = session.scalar(
+        select(CoreFinancialRun).where(
+            CoreFinancialRun.tenant_id == tenant_id,
+            CoreFinancialRun.company_id == access.company.id,
+            CoreFinancialRun.idempotency_key_hash == idempotency_key_hash,
+        )
+    )
+    if existing is not None:
+        if (
+            existing.requested_by_user_id != user.id
+            or existing.request_fingerprint != request_fingerprint
+        ):
+            raise ApiError(
+                409,
+                "idempotency_key_conflict",
+                "This Idempotency-Key is already associated with a different run request.",
+            )
+        verification = verify_core_financial_run(
+            session,
+            user,
+            tenant_id,
+            existing.id,
+            settings=settings,
+            request_id=request_id,
+        )
+        if not verification.passed:
+            raise _integrity_error()
+        return _run_response(session, existing, replayed=True)
     (
         policy_row,
         policy,
@@ -1866,6 +2145,8 @@ def create_core_financial_run(
         policy_id=policy_row.id,
         policy_version=policy_row.version,
         policy_hash=policy_row.definition_hash,
+        idempotency_key_hash=idempotency_key_hash,
+        request_fingerprint=request_fingerprint,
         ledger_import_id=request.ledger_import_id,
         bank_import_id=request.bank_import_id,
         period_start=request.period_start,
@@ -1914,6 +2195,7 @@ def create_core_financial_run(
             "period_end": request.period_end.isoformat(),
             "currency_code": request.currency_code,
             "state": run_state,
+            "idempotency_key_hash": idempotency_key_hash,
             "input_hash": input_hash,
             "result_hash": result_hash,
             "trace_hash": trace_hash,
@@ -2047,6 +2329,11 @@ def _overview_source_from_import(
         id=import_row.id,
         source_key=import_row.source_key,
         source_type=cast(SourceType, import_row.source_type),
+        source_identity_status=SOURCE_IDENTITY_STATUS,
+        source_authority_status=SOURCE_AUTHORITY_STATUS,
+        source_archive_status=cast(
+            Literal["retained", "legacy_unavailable"], import_row.source_archive_status
+        ),
         file_name=import_row.file_name,
         file_hash=import_row.file_hash,
         input_hash=import_row.input_hash,
@@ -2661,6 +2948,12 @@ def verify_core_financial_run(
         controls=saved_request.controls,
         requested_metrics=(saved_request.measure,),
         legacy_v2_replay=engine_version == LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
+        legacy_reconciliation_replay=engine_version
+        in (
+            LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
+            PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION,
+        ),
+        require_source_archive=engine_version == CORE_FINANCIAL_ENGINE_VERSION,
     )
     replayed_result = _run_result_snapshot(
         state=replayed_state,

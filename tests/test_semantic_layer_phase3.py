@@ -824,13 +824,16 @@ def test_semantic_migration_downgrade_is_rejected_when_data_is_retained(
     migration_url = os.environ["TEST_MIGRATION_DATABASE_URL"]
     monkeypatch.setenv("MIGRATION_DATABASE_URL", migration_url)
     config.set_main_option("sqlalchemy.url", migration_url.replace("%", "%%"))
-    with pytest.raises(DBAPIError, match="Cannot downgrade while semantic data is retained"):
+    with pytest.raises(
+        DBAPIError,
+        match=r"archived source bytes or idempotent runs remain|semantic data is retained",
+    ):
         command.downgrade(config, "0019_universal_data_foundation")
 
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0022_bi_config_analysis"
+            == "0023_core_financial_guardrails"
         )
         assert (
             connection.scalar(

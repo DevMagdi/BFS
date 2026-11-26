@@ -5,7 +5,13 @@ from typing import Final
 from businessflow.core_financials.contracts import CoreFinancialPolicyCreateRequest
 
 LEGACY_CORE_FINANCIAL_ENGINE_VERSION: Final = "businessflow.core-financials.v2-revenue-only"
-CORE_FINANCIAL_ENGINE_VERSION: Final = "businessflow.core-financials.v3-shared-measures"
+PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION: Final = "businessflow.core-financials.v3-shared-measures"
+CORE_FINANCIAL_ENGINE_VERSION: Final = "businessflow.core-financials.v4-evidence-guardrails"
+SUPPORTED_CORE_FINANCIAL_ENGINE_VERSIONS: Final = (
+    LEGACY_CORE_FINANCIAL_ENGINE_VERSION,
+    PREVIOUS_CORE_FINANCIAL_ENGINE_VERSION,
+    CORE_FINANCIAL_ENGINE_VERSION,
+)
 CORE_FINANCIAL_SOURCE_CONTRACT_VERSION: Final = 1
 CORE_FINANCIAL_MAX_CONTROL_COUNT: Final = 6
 CORE_FINANCIAL_MAX_ROWS: Final = 10_000

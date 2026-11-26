@@ -45,6 +45,7 @@ class SourceImportState:
     accepted_rows: int
     rejected_rows: int
     duplicate_rows: int
+    source_archive_status: str = "retained"
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +92,8 @@ def calculate_financial_metrics(
     controls: tuple[MetricControl, ...],
     requested_metrics: tuple[FinancialMeasure, ...] | None = None,
     legacy_v2_replay: bool = False,
+    legacy_reconciliation_replay: bool = False,
+    require_source_archive: bool = True,
 ) -> tuple[
     tuple[CoreFinancialMetricResult, ...],
     tuple[CoreFinancialAnalysisStatement, ...],
@@ -214,7 +217,12 @@ def calculate_financial_metrics(
             "bank_activity" if metric == "cash_flow" else "general_ledger"
         )
         quality_reasons = list(
-            _import_readiness_reasons(source_import, request_period_start, request_period_end)
+            _import_readiness_reasons(
+                source_import,
+                request_period_start,
+                request_period_end,
+                require_source_archive=require_source_archive,
+            )
         )
         if source_import.source_type != expected_source_type:
             quality_reasons.append("required_source_type_mismatch")
@@ -420,6 +428,7 @@ def calculate_financial_metrics(
             control=controls_by_metric.get(metric),
             imports=(source_import,),
             facts=tuple(selected),
+            legacy_control_replay=legacy_reconciliation_replay,
         )
         result = CoreFinancialMetricResult(
             metric=metric,
@@ -480,8 +489,12 @@ def _import_readiness_reasons(
     source_import: SourceImportState,
     request_period_start: date,
     request_period_end: date,
+    *,
+    require_source_archive: bool,
 ) -> tuple[str, ...]:
     reasons: list[str] = []
+    if require_source_archive and source_import.source_archive_status != "retained":
+        reasons.append("original_source_artifact_not_retained")
     if source_import.period_completeness != "complete":
         reasons.append("source_period_completeness_not_asserted")
     if source_import.quality_status != "passed":
@@ -512,6 +525,7 @@ def _unavailable_metric(
     reasons = (reason,) if isinstance(reason, str) else reason
     reconciliation = MetricReconciliation(
         state="not_verifiable",
+        arithmetic_comparison="not_computed",
         expected_value=control.expected_value if control else None,
         actual_value=None,
         variance=None,
@@ -549,10 +563,12 @@ def _reconcile_metric(
     control: MetricControl | None,
     imports: tuple[SourceImportState | None, ...],
     facts: tuple[CanonicalFinancialFact, ...],
+    legacy_control_replay: bool = False,
 ) -> MetricReconciliation:
     if control is None:
         return MetricReconciliation(
             state="not_provided",
+            arithmetic_comparison=None if legacy_control_replay else "not_computed",
             expected_value=None,
             actual_value=actual_value,
             variance=None,
@@ -579,6 +595,7 @@ def _reconcile_metric(
     if overlapping:
         return MetricReconciliation(
             state="not_verifiable",
+            arithmetic_comparison=None if legacy_control_replay else "not_computed",
             expected_value=control.expected_value,
             actual_value=actual_value,
             variance=None,
@@ -593,14 +610,27 @@ def _reconcile_metric(
         relative_tolerance=control.relative_tolerance,
         currency_code=currency_code,
     )
+    if legacy_control_replay:
+        # Preserve v2/v3 snapshots exactly; they predate the explicit distinction between
+        # arithmetic agreement and independently verified reconciliation.
+        state = report.state
+        arithmetic_comparison = None
+        reason_codes = report.reason_codes
+    else:
+        state = "not_verifiable"
+        arithmetic_comparison = (
+            "within_tolerance" if report.state == "passed" else "outside_tolerance"
+        )
+        reason_codes = ("control_source_independence_not_verified",)
     return MetricReconciliation(
-        state=report.state,
+        state=state,
+        arithmetic_comparison=arithmetic_comparison,
         expected_value=report.expected_value,
         actual_value=report.actual_value,
         variance=report.variance,
         effective_tolerance=report.effective_tolerance,
         control_source_hash=control.source.source_hash,
-        reason_codes=report.reason_codes,
+        reason_codes=reason_codes,
     )
 
 

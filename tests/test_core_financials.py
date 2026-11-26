@@ -1655,7 +1655,7 @@ def test_legacy_v2_mixed_currency_import_and_run_remain_replay_verifiable(
         headers=headers,
     )
     assert verification.status_code == 200, verification.text
-    assert verification.json()["passed"] is True
+    assert verification.json()["passed"] is True, verification.text
     assert verification.json()["engine_version"] == LEGACY_CORE_FINANCIAL_ENGINE_VERSION
 
 

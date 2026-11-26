@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
@@ -215,7 +215,7 @@ def _create_core_financial_revenue_run(
             "period_end": "2026-11-30",
             "currency_code": "USD",
         },
-        headers=owner_headers,
+        headers={**owner_headers, "Idempotency-Key": f"bi-core-run-{uuid4().hex}"},
     )
     assert run.status_code == 201, run.text
     return run.json()

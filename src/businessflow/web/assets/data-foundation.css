@@ -54,3 +54,59 @@
   .df-status-badges { justify-content: flex-start; }
   .df-meta { text-align: left; }
 }
+
+.df-commitments-panel { margin-top: 22px; }
+.df-commitment-boundary { margin: 12px 0 14px; }
+.df-commitment-grid { display: grid; grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr); gap: 16px; align-items: start; }
+.df-commitment-list-panel, .df-commitment-editor { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 13px; background: #fbfdfb; }
+.df-commitment-subheading { align-items: center; flex-wrap: wrap; margin-bottom: 10px; padding-bottom: 10px; }
+.df-commitment-subheading h3, .df-commitment-subheading h4 { margin: 0; font-size: 21px; }
+.df-commitment-subheading h4 { font-size: 18px; }
+.df-commitment-filter { display: grid; gap: 4px; color: var(--muted); font-size: 10px; font-weight: 800; }
+.df-commitment-filter select { min-width: 125px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: #fff; font: inherit; }
+.df-commitment-list { display: grid; gap: 8px; max-height: 780px; overflow: auto; }
+.df-commitment-card { display: grid; gap: 7px; padding: 11px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.df-commitment-card.is-selected { border-color: #75a896; box-shadow: 0 0 0 2px #dfeee7; }
+.df-commitment-card h4 { margin: 0; color: var(--ink); font-size: 15px; overflow-wrap: anywhere; }
+.df-commitment-card p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.df-commitment-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.df-commitment-card .df-badge { flex: 0 0 auto; }
+.df-commitment-card-actions { display: flex; justify-content: flex-end; }
+.df-commitment-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 13px; }
+.df-commitment-form .field { margin-bottom: 10px; }
+.df-commitment-form .field span b { color: var(--teal-dark); font-size: 9px; font-weight: 800; }
+.df-commitment-form .field span small { display: inline; margin-left: 4px; font-size: 9px; }
+.df-commitment-form textarea, .df-commitment-subpanel textarea { width: 100%; min-height: 76px; resize: vertical; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: #fff; font: inherit; font-size: 12px; }
+.df-commitment-wide { grid-column: 1 / -1; }
+.df-commitment-findings { display: grid; gap: 7px; margin-bottom: 10px; }
+.df-finding { padding: 9px 11px; border: 1px solid #e7c3bf; border-radius: 9px; color: var(--red); background: var(--red-bg); font-size: 11px; line-height: 1.5; }
+.df-finding.is-warning { border-color: #e8d69e; color: var(--amber); background: var(--amber-bg); }
+.df-finding-heading { margin: 0 0 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.df-finding-list { margin: 0; padding-left: 17px; }
+.df-acknowledge { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0 12px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.df-acknowledge input { flex: 0 0 auto; width: 15px; height: 15px; margin-top: 1px; accent-color: var(--teal-dark); }
+.df-commitment-subpanel { margin-top: 15px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+.df-evidence-list { display: grid; gap: 7px; margin: 8px 0; }
+.df-evidence-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px; border: 1px solid var(--line); border-radius: 9px; background: #fbfdfb; }
+.df-evidence-item p { min-width: 0; margin: 0; color: var(--muted); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.df-evidence-item strong { color: var(--ink); }
+.df-evidence-form { display: flex; align-items: end; gap: 10px; }
+.df-evidence-form .field { flex: 1; min-width: 0; margin-bottom: 0; }
+.df-evidence-form input[type="file"] { max-width: 100%; color: var(--muted); font-size: 10px; }
+.df-commitment-subpanel .df-form-actions { flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.df-history-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.df-history-item { padding: 10px; border-left: 3px solid #8fa99b; border-radius: 0 8px 8px 0; background: #f5f8f5; }
+.df-history-item h5 { margin: 0 0 4px; color: var(--ink); font-size: 11px; text-transform: capitalize; }
+.df-history-item p { margin: 2px 0; color: var(--muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.df-history-item code { color: #405b55; font-size: 9px; overflow-wrap: anywhere; }
+.df-commitment-status { text-transform: capitalize; }
+@media (max-width: 900px) {
+  .df-commitment-grid { grid-template-columns: 1fr; }
+  .df-commitment-list { max-height: 360px; }
+}
+@media (max-width: 600px) {
+  .df-commitment-form { grid-template-columns: 1fr; }
+  .df-commitment-wide { grid-column: 1; }
+  .df-evidence-form { align-items: stretch; flex-direction: column; }
+  .df-commitment-card-heading { flex-direction: column; }
+}

@@ -31,6 +31,7 @@ from businessflow.company_data.schemas import (
     CompanyDataCoverageQualityCounts,
     CompanyDataCoverageResponse,
     CompanyDataDatasetCoverage,
+    CompanyDataDatasetType,
     CompanyDataFreshnessStatus,
     CompanyDataIngestionCreateRequest,
     CompanyDataIngestionListResponse,
@@ -242,7 +243,7 @@ def _source_summary(
         company_id=source.company_id,
         source_key=source.source_key,
         display_name=source.display_name,
-        dataset_type=source.dataset_type,
+        dataset_type=cast(CompanyDataDatasetType, source.dataset_type),
         contract_key=source.contract_key,
         contract_version=source.contract_version,
         owner_user_id=source.owner_user_id,
@@ -389,6 +390,7 @@ def get_company_data_coverage(
         .where(
             CompanyDataSource.tenant_id == tenant_id,
             CompanyDataSource.company_id == access.company.id,
+            CompanyDataSource.dataset_type.in_(tuple(DATASETS)),
         )
     ).yield_per(500)
 
@@ -502,6 +504,12 @@ def create_source(
     access = require_company_context_access(
         session, user, tenant_id, "company_context:write", request_id=request_id
     )
+    if body.dataset_type == "customer_commitments":
+        raise ApiError(
+            409,
+            "manual_customer_commitment_source_managed",
+            "The manual customer-commitment source is registered by the guided workflow.",
+        )
     contract = session.scalar(
         select(CompanyDataContract).where(
             CompanyDataContract.dataset_type == body.dataset_type,
@@ -650,6 +658,12 @@ def create_ingestion(
     if source is None:
         raise ApiError(
             404, "company_data_source_not_found", "The company data source was not found."
+        )
+    if source.dataset_type not in DATASETS:
+        raise ApiError(
+            409,
+            "manual_source_m4_ingestion_not_supported",
+            "Manual customer commitments use guided entry and cannot be promoted as M4 imports.",
         )
     import_record = session.scalar(
         select(DataImport).where(

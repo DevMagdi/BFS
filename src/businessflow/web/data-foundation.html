@@ -19,7 +19,7 @@
           <span>business<span class="wordmark-light">flow</span></span>
         </a>
         <div class="topbar-right">
-          <span class="demo-stamp">COMPANY DATA · SOURCE EVIDENCE</span>
+          <span class="demo-stamp">COMPANY DATA · M4 IMPORTS &amp; MANUAL CAPTURE</span>
           <span id="user-label" class="user-label" hidden></span>
           <a class="button button-quiet button-small" href="/capacity-workspace.html">Capacity workflow</a>
           <a class="button button-quiet button-small" href="/">Main workspace</a>
@@ -58,7 +58,7 @@
 
           <div class="notice notice-demo df-boundary" role="note">
             <span class="notice-symbol" aria-hidden="true">!</span>
-            <p><strong>Bounded inventory, not a readiness score.</strong> This view covers only the six current M4 workforce/project datasets and M12 source registrations. “Not tracked” does not mean the business has no data. As-of timestamps are user-reported; file hashes and quality checks do not authenticate a source or prove business completeness, accounting correctness, or analytical readiness.</p>
+            <p><strong>Bounded inventory, not a readiness score.</strong> The coverage grid below covers six M4 workforce/project datasets. The source registry also identifies the guided manual customer-commitment workflow as its own source and contract; those records are not M4 imports, accounting facts, or Core Financials inputs. “Not tracked” does not mean the business has no data. As-of timestamps are user-reported; hashes and quality checks do not authenticate a source or prove completeness, accounting correctness, or analytical readiness.</p>
           </div>
 
           <div id="role-notice" class="df-role-notice" role="status" hidden></div>
@@ -105,6 +105,95 @@
               <label class="field" for="source-as-of"><span>Source data as-of (optional)</span><input id="source-as-of" type="datetime-local"><small id="timezone-note">If entered, interpreted in the browser's local time zone. This is a user assertion, not independently verified.</small></label>
               <div class="df-form-actions"><button id="record-ingestion-button" class="button button-primary" type="submit">Record evidence</button></div>
             </form>
+          </section>
+
+          <section class="panel df-panel df-commitments-panel" aria-labelledby="commitments-title">
+            <div class="df-section-heading">
+              <div>
+                <p class="eyebrow">MANUAL SOURCE · VERSIONED INTAKE CONTRACT</p>
+                <h2 id="commitments-title">Customer commitment intake</h2>
+              </div>
+              <button id="new-commitment-button" class="button button-primary button-small" type="button">New draft</button>
+            </div>
+            <p class="df-intro">Capture a person-reported customer commitment for delivery tracking. The workflow records customer name/reference, order and requested-delivery dates, a description, optional notes, and supporting files. It does not create a customer master, quote/order lines, legal agreement, accounting entry, revenue/cash-flow fact, or Core Financials record.</p>
+            <div class="notice notice-demo df-commitment-boundary" role="note">
+              <span class="notice-symbol" aria-hidden="true">!</span>
+              <p><strong>Manual assertion, not factual verification.</strong> Submission records what a Company member entered. Reviewers confirm required intake criteria and explicitly acknowledge visible warnings; review does not prove the underlying customer event, source authority, or evidence authenticity. Uploaded evidence is user-supplied; a SHA-256 hash checks file integrity only. Attachments are retained in the database and cannot be deleted in this workflow; use only approved documents.</p>
+            </div>
+            <div id="commitment-role-notice" class="df-role-notice" role="status" hidden></div>
+            <div id="commitment-status" class="df-status" role="status" aria-live="polite"></div>
+            <div class="df-commitment-grid">
+              <section class="df-commitment-list-panel" aria-labelledby="commitment-list-title">
+                <div class="df-section-heading df-commitment-subheading">
+                  <div><p class="eyebrow">COMPANY-SCOPED REGISTER</p><h3 id="commitment-list-title">Records</h3></div>
+                  <label class="df-commitment-filter" for="commitment-status-filter">
+                    <span>Status</span>
+                    <select id="commitment-status-filter">
+                      <option value="">All</option>
+                      <option value="draft">Draft</option>
+                      <option value="submitted">Submitted</option>
+                      <option value="changes_requested">Changes requested</option>
+                      <option value="accepted">Accepted</option>
+                      <option value="rejected">Rejected</option>
+                    </select>
+                  </label>
+                  <button id="commitment-list-load-more" class="button button-quiet button-small" type="button" hidden>Load more records</button>
+                </div>
+                <div id="commitment-list" class="df-commitment-list" aria-live="polite"><p class="loading">Loading customer commitments…</p></div>
+              </section>
+              <section class="df-commitment-editor" aria-labelledby="commitment-editor-title">
+                <div class="df-section-heading df-commitment-subheading">
+                  <div><p class="eyebrow">GUIDED ENTRY · SAVE BEFORE UPLOADING EVIDENCE</p><h3 id="commitment-editor-title">New draft</h3></div>
+                  <span id="commitment-revision" class="df-meta"></span>
+                </div>
+                <form id="commitment-form" class="df-commitment-form" novalidate>
+                  <label class="field" for="commitment-customer-name"><span>Customer name <b>Required to submit</b></span><input id="commitment-customer-name" type="text" maxlength="200" autocomplete="organization" placeholder="Customer or counterparty name"></label>
+                  <label class="field" for="commitment-reference"><span>Customer reference <small>Optional</small></span><input id="commitment-reference" type="text" maxlength="128" autocomplete="off" placeholder="Customer's order/reference number"></label>
+                  <label class="field" for="commitment-order-date"><span>Order date <b>Required to submit</b></span><input id="commitment-order-date" type="date"></label>
+                  <label class="field" for="commitment-delivery-date"><span>Requested delivery date <small>Optional</small></span><input id="commitment-delivery-date" type="date"></label>
+                  <label class="field df-commitment-wide" for="commitment-summary"><span>Commitment summary <b>Required to submit</b></span><textarea id="commitment-summary" rows="3" maxlength="1000" placeholder="What did the customer request or agree to?"></textarea></label>
+                  <label class="field df-commitment-wide" for="commitment-notes"><span>Additional notes <small>Optional</small></span><textarea id="commitment-notes" rows="3" maxlength="4000" placeholder="Optional context; do not enter payment credentials or sensitive personal data."></textarea></label>
+                  <div id="commitment-validation" class="df-commitment-findings df-commitment-wide" aria-live="polite"></div>
+                  <label id="commitment-acknowledge-wrap" class="df-acknowledge df-commitment-wide" hidden>
+                    <input id="commitment-acknowledge" type="checkbox">
+                    <span>I reviewed the displayed warnings and understand optional information/evidence is missing. This acknowledgement does not verify the underlying event.</span>
+                  </label>
+                  <div class="df-form-actions df-commitment-wide">
+                    <button id="commitment-save-button" class="button button-secondary" type="button">Save draft</button>
+                    <button id="commitment-submit-button" class="button button-primary" type="button" disabled>Submit for review</button>
+                    <button id="commitment-reset-button" class="button button-quiet" type="button">Clear editor</button>
+                  </div>
+                </form>
+
+                <section id="commitment-evidence-panel" class="df-commitment-subpanel" aria-labelledby="commitment-evidence-title" hidden>
+                  <div class="df-section-heading df-commitment-subheading"><div><p class="eyebrow">APPEND-ONLY FILE EVIDENCE · MAX 10 MiB EACH</p><h4 id="commitment-evidence-title">Supporting evidence</h4></div></div>
+                  <p class="df-contract-line">PDF, PNG, JPEG, or UTF-8 TXT only. Files are hashed and retained in PostgreSQL; there is no malware scanning or delete/retention control in this slice.</p>
+                  <div id="commitment-evidence-list" class="df-evidence-list"></div>
+                  <form id="commitment-evidence-form" class="df-evidence-form">
+                    <label class="field" for="commitment-evidence-file"><span>Add a file</span><input id="commitment-evidence-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt,application/pdf,image/png,image/jpeg,text/plain" required></label>
+                    <button id="commitment-evidence-upload-button" class="button button-secondary button-small" type="submit">Attach evidence</button>
+                  </form>
+                </section>
+
+                <section id="commitment-review-panel" class="df-commitment-subpanel" aria-labelledby="commitment-review-title" hidden>
+                  <div class="df-section-heading df-commitment-subheading"><div><p class="eyebrow">OWNER/ADMIN · INDEPENDENT REVIEW</p><h4 id="commitment-review-title">Review submission</h4></div></div>
+                  <p class="df-contract-line">Accept only after checking the displayed intake criteria. This records a process review, not independent proof of the customer event.</p>
+                  <label class="field" for="commitment-review-comment"><span>Review comment <small>Required for corrections or rejection</small></span><textarea id="commitment-review-comment" rows="3" maxlength="2000" placeholder="Explain what must change or why the record is rejected."></textarea></label>
+                  <label class="df-acknowledge"><input id="commitment-review-criteria" type="checkbox"><span>I reviewed this record against the intake criteria; acceptance does not verify the underlying customer event.</span></label>
+                  <label id="commitment-review-acknowledge-wrap" class="df-acknowledge" hidden><input id="commitment-review-acknowledge" type="checkbox"><span>I acknowledge the outstanding optional-information/evidence warnings.</span></label>
+                  <div class="df-form-actions">
+                    <button id="commitment-accept-button" class="button button-primary" type="button">Accept</button>
+                    <button id="commitment-request-correction-button" class="button button-secondary" type="button">Request correction</button>
+                    <button id="commitment-reject-button" class="button button-quiet" type="button">Reject</button>
+                  </div>
+                </section>
+
+                <section id="commitment-history-panel" class="df-commitment-subpanel" aria-labelledby="commitment-history-title" hidden>
+                  <div class="df-section-heading df-commitment-subheading"><div><p class="eyebrow">HASH-LINKED HISTORY</p><h4 id="commitment-history-title">Record history</h4></div><button id="commitment-history-load-more" class="button button-quiet button-small" type="button" hidden>Load older events</button></div>
+                  <ol id="commitment-history-list" class="df-history-list"></ol>
+                </section>
+              </section>
+            </div>
           </section>
 
           <section class="panel df-panel" aria-labelledby="sources-title">

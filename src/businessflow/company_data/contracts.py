@@ -9,6 +9,50 @@ from businessflow.metrics.snapshot import content_hash
 
 CONTRACT_VERSION = "1.0.0"
 CONTRACT_KEY_PREFIX = "businessflow.m4"
+MANUAL_COMMITMENT_DATASET = "customer_commitments"
+MANUAL_COMMITMENT_CONTRACT_KEY = "businessflow.manual.customer_commitments"
+MANUAL_COMMITMENT_CONTRACT_VERSION = "1.0.0"
+MANUAL_COMMITMENT_CONTRACT_DEFINITION: dict[str, object] = {
+    "dataset_type": MANUAL_COMMITMENT_DATASET,
+    "source_kind": "manual_entry",
+    "fields": [
+        {
+            "name": "customer_name",
+            "required": True,
+            "description": "Customer name as entered by a Company member.",
+        },
+        {
+            "name": "customer_reference",
+            "required": False,
+            "description": "Optional customer-provided order or reference number.",
+        },
+        {
+            "name": "order_date",
+            "required": True,
+            "description": "Date the customer commitment is recorded as made.",
+        },
+        {
+            "name": "requested_delivery_date",
+            "required": False,
+            "description": "Optional requested fulfillment date; must not precede order date.",
+        },
+        {
+            "name": "summary",
+            "required": True,
+            "description": "Short description of the customer commitment or requested work.",
+        },
+        {
+            "name": "notes",
+            "required": False,
+            "description": "Optional additional context; not an accounting or legal record.",
+        },
+    ],
+    "required": ["customer_name", "order_date", "summary"],
+    "required_one_of": [],
+    "mutually_exclusive": [],
+    "defaults": [],
+}
+MANUAL_COMMITMENT_CONTRACT_HASH = content_hash(MANUAL_COMMITMENT_CONTRACT_DEFINITION)
 
 
 def contract_key(dataset_type: ImportDataset | str) -> str:

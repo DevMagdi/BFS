@@ -89,7 +89,7 @@ def test_company_data_registry_binds_m4_quality_freshness_lineage_and_tenant_sco
 
     contracts = client.get(f"{base}/contracts", headers=headers)
     assert contracts.status_code == 200, contracts.text
-    assert len(contracts.json()["items"]) == 6
+    assert len(contracts.json()["items"]) == 7
     employee_contract = next(
         item for item in contracts.json()["items"] if item["dataset_type"] == "employees"
     )
@@ -270,7 +270,7 @@ def test_company_data_registry_binds_m4_quality_freshness_lineage_and_tenant_sco
     with factory.begin() as session:
         assert session.scalar(text("SELECT count(*) FROM company_data_sources")) == 0
         assert session.scalar(text("SELECT count(*) FROM company_data_ingestions")) == 0
-        assert session.scalar(text("SELECT count(*) FROM company_data_contracts")) == 6
+        assert session.scalar(text("SELECT count(*) FROM company_data_contracts")) == 7
 
     with factory.begin() as session:
         session.execute(

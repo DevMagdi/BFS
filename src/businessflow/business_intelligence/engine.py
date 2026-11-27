@@ -364,13 +364,8 @@ def _group_records(
     return groups
 
 
-def _result_group_dimensions(
-    key: tuple[object, ...], dimensions: list[str], *, group_by_currency: bool = False
-) -> dict[str, object]:
-    active_dimensions = list(dimensions)
-    if group_by_currency and "currency_code" not in active_dimensions:
-        active_dimensions.append("currency_code")
-    return {dimension: key[index] for index, dimension in enumerate(active_dimensions)}
+def _result_group_dimensions(key: tuple[object, ...], dimensions: list[str]) -> dict[str, object]:
+    return {dimension: key[index] for index, dimension in enumerate(dimensions)}
 
 
 def _source_currency(group: list[dict[str, object]]) -> tuple[str | None, str | None]:
@@ -551,9 +546,7 @@ def _calculate_universal(
     all_values_available = True
     result_status = "complete"
     for key, group in sorted(groups.items(), key=lambda item: str(item[0])):
-        dimensions = _result_group_dimensions(
-            key, requested_dimensions, group_by_currency=include_currency
-        )
+        dimensions = _result_group_dimensions(key, requested_dimensions)
         value: str | None
         group_currency_code: str | None = None
         group_reasons: list[str] = []

@@ -31,7 +31,6 @@ from businessflow.business_intelligence.models import (
 from businessflow.business_intelligence.registry import (
     METRIC_REGISTRY_VERSION,
     SYSTEM_METRIC_BY_KEY,
-    SYSTEM_METRICS,
     system_metric_definition_hash,
     system_metric_dimensions,
     system_metric_payloads,
@@ -97,6 +96,7 @@ from businessflow.core_financials.service import (
     verify_core_financial_run,
 )
 from businessflow.errors import ApiError
+from businessflow.metrics.catalog import METRIC_DEFINITIONS
 from businessflow.metrics.insight_service import _validate_metric_run
 from businessflow.metrics.service import get_metric_run
 from businessflow.metrics.snapshot import content_hash
@@ -2304,9 +2304,9 @@ def _validate_direct_m5_run(
     _validate_metric_run(run, tenant_id, company_id)
     metric_versions = _dict(run.result_snapshot.get("metric_versions", {}))
     expected = next(
-        (item.version for item in SYSTEM_METRICS if item.metric_key == f"m5.{metric_id}"), None
+        (item.version for item in METRIC_DEFINITIONS if item.metric_id == metric_id), None
     )
-    if expected is None or metric_versions.get(metric_id) != expected.rsplit(":", 1)[-1]:
+    if expected is None or metric_versions.get(metric_id) != expected:
         raise _error(
             409,
             "m5_metric_version_mismatch",

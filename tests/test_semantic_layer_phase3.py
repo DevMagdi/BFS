@@ -1128,6 +1128,7 @@ def test_semantic_migration_downgrade_is_rejected_when_data_is_retained(
         DBAPIError,
         match=(
             r"archived source bytes or idempotent runs remain|semantic data is retained|"
+            r"cannot downgrade: verified product relationship evidence exists|"
             r"project-manager semantic relationship evidence is retained|"
             r"workforce-sensitive analysis evidence is retained"
         ),

@@ -339,6 +339,10 @@ def test_product_sales_metrics_group_only_source_product_codes_without_currency_
         (group["dimensions"]["product"], group["value"]) for group in count_result["groups"]
     ] == [("SKU-A", "2"), ("SKU-B", "1")]
     assert amount_result["status"] == "complete"
+    assert [group["dimensions"] for group in amount_result["groups"]] == [
+        {"product": "SKU-A"},
+        {"product": "SKU-B"},
+    ]
     assert [
         (group["dimensions"]["product"], group["currency_code"], group["value"])
         for group in amount_result["groups"]

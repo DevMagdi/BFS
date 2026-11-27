@@ -586,10 +586,23 @@ def test_company_context_rejects_invalid_domain_inputs_and_pagination(client):
     )
     assert reversed_project_dates.status_code == 422
 
-    reversed_assignment_dates = client.post(
-        "/api/v1/tenants/00000000-0000-0000-0000-000000000001/projects/00000000-0000-0000-0000-000000000002/assignments",
+    assignment_date_employee = _create_employee(client, headers, base, code="EMP-DATE-VALIDATION")
+    assignment_date_project = client.post(
+        f"{base}/projects",
         json={
-            "employee_id": "00000000-0000-0000-0000-000000000003",
+            "project_code": "DATE-CHECK",
+            "name": "Assignment date validation",
+            "start_date": WEEK_START_TEXT,
+            "planned_end_date": "2026-11-30",
+            "project_manager_employee_id": assignment_date_employee["id"],
+        },
+        headers=headers,
+    )
+    assert assignment_date_project.status_code == 201, assignment_date_project.text
+    reversed_assignment_dates = client.post(
+        f"{base}/projects/{assignment_date_project.json()['id']}/assignments",
+        json={
+            "employee_id": assignment_date_employee["id"],
             "start_date": "2026-11-22",
             "end_date": WEEK_START_TEXT,
             "planned_hours_per_week": "8.00",

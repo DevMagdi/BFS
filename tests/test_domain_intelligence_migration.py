@@ -113,6 +113,10 @@ def _set_company_scope(connection, scope) -> None:
         text("SELECT set_config('app.company_id', :company_id, true)"),
         {"company_id": str(scope.company_id)},
     )
+    connection.execute(
+        text("SELECT set_config('app.user_id', :user_id, true)"),
+        {"user_id": str(scope.user_id)},
+    )
 
 
 def _insert_metric_definition(

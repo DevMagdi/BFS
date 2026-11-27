@@ -63,7 +63,7 @@ def _create_and_publish_metric(
 
 
 def _source_amount_definition(
-    *, metric_key: str = "sales.source_amount_observed", expected_version: int = 0
+    *, metric_key: str = "sales.test_source_amount_observed", expected_version: int = 0
 ) -> dict[str, object]:
     return {
         "expected_version": expected_version,
@@ -588,7 +588,7 @@ def test_bi_registry_analysis_replay_evidence_and_exact_formula_dependencies(
     )
     assert configuration_history.json()["total"] == 1
 
-    metric_key = "sales.source_amount_observed"
+    metric_key = "sales.test_source_amount_observed"
     amount_definition = _source_amount_definition()
     amount_definition["dimensions"] = ["month"]
     metric_v1 = _create_and_publish_metric(

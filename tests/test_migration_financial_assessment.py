@@ -347,7 +347,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
                         is False
                     )
 
-            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 8
+            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 9
             assert (
                 connection.scalar(
                     text(
@@ -1170,7 +1170,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
                 expected_insert=False,
                 table_wide_update=False,
             )
-            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 8
+            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 9
             assert (
                 connection.scalar(text("SELECT to_regclass('public.company_data_sources')"))
                 == "company_data_sources"

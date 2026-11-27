@@ -81,9 +81,9 @@ class UniversalPurgePlanSnapshot(StrictModel):
     created_at: datetime
     file_size_bytes: int
     content_hash: str
-    referencing_ingestions_outside_page: int
+    referencing_ingestions_retained_after_page_purge: int
     canonical_revision_references: int
-    will_be_deleted_if_all_page_ingestions_are_purged: bool
+    will_be_deleted_if_all_eligible_ingestions_are_purged: bool
 
 
 class UniversalPurgePlanResponse(StrictModel):

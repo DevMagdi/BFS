@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import and_, exists, func, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
@@ -525,21 +525,97 @@ def build_purge_plan(
 
     assert policy is not None
     cutoff = as_of - timedelta(days=policy.retention_days)
-    aged = list(
+    candidate_filters = (
+        UniversalIngestion.tenant_id == tenant_id,
+        UniversalIngestion.company_id == access.company.id,
+        UniversalIngestion.source_id == source_id,
+        UniversalIngestion.created_at <= cutoff,
+    )
+    revision_exists = exists(
+        select(1)
+        .select_from(CanonicalBusinessRecordRevision)
+        .where(
+            CanonicalBusinessRecordRevision.tenant_id == tenant_id,
+            CanonicalBusinessRecordRevision.company_id == access.company.id,
+            CanonicalBusinessRecordRevision.source_id == source_id,
+            CanonicalBusinessRecordRevision.ingestion_id == UniversalIngestion.id,
+        )
+    )
+    canonical_link_exists = exists(
+        select(1)
+        .select_from(UniversalIngestionRecordLink)
+        .where(
+            UniversalIngestionRecordLink.tenant_id == tenant_id,
+            UniversalIngestionRecordLink.company_id == access.company.id,
+            UniversalIngestionRecordLink.ingestion_id == UniversalIngestion.id,
+            UniversalIngestionRecordLink.canonical_record_id.is_not(None),
+        )
+    )
+    semantic_mapping_exists = exists(
+        select(1)
+        .select_from(BusinessSemanticMappingVersion)
+        .join(
+            CanonicalBusinessRecordRevision,
+            and_(
+                BusinessSemanticMappingVersion.tenant_id
+                == CanonicalBusinessRecordRevision.tenant_id,
+                BusinessSemanticMappingVersion.company_id
+                == CanonicalBusinessRecordRevision.company_id,
+                BusinessSemanticMappingVersion.source_id
+                == CanonicalBusinessRecordRevision.source_id,
+                BusinessSemanticMappingVersion.universal_record_id
+                == CanonicalBusinessRecordRevision.record_id,
+            ),
+        )
+        .where(
+            BusinessSemanticMappingVersion.tenant_id == tenant_id,
+            BusinessSemanticMappingVersion.company_id == access.company.id,
+            BusinessSemanticMappingVersion.source_id == source_id,
+            CanonicalBusinessRecordRevision.ingestion_id == UniversalIngestion.id,
+        )
+    )
+    snapshot_exists = exists(
+        select(1)
+        .select_from(UniversalSourceSnapshot)
+        .where(
+            UniversalSourceSnapshot.tenant_id == tenant_id,
+            UniversalSourceSnapshot.company_id == access.company.id,
+            UniversalSourceSnapshot.source_id == source_id,
+            UniversalSourceSnapshot.id == UniversalIngestion.snapshot_id,
+        )
+    )
+    total_candidates = int(
+        session.scalar(
+            select(func.count()).select_from(UniversalIngestion).where(*candidate_filters)
+        )
+        or 0
+    )
+    total_eligible = int(
+        session.scalar(
+            select(func.count())
+            .select_from(UniversalIngestion)
+            .where(
+                *candidate_filters,
+                ~revision_exists,
+                ~canonical_link_exists,
+                ~semantic_mapping_exists,
+                snapshot_exists,
+            )
+        )
+        or 0
+    )
+    page_candidates = list(
         session.scalars(
             select(UniversalIngestion)
-            .where(
-                UniversalIngestion.tenant_id == tenant_id,
-                UniversalIngestion.company_id == access.company.id,
-                UniversalIngestion.source_id == source_id,
-                UniversalIngestion.created_at <= cutoff,
-            )
+            .where(*candidate_filters)
             .order_by(UniversalIngestion.created_at, UniversalIngestion.id)
+            .offset(offset)
+            .limit(limit)
         )
     )
     eligible: list[UniversalIngestion] = []
     blocked: list[dict[str, Any]] = []
-    for ingestion in aged:
+    for ingestion in page_candidates:
         dependencies = _dependency_counts(
             session,
             tenant_id=tenant_id,
@@ -548,7 +624,7 @@ def build_purge_plan(
             ingestion_id=ingestion.id,
         )
         blocker_codes = [name for name, count in dependencies.items() if count]
-        snapshot_exists = session.scalar(
+        original_snapshot_exists = session.scalar(
             select(UniversalSourceSnapshot.id).where(
                 UniversalSourceSnapshot.tenant_id == tenant_id,
                 UniversalSourceSnapshot.company_id == access.company.id,
@@ -556,7 +632,7 @@ def build_purge_plan(
                 UniversalSourceSnapshot.id == ingestion.snapshot_id,
             )
         )
-        if snapshot_exists is None:
+        if original_snapshot_exists is None:
             blocker_codes.append("missing_original_snapshot")
         if blocker_codes:
             blocked.append(
@@ -570,9 +646,10 @@ def build_purge_plan(
         else:
             eligible.append(ingestion)
 
-    page = eligible[offset : offset + limit]
+    page = eligible
     page_ids = [item.id for item in page]
     page_id_set = set(page_ids)
+    total_blocked = total_candidates - total_eligible
     ingestion_items: list[dict[str, Any]] = []
     snapshot_ids: set[UUID] = set()
     for ingestion in page:
@@ -687,9 +764,9 @@ def build_purge_plan(
                 "created_at": snapshot.created_at,
                 "file_size_bytes": snapshot.file_size_bytes,
                 "content_hash": snapshot.input_fingerprint,
-                "referencing_ingestions_outside_page": int(retained_ingestion_count),
+                "referencing_ingestions_retained_after_page_purge": int(retained_ingestion_count),
                 "canonical_revision_references": int(revision_count),
-                "will_be_deleted_if_all_page_ingestions_are_purged": (
+                "will_be_deleted_if_all_eligible_ingestions_are_purged": (
                     retained_ingestion_count == 0 and revision_count == 0
                 ),
             }
@@ -710,11 +787,11 @@ def build_purge_plan(
         },
         "eligible_ingestions": ingestion_items,
         "blocked_ingestions": blocked,
-        "total_eligible": len(eligible),
-        "total_blocked": len(blocked),
+        "total_eligible": total_eligible,
+        "total_blocked": total_blocked,
         "offset": offset,
         "limit": limit,
-        "has_more": offset + limit < len(eligible),
+        "has_more": offset + len(page_candidates) < total_candidates,
         "snapshots": snapshot_items,
     }
     _audit(
@@ -727,8 +804,8 @@ def build_purge_plan(
         request_id=request_id,
         details={
             "policy_version": policy.version,
-            "eligible_ingestion_count": len(eligible),
-            "blocked_ingestion_count": len(blocked),
+            "eligible_ingestion_count": total_eligible,
+            "blocked_ingestion_count": total_blocked,
             "page_offset": offset,
             "page_limit": limit,
         },

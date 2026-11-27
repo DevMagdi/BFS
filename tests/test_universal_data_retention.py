@@ -401,6 +401,35 @@ def test_company_scoped_retention_policy_and_source_purge_remove_evidence(
     )
     assert rejected_new_upload.status_code == 409
     assert rejected_new_upload.json()["error"]["code"] == "universal_source_revoked"
+    revoked_mapping = client.post(
+        f"{base}/sources/{source_id}/ingestions/{ingestion_id}/mapping",
+        json={
+            "profile_key": "retention.after-revocation",
+            "display_name": "Revoked source mapping",
+            "entity_type": "customer",
+            "worksheet_name": "CSV",
+            "field_mapping": {
+                "customer_code": "customer_code",
+                "name": "name",
+                "email": "email",
+            },
+            "ignored_columns": [],
+            "field_options": {},
+        },
+        headers=owner_headers,
+    )
+    revoked_validation = client.post(
+        f"{base}/sources/{source_id}/ingestions/{ingestion_id}/validate",
+        headers=owner_headers,
+    )
+    revoked_promotion = client.post(
+        f"{base}/sources/{source_id}/ingestions/{ingestion_id}/promote",
+        json={"acknowledge_warnings": True},
+        headers=owner_headers,
+    )
+    for rejected_operation in (revoked_mapping, revoked_validation, revoked_promotion):
+        assert rejected_operation.status_code == 409, rejected_operation.text
+        assert rejected_operation.json()["error"]["code"] == "universal_source_revoked"
 
     evidence_before = client.get(
         f"{base}/sources/{source_id}/ingestions/{ingestion_id}/evidence",
@@ -425,7 +454,7 @@ def test_company_scoped_retention_policy_and_source_purge_remove_evidence(
         assert plan["eligible_ingestions"][0]["row_count"] == 1
         assert plan["snapshots"][0]["file_name"] == "customers.csv"
         assert plan["snapshots"][0]["content_hash"] == hashlib.sha256(contents).hexdigest()
-        assert plan["snapshots"][0]["will_be_deleted_if_all_page_ingestions_are_purged"] is True
+        assert plan["snapshots"][0]["will_be_deleted_if_all_eligible_ingestions_are_purged"] is True
         assert "Private Customer" not in plan_response.text
         assert "private@example.test" not in plan_response.text
         assert key not in plan_response.text
@@ -682,6 +711,16 @@ def test_retention_purge_plan_blocks_promoted_canonical_dependencies(
     )
     assert staged.status_code == 201, staged.text
     ingestion_id = staged.json()["ingestion"]["id"]
+    page_eligible = _stage(
+        client,
+        base,
+        source_id,
+        owner_headers,
+        "universal-retention-dependency-page-eligible-01",
+        b"customer_code,name\nCUS-PAGE-2,Eligible\n",
+    )
+    assert page_eligible.status_code == 201, page_eligible.text
+    page_eligible_ingestion_id = page_eligible.json()["ingestion"]["id"]
     mapping = client.post(
         f"{base}/sources/{source_id}/ingestions/{ingestion_id}/mapping",
         json={
@@ -719,36 +758,74 @@ def test_retention_purge_plan_blocks_promoted_canonical_dependencies(
     )
     assert revoked.status_code == 200, revoked.text
     _age_ingestion(admin_engine, ingestion_id)
+    _age_ingestion(admin_engine, page_eligible_ingestion_id)
 
     try:
-        plan_response = client.get(f"{base}/sources/{source_id}/purge-plan", headers=owner_headers)
-        assert plan_response.status_code == 200, plan_response.text
-        plan = plan_response.json()
-        assert plan["purge_enabled"] is True
-        assert plan["total_eligible"] == 0
-        assert plan["total_blocked"] == 1
-        blocked = plan["blocked_ingestions"][0]
+        pages = []
+        for offset in (0, 1):
+            plan_response = client.get(
+                f"{base}/sources/{source_id}/purge-plan?limit=1&offset={offset}",
+                headers=owner_headers,
+            )
+            assert plan_response.status_code == 200, plan_response.text
+            pages.append(plan_response.json())
+
+        for page in pages:
+            assert page["purge_enabled"] is True
+            assert page["total_eligible"] == 1
+            assert page["total_blocked"] == 1
+        assert pages[0]["has_more"] is True
+        assert pages[1]["has_more"] is False
+        assert all(
+            len(page["eligible_ingestions"]) + len(page["blocked_ingestions"]) == 1
+            for page in pages
+        )
+        blocked_page = next(page for page in pages if page["blocked_ingestions"])
+        eligible_page = next(page for page in pages if page["eligible_ingestions"])
+        blocked = blocked_page["blocked_ingestions"][0]
+        eligible = eligible_page["eligible_ingestions"][0]
         assert blocked["ingestion_id"] == ingestion_id
         assert "canonical_record_revisions" in blocked["blockers"]
         assert blocked["dependency_counts"]["canonical_record_revisions"] > 0
+        assert eligible["ingestion_id"] == page_eligible_ingestion_id
 
         refused = client.post(
             f"{base}/sources/{source_id}/purge",
             json={
                 "policy_version_id": policy["policy_version_id"],
-                "plan_offset": 0,
+                "plan_limit": 1,
+                "plan_offset": blocked_page["offset"],
                 "ingestion_ids": [ingestion_id],
             },
             headers=owner_headers,
         )
         assert refused.status_code == 409
         assert refused.json()["error"]["code"] == "universal_purge_plan_stale"
-        evidence = client.get(
+
+        purged = client.post(
+            f"{base}/sources/{source_id}/purge",
+            json={
+                "policy_version_id": policy["policy_version_id"],
+                "plan_limit": 1,
+                "plan_offset": eligible_page["offset"],
+                "ingestion_ids": [page_eligible_ingestion_id],
+            },
+            headers=owner_headers,
+        )
+        assert purged.status_code == 200, purged.text
+        assert purged.json()["purged_ingestion_count"] == 1
+
+        blocked_evidence = client.get(
             f"{base}/sources/{source_id}/ingestions/{ingestion_id}/evidence",
             headers=owner_headers,
         )
-        assert evidence.status_code == 200
-        assert evidence.content == contents
+        assert blocked_evidence.status_code == 200
+        assert blocked_evidence.content == contents
+        eligible_evidence = client.get(
+            f"{base}/sources/{source_id}/ingestions/{page_eligible_ingestion_id}/evidence",
+            headers=owner_headers,
+        )
+        assert eligible_evidence.status_code == 404
         with admin_engine.connect() as connection:
             assert (
                 connection.scalar(
@@ -756,6 +833,13 @@ def test_retention_purge_plan_blocks_promoted_canonical_dependencies(
                     {"id": UUID(ingestion_id)},
                 )
                 == 1
+            )
+            assert (
+                connection.scalar(
+                    text("SELECT count(*) FROM universal_ingestions WHERE id = :id"),
+                    {"id": UUID(page_eligible_ingestion_id)},
+                )
+                == 0
             )
             assert (
                 connection.scalar(

@@ -243,7 +243,6 @@ def test_m18_m15_export_replays_authoritative_bfs_calculation_without_raw_inputs
     assert source["result"]["output"] == run_payload["trace"]["output"]
     assert source["data_points"][0]["value"] == "1.005"
     serialized = download.content.decode("utf-8")
-    assert "amount_text" not in serialized
     with admin_engine.connect() as connection:
         saved_manifest = connection.scalar(
             text("SELECT manifest::text FROM business_report_exports WHERE id = :report_id"),

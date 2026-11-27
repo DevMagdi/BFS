@@ -496,7 +496,13 @@ class BusinessIntelligenceAnalysisRun(Base):
     input_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     result_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     workforce_sensitive: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=false()
+        Boolean,
+        nullable=False,
+        server_default=false(),
+        comment=(
+            "Company-scoped authorization flag for M5/People analysis snapshots containing "
+            "individual workforce evidence; enforced in addition to RLS."
+        ),
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

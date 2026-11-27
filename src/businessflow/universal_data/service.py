@@ -26,7 +26,12 @@ from businessflow.universal_data.catalog import (
     canonical_contract_definition,
     entity_for_contract_version,
 )
-from businessflow.universal_data.connectors import ConnectorError, LocalDirectoryConnector
+from businessflow.universal_data.connectors import (
+    M19_FIXTURE_CONNECTION_REFERENCE,
+    ConnectorError,
+    LocalDirectoryConnector,
+    UniversalFixtureConnector,
+)
 from businessflow.universal_data.models import (
     CanonicalBusinessRecord,
     CanonicalBusinessRecordRevision,
@@ -995,6 +1000,66 @@ def stage_connector_ingestion(
         csv_delimiter=csv_delimiter,
         csv_encoding=csv_encoding,
         header_row=header_row,
+        request_id=request_id,
+    )
+
+
+def stage_fixture_connector_ingestion(
+    session: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    source_id: UUID,
+    *,
+    fixture_key: str,
+    idempotency_key: str,
+    fixtures_enabled: bool,
+    app_env: str,
+    max_rows: int,
+    max_file_bytes: int,
+    request_id: UUID,
+) -> UniversalFileIngestionResponse:
+    if not fixtures_enabled or app_env == "production":
+        raise _api_error(
+            503,
+            "connector_fixture_disabled",
+            "The synthetic connector fixture is disabled or unavailable in production.",
+        )
+
+    access = _require_company_access(session, user, tenant_id, write=True, request_id=request_id)
+    source = _company_source(session, tenant_id, access.company.id, source_id, lock=True)
+    profile = _require_enabled_profile(
+        session,
+        tenant_id,
+        access.company.id,
+        source.id,
+        idempotency_key=idempotency_key,
+    )
+    if (
+        profile.source_type != "other"
+        or profile.connection_reference != M19_FIXTURE_CONNECTION_REFERENCE
+        or profile.credential_reference is not None
+    ):
+        raise _api_error(
+            409,
+            "universal_fixture_connector_not_configured",
+            "This source is not registered with the non-production fixture connector.",
+        )
+
+    try:
+        connector_file = UniversalFixtureConnector().read_file(fixture_key)
+    except ConnectorError as exc:
+        raise _api_error(exc.status_code, exc.code, exc.message) from None
+
+    return stage_file_ingestion(
+        session,
+        user,
+        tenant_id,
+        source_id,
+        file_name=connector_file.file_name,
+        content=connector_file.content,
+        idempotency_key=idempotency_key,
+        max_rows=max_rows,
+        max_file_bytes=max_file_bytes,
         request_id=request_id,
     )
 

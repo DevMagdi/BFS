@@ -75,6 +75,16 @@ def _upload_body_limit(scope: Scope, max_file_bytes: int) -> _UploadBodyLimit | 
                 "The Universal Data sync request exceeds the configured size limit.",
             )
         if (
+            len(parts) == 9
+            and parts[4:7] == ["company-data", "universal", "sources"]
+            and parts[7]
+            and parts[8] == "fixture-sync"
+        ):
+            return _UploadBodyLimit(
+                MAX_UNIVERSAL_SYNC_REQUEST_BODY_BYTES,
+                "The Universal Data fixture-sync request exceeds the configured size limit.",
+            )
+        if (
             len(parts) == 8
             and parts[4:6] == ["company-data", "customer-commitments"]
             and parts[6]

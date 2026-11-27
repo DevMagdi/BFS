@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     universal_local_connector_root: str | None = Field(
         default=None, validation_alias="UNIVERSAL_LOCAL_CONNECTOR_ROOT"
     )
+    universal_connector_fixtures_enabled: bool = Field(
+        default=False, validation_alias="UNIVERSAL_CONNECTOR_FIXTURES_ENABLED"
+    )
 
     @field_validator("universal_local_connector_root")
     @classmethod
@@ -103,6 +106,8 @@ class Settings(BaseSettings):
         secret = self.app_secret_key.get_secret_value().lower()
         if self.app_env == "production" and secret.startswith(("dev-", "test-", "ci-")):
             raise ValueError("Development and test secrets are not allowed in production")
+        if self.app_env == "production" and self.universal_connector_fixtures_enabled:
+            raise ValueError("Universal connector fixtures are not allowed in production")
         return self
 
 

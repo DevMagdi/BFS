@@ -91,6 +91,10 @@ class UniversalConnectorSyncRequest(StrictModel):
     header_row: int = Field(default=1, ge=1, le=25)
 
 
+class UniversalFixtureSyncRequest(StrictModel):
+    fixture_key: Annotated[str, StringConstraints(min_length=1, max_length=64)]
+
+
 class UniversalSourceProfileUpdateRequest(StrictModel):
     display_name: Annotated[str, StringConstraints(min_length=1, max_length=160)] | None = None
     source_type: UniversalSourceType | None = None

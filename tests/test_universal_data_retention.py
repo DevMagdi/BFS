@@ -140,7 +140,7 @@ def retention_row_cleanup(admin_engine):
 
 
 def _make_owner_and_approver(client: TestClient, tenant_key: str):
-    owner = register_user(client, f"{tenant_key}-owner@example.test")
+    owner = register_user(client, f"{tenant_key}-owner@example.com")
     owner_headers = auth_headers(owner)
     tenant = create_tenant(
         client,
@@ -150,8 +150,8 @@ def _make_owner_and_approver(client: TestClient, tenant_key: str):
         key=f"{tenant_key}-tenant-onboarding-key",
     )
     tenant_id = str(tenant["id"])
-    approver = register_user(client, f"{tenant_key}-approver@example.test")
-    create_member(client, owner, tenant_id, f"{tenant_key}-approver@example.test", role="admin")
+    approver = register_user(client, f"{tenant_key}-approver@example.com")
+    create_member(client, owner, tenant_id, f"{tenant_key}-approver@example.com", role="admin")
     return owner, owner_headers, tenant, approver, auth_headers(approver)
 
 
@@ -201,7 +201,7 @@ def test_retention_tables_enforce_company_rls_and_tenant_api_scope(
     )
     assert revoked_policy.status_code == 200, revoked_policy.text
 
-    owner_b = register_user(client, "universal-retention-rls-b-owner@example.test")
+    owner_b = register_user(client, "universal-retention-rls-b-owner@example.com")
     owner_b_headers = auth_headers(owner_b)
     tenant_b = create_tenant(
         client,
@@ -323,8 +323,8 @@ def test_company_scoped_retention_policy_and_source_purge_remove_evidence(
     assert staged.status_code == 201, staged.text
     ingestion_id = staged.json()["ingestion"]["id"]
 
-    member = register_user(client, "universal-retention-member@example.test")
-    create_member(client, owner, tenant_id, "universal-retention-member@example.test")
+    member = register_user(client, "universal-retention-member@example.com")
+    create_member(client, owner, tenant_id, "universal-retention-member@example.com")
     denied = client.post(
         f"{base}/retention/policies",
         json={"retention_days": 1},

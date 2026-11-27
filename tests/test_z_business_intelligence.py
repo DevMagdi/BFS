@@ -1469,6 +1469,7 @@ def test_business_intelligence_migration_downgrade_refuses_retained_evidence(
         match=(
             r"archived source bytes or idempotent runs remain|"
             r"Company configuration or BI evidence is retained|"
+            r"cannot downgrade: verified product relationship evidence exists|"
             r"project-manager semantic relationship evidence is retained|"
             r"workforce-sensitive analysis evidence is retained"
         ),

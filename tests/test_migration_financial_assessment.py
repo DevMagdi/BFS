@@ -275,7 +275,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0026_forecasting_engine"
+                "0027_business_reports"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -662,7 +662,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
             os.environ["MIGRATION_DATABASE_URL"] = migration_url
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0026_forecasting_engine"
+                "0027_business_reports"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -864,7 +864,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(migration_config, "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0026_forecasting_engine"
+                "0027_business_reports"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -928,7 +928,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(migration_config, "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0026_forecasting_engine"
+                "0027_business_reports"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -1008,7 +1008,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0026_forecasting_engine"
+                "0027_business_reports"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -1082,7 +1082,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0026_forecasting_engine"
+                "0027_business_reports"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -1163,7 +1163,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0026_forecasting_engine"
+                "0027_business_reports"
             )
             _assert_runtime_user_privileges(
                 connection,

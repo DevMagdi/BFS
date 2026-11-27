@@ -14,6 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from businessflow.api.auth_routes import router as auth_router
 from businessflow.api.business_intelligence_routes import router as business_intelligence_router
+from businessflow.api.business_report_routes import router as business_report_router
 from businessflow.api.business_semantic_routes import router as business_semantic_router
 from businessflow.api.company_context_routes import router as company_context_router
 from businessflow.api.company_data_routes import router as company_data_router
@@ -171,6 +172,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(universal_data_router, prefix="/api/v1")
     application.include_router(business_semantic_router, prefix="/api/v1")
     application.include_router(business_intelligence_router, prefix="/api/v1")
+    application.include_router(business_report_router, prefix="/api/v1")
     application.include_router(customer_commitment_router, prefix="/api/v1")
     application.include_router(core_financial_readiness_router, prefix="/api/v1")
     application.include_router(core_financial_router, prefix="/api/v1")

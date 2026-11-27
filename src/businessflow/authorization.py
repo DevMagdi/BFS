@@ -38,6 +38,10 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "forecast:read",
             "forecast:write",
             "forecast:review",
+            "report:read",
+            "report:create",
+            "report:export",
+            "report:retention_manage",
         }
     ),
     "admin": frozenset(
@@ -64,6 +68,10 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "forecast:read",
             "forecast:write",
             "forecast:review",
+            "report:read",
+            "report:create",
+            "report:export",
+            "report:retention_manage",
         }
     ),
     "member": frozenset(

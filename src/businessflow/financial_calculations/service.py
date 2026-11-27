@@ -59,6 +59,7 @@ from businessflow.financial_calculations.contracts import (
     FinancialCalculationReplayVerificationReport,
     FinancialCalculationRequest,
     FinancialCalculationRunResponse,
+    FinancialCalculationTrace,
     FinancialReconciliationGroupReference,
     InputStatus,
     SourceEvidenceIntegrityStatus,
@@ -682,7 +683,7 @@ def get_financial_calculation_run(
     return _run_response(row)
 
 
-def verify_financial_calculation_run(
+def _replay_financial_calculation_run(
     session: Session,
     user: UserAccount,
     tenant_id: UUID,
@@ -692,7 +693,7 @@ def verify_financial_calculation_run(
     *,
     settings: Settings,
     request_id: UUID | None = None,
-) -> FinancialCalculationReplayVerificationReport:
+) -> tuple[FinancialCalculationReplayVerificationReport, FinancialCalculationTrace]:
     ensure_financial_calculations_enabled(settings)
     # Replay accepts raw amount strings and acts as a commitment-verification oracle; require
     # the stricter write capability even though this endpoint does not mutate the saved run.
@@ -739,7 +740,7 @@ def verify_financial_calculation_run(
         reasons.append("persisted_trace_hash_mismatch")
     if replayed.state != row.state:
         reasons.append("persisted_state_mismatch")
-    return FinancialCalculationReplayVerificationReport(
+    report = FinancialCalculationReplayVerificationReport(
         schema_version=1,
         passed=not reasons,
         reason_codes=tuple(dict.fromkeys(reasons)),
@@ -751,3 +752,57 @@ def verify_financial_calculation_run(
         core_replay_passed=replay_report.core_replay_passed,
         recorded_evidence_integrity_valid=True,
     )
+    return report, replayed
+
+
+def replay_financial_calculation_for_report(
+    session: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    intake_id: UUID,
+    run_id: UUID,
+    request: FinancialCalculationRequest,
+    *,
+    settings: Settings,
+    request_id: UUID | None = None,
+) -> tuple[FinancialCalculationReplayVerificationReport, FinancialCalculationTrace]:
+    """Return a verified M15 trace for an authorized, retention-limited report export.
+
+    The exact source amount inputs are accepted only for a finance:write caller, checked against
+    the saved row commitments, and returned in memory to the report service. Callers must not
+    persist the replay request or the raw input snapshot in report metadata or audit logs.
+    """
+    return _replay_financial_calculation_run(
+        session,
+        user,
+        tenant_id,
+        intake_id,
+        run_id,
+        request,
+        settings=settings,
+        request_id=request_id,
+    )
+
+
+def verify_financial_calculation_run(
+    session: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    intake_id: UUID,
+    run_id: UUID,
+    request: FinancialCalculationRequest,
+    *,
+    settings: Settings,
+    request_id: UUID | None = None,
+) -> FinancialCalculationReplayVerificationReport:
+    report, _trace = _replay_financial_calculation_run(
+        session,
+        user,
+        tenant_id,
+        intake_id,
+        run_id,
+        request,
+        settings=settings,
+        request_id=request_id,
+    )
+    return report

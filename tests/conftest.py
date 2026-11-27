@@ -88,7 +88,7 @@ def migrated_clean_test_database() -> None:
         command.upgrade(config, "head")
         with migration_engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            assert revision == "0026_forecasting_engine"
+            assert revision == "0027_business_reports"
     finally:
         if migration_engine is not None:
             migration_engine.dispose()
@@ -112,6 +112,7 @@ def settings() -> Settings:
         finance_source_intake_enabled=True,
         financial_calculations_enabled=True,
         direct_cash_forecasts_enabled=True,
+        report_exports_enabled=True,
         core_financials_enabled=True,
         db_pool_size=5,
         db_max_overflow=5,

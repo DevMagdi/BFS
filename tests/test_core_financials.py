@@ -621,7 +621,7 @@ def test_core_financial_transfer_migration_downgrade_is_safe(
 
     with admin_engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0026_forecasting_engine"
+            "0027_business_reports"
         )
         assert (
             connection.scalar(

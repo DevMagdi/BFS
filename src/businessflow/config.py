@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     forecast_promotion_enabled: bool = Field(
         default=False, validation_alias="FORECAST_PROMOTION_ENABLED"
     )
+    report_exports_enabled: bool = Field(default=False, validation_alias="REPORT_EXPORTS_ENABLED")
     core_financials_enabled: bool = Field(default=False, validation_alias="CORE_FINANCIALS_ENABLED")
     import_max_file_bytes: int = Field(
         default=25 * 1024 * 1024,

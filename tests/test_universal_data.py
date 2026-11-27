@@ -1004,17 +1004,59 @@ def test_universal_data_isolation_mapping_history_evidence_and_governed_promotio
     )
     assert revision_lineage.status_code == 200, revision_lineage.text
     assert [item["revision"] for item in revision_lineage.json()["items"]] == [2, 1]
+    owner_user_id = client.get("/api/v1/auth/me", headers=owner_headers).json()["id"]
     with admin_engine.connect() as connection:
-        assert (
-            connection.scalar(
+        history = (
+            connection.execute(
                 text(
-                    "SELECT correction_note FROM canonical_business_record_revisions "
-                    "WHERE tenant_id = :tenant_id AND record_id = :record_id AND revision = 2"
+                    "SELECT revision, attributes, attributes_hash, source_record_id, ingestion_id, "
+                    "snapshot_id, source_row_id, created_by_user_id, change_reason, "
+                    "correction_note "
+                    "FROM canonical_business_record_revisions "
+                    "WHERE tenant_id = :tenant_id AND company_id = :company_id "
+                    "AND record_id = :record_id ORDER BY revision"
                 ),
-                {"tenant_id": UUID(tenant_id), "record_id": UUID(latest_record["id"])},
+                {
+                    "tenant_id": UUID(tenant_id),
+                    "company_id": UUID(tenant["company"]["id"]),
+                    "record_id": UUID(latest_record["id"]),
+                },
             )
-            == "Approved customer correction"
+            .mappings()
+            .all()
         )
+
+    # M20 technical verification of an existing Universal Data correction path only; this does
+    # not establish a general context-history, conflict-resolution, or retention policy.
+    assert [item["revision"] for item in history] == [1, 2]
+    original_revision, corrected_revision = history
+    assert original_revision["attributes"]["name"] == "ACME LTD"
+    assert (
+        original_revision["source_record_id"] == corrected_revision["source_record_id"] == "CUS-1"
+    )
+    assert original_revision["attributes_hash"] != corrected_revision["attributes_hash"]
+    assert original_revision["ingestion_id"] == UUID(ingestion_id)
+    assert corrected_revision["ingestion_id"] == UUID(update_id)
+    assert original_revision["snapshot_id"] != corrected_revision["snapshot_id"]
+    assert original_revision["source_row_id"] != corrected_revision["source_row_id"]
+    assert str(original_revision["created_by_user_id"]) == owner_user_id
+    assert str(corrected_revision["created_by_user_id"]) == owner_user_id
+    assert original_revision["change_reason"] == "source_import"
+    assert original_revision["correction_note"] is None
+    assert corrected_revision["attributes"]["name"] == "ACME INTERNATIONAL"
+    assert corrected_revision["change_reason"] == "reviewed_source_update"
+    assert corrected_revision["correction_note"] == "Approved customer correction"
+
+    original_evidence_after_correction = client.get(
+        f"{base}/sources/{source_id}/ingestions/{ingestion_id}/evidence",
+        headers=owner_headers,
+    )
+    assert original_evidence_after_correction.status_code == 200
+    assert original_evidence_after_correction.content == original
+    assert (
+        hashlib.sha256(original_evidence_after_correction.content).hexdigest()
+        == staged["ingestion"]["input_fingerprint"]
+    )
 
     second_source = _register_source(
         client, base, owner_headers, "crm.secondary", display_name="Secondary CRM"

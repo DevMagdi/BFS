@@ -1,6 +1,6 @@
-# M20 synthetic-only context-history acceptance artifact
+# M20 context-history engineering evidence
 
-**Status: bounded engineering harness only. M20 is not accepted, production-ready, or approved for a real workflow.** This increment adds a pure-Python synthetic contract fixture and acceptance tests; it adds no application runtime behavior, API, database schema, migration, UI, retention rule, or production field set.
+**Status: technical evidence only. M20 is not accepted, production-ready, or approved for a real workflow.** PR #39 added a pure-Python synthetic contract fixture. The current audit adds PostgreSQL assertions against an existing Universal Data correction path. Neither adds an M20 application runtime, API, database schema, migration, UI, retention rule, or production field set.
 
 ## Test-only contract exercised
 
@@ -15,6 +15,12 @@
 - identical fixture input produces the same canonical history digest.
 
 Names and shapes in this test file are **test-harness details only**, not proposed or approved production fields, API contracts, roles, allowed-value lists, source-authority rules, approvals, retention periods, or supersession policy. The injected authorization callback is a call-order probe, not an implementation or proof of application authorization/RLS. This fixture does not replace or duplicate M7 decisions, M12 source registration, M17 evaluation evidence, or Universal Data ingestion/canonical-record history. No real or customer data is present.
+
+## PostgreSQL verification of an existing correction path
+
+The M20 audit adds PostgreSQL-backed assertions to `tests/test_universal_data.py::test_universal_data_isolation_mapping_history_evidence_and_governed_promotion`. Through the existing authenticated Universal Data staging, mapping, validation, and promotion flow, the test now verifies both persisted revisions, their actor IDs, source-record key, distinct ingestion/snapshot/row references, correction reason, and the original raw uploaded bytes/fingerprint after a later correction. The current migrations and related integration tests also verify forced Company-context RLS, least-privilege runtime grants, and append-only triggers for canonical revision rows.
+
+This is evidence about the already-shipped Universal Data correction contract, not an M20 runtime implementation or acceptance. It uses synthetic test values and does not define or prove a generic context schema, a role/approval model, conflict or supersession policy, source authority, retention policy, BI-pointer retention, or customer/production-data permission. No schema, route, purge behavior, or business rule is added or changed by this test.
 
 ## BI ingestion-pointer investigation
 

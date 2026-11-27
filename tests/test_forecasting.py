@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import date, timedelta
+from typing import Literal
 from uuid import UUID, uuid4
 
 import pytest
@@ -12,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 
 from businessflow.main import create_app
 from tests.helpers import auth_headers, create_member, create_tenant, register_user
+from tests.migration_helpers import invoke_downgrade_function
 
 
 def _base(tenant_id: str) -> str:
@@ -34,7 +36,9 @@ def _clear_forecast_evidence(admin_engine):
             )
 
 
-def _dataset_body() -> dict[str, object]:
+def _dataset_body(
+    *, data_origin: Literal["caller_assertion", "synthetic_fixture"] = "caller_assertion"
+) -> dict[str, object]:
     observations = []
     for index in range(8):
         period = date(2026, 1, 1) + timedelta(days=index)
@@ -44,7 +48,7 @@ def _dataset_body() -> dict[str, object]:
                 "dimension_values": {},
                 "value": str(index + 1),
                 "source_reference": {
-                    "evidence_type": "caller_assertion",
+                    "evidence_type": data_origin,
                     "source_id": "test.source",
                     "source_hash": "a" * 64,
                     "record_locator": f"source-row:{index + 1}",
@@ -54,8 +58,12 @@ def _dataset_body() -> dict[str, object]:
         )
     return {
         "dataset_key": "m17.daily.revenue",
-        "display_name": "Caller-asserted daily revenue test series",
-        "data_origin": "caller_assertion",
+        "display_name": (
+            "Synthetic M17 downgrade-guard test series"
+            if data_origin == "synthetic_fixture"
+            else "Caller-asserted daily revenue test series"
+        ),
+        "data_origin": data_origin,
         "target_key": "revenue",
         "target_label": "Revenue",
         "unit": "USD",
@@ -420,3 +428,183 @@ def test_forecasting_api_versions_replays_and_requires_independent_reviewer(
         migration_engine=migration_engine,
         admin_engine=admin_engine,
     )
+
+
+def test_synthetic_fixture_approval_block_is_reached_with_complete_holdout_evidence(
+    _clear_forecast_evidence, client, settings, admin_engine
+) -> None:
+    owner = register_user(client, f"m17-synthetic-block-owner-{uuid4().hex}@example.com")
+    owner_headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="Synthetic approval-block tenant",
+        company_name="Synthetic approval-block company",
+        key=f"m17-synthetic-block-{uuid4().hex}",
+    )
+    reviewer_email = f"m17-synthetic-block-reviewer-{uuid4().hex}@example.com"
+    reviewer = register_user(client, reviewer_email)
+    create_member(client, owner, tenant["id"], reviewer_email, role="admin")
+    base = _base(tenant["id"])
+    enabled_settings = settings.model_copy(
+        update={"forecasting_enabled": True, "forecast_promotion_enabled": True}
+    )
+
+    with TestClient(create_app(enabled_settings), raise_server_exceptions=False) as forecast_client:
+        created_dataset = forecast_client.post(
+            f"{base}/datasets",
+            json=_dataset_body(data_origin="synthetic_fixture"),
+            headers=owner_headers,
+        )
+        assert created_dataset.status_code == 201, created_dataset.text
+        dataset = created_dataset.json()["dataset"]
+        assert dataset["data_origin"] == "synthetic_fixture"
+        dataset_id = dataset["id"]
+
+        created_model = forecast_client.post(
+            f"{base}/models",
+            json={
+                "model_key": "m17.synthetic-naive",
+                "display_name": "Synthetic fixture naive baseline",
+                "definition": {"kind": "naive_last_value"},
+            },
+            headers=owner_headers,
+        )
+        assert created_model.status_code == 201, created_model.text
+        model = created_model.json()
+
+        created_protocol = forecast_client.post(
+            f"{base}/protocols",
+            json={
+                "protocol_key": "m17.synthetic-daily-protocol",
+                "display_name": "Synthetic fixture daily protocol",
+                "target_key": "revenue",
+                "frequency": "daily",
+                "horizon_periods": 1,
+                "validation_periods": 2,
+                "holdout_periods": 2,
+                "metrics": ["mae", "rmse", "mape", "smape"],
+                "interval": {
+                    "method": "validation_absolute_error_nearest_rank",
+                    "coverage_level": "0.9",
+                    "minimum_calibration_points": 1,
+                },
+            },
+            headers=owner_headers,
+        )
+        assert created_protocol.status_code == 201, created_protocol.text
+        protocol_id = created_protocol.json()["id"]
+
+        created_validation = forecast_client.post(
+            f"{base}/evaluations",
+            json={
+                "dataset_version_id": dataset_id,
+                "protocol_version_id": protocol_id,
+                "model_version_ids": [model["id"]],
+                "stage": "validation",
+            },
+            headers=owner_headers,
+        )
+        assert created_validation.status_code == 201, created_validation.text
+        validation = created_validation.json()
+        assert validation["evaluation"]["evaluation_status"] == "evaluated"
+        validation_id = validation["evaluation"]["id"]
+        verified_validation = forecast_client.post(
+            f"{base}/evaluations/{validation_id}/verify", headers=owner_headers
+        )
+        assert verified_validation.status_code == 200, verified_validation.text
+        assert verified_validation.json()["replay_status"] == "verified"
+
+        created_holdout = forecast_client.post(
+            f"{base}/evaluations",
+            json={
+                "dataset_version_id": dataset_id,
+                "protocol_version_id": protocol_id,
+                "model_version_ids": [model["id"]],
+                "stage": "holdout",
+                "calibration_evaluation_id": validation_id,
+            },
+            headers=owner_headers,
+        )
+        assert created_holdout.status_code == 201, created_holdout.text
+        holdout = created_holdout.json()["evaluation"]
+        assert holdout["evaluation_status"] == "evaluated"
+
+        approval_attempt = forecast_client.post(
+            f"{base}/promotions",
+            json={
+                "evaluation_id": holdout["id"],
+                "model_version_id": model["id"],
+                "expected_evaluation_hash": holdout["evaluation_hash"],
+                "expected_model_hash": model["model_hash"],
+                "decision": "approve",
+                "rationale": "Independent review of complete synthetic-only evidence.",
+            },
+            headers=auth_headers(reviewer),
+        )
+
+    assert approval_attempt.status_code == 409, approval_attempt.text
+    assert approval_attempt.json()["error"]["code"] == "forecast_synthetic_promotion_blocked"
+    with admin_engine.connect() as connection:
+        assert (
+            connection.scalar(
+                text(
+                    "SELECT count(*) FROM forecast_promotion_decisions WHERE tenant_id = :tenant_id"
+                ),
+                {"tenant_id": UUID(tenant["id"])},
+            )
+            == 0
+        )
+
+
+def test_0026_downgrade_directly_refuses_retained_m17_evidence(
+    _clear_forecast_evidence, client, settings, migration_engine, admin_engine
+) -> None:
+    owner = register_user(client, f"m17-downgrade-owner-{uuid4().hex}@example.com")
+    owner_headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="M17 downgrade guard tenant",
+        company_name="M17 downgrade guard company",
+        key=f"m17-downgrade-guard-{uuid4().hex}",
+    )
+    base = _base(tenant["id"])
+    enabled_settings = settings.model_copy(update={"forecasting_enabled": True})
+
+    with TestClient(create_app(enabled_settings), raise_server_exceptions=False) as forecast_client:
+        created_dataset = forecast_client.post(
+            f"{base}/datasets",
+            json=_dataset_body(data_origin="synthetic_fixture"),
+            headers=owner_headers,
+        )
+        assert created_dataset.status_code == 201, created_dataset.text
+        assert created_dataset.json()["dataset"]["data_origin"] == "synthetic_fixture"
+
+    with admin_engine.connect() as connection:
+        assert (
+            connection.scalar(
+                text("SELECT count(*) FROM forecast_dataset_versions WHERE tenant_id = :tenant_id"),
+                {"tenant_id": UUID(tenant["id"])},
+            )
+            == 1
+        )
+    with pytest.raises(
+        DBAPIError,
+        match="cannot downgrade while immutable M17 forecasting evidence is retained",
+    ):
+        invoke_downgrade_function(migration_engine, "0026_forecasting_engine.py")
+
+    with migration_engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0028_universal_data_retention"
+        )
+        assert connection.scalar(text("SELECT current_user")) == "bf_migrator"
+    with admin_engine.connect() as connection:
+        assert (
+            connection.scalar(
+                text("SELECT count(*) FROM forecast_dataset_versions WHERE tenant_id = :tenant_id"),
+                {"tenant_id": UUID(tenant["id"])},
+            )
+            == 1
+        )

@@ -96,7 +96,7 @@ def test_versioned_universal_sales_contract_and_migration_payload_stay_in_sync()
         / "0025_domain_intelligence_expansion.py"
     )
     spec = importlib.util.spec_from_file_location(
-        "migration_0025_domain_intelligence_expansion", migration_path
+        "migration_0025_domain_intelligence", migration_path
     )
     assert spec is not None and spec.loader is not None
     migration = importlib.util.module_from_spec(spec)

@@ -305,7 +305,7 @@ def test_domain_expansion_migration_backfills_manual_profiles_and_enforces_sourc
                 == 0
             )
 
-        command.upgrade(config, "0025_domain_intelligence_expansion")
+        command.upgrade(config, "0025_domain_intelligence")
         with target_admin_engine.connect() as connection:
             profile = connection.execute(
                 text(
@@ -352,7 +352,7 @@ def test_domain_expansion_migration_backfills_manual_profiles_and_enforces_sourc
             command.downgrade(config, "0024_company_wide_intelligence")
         with target_admin_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0025_domain_intelligence_expansion"
+                "0025_domain_intelligence"
             )
             protected_table_security = connection.execute(
                 text(
@@ -385,7 +385,7 @@ def test_domain_expansion_downgrade_blocks_transitively_dependent_commitment_met
         migration_url_text,
     ):
         scope = _create_migration_owner(migration_url_text, target_admin_engine)
-        command.upgrade(config, "0025_domain_intelligence_expansion")
+        command.upgrade(config, "0025_domain_intelligence")
         with migration_engine.begin() as connection:
             _set_company_scope(connection, scope)
             _insert_commitment_definition_chain(connection, scope)
@@ -397,7 +397,7 @@ def test_domain_expansion_downgrade_blocks_transitively_dependent_commitment_met
             command.downgrade(config, "0024_company_wide_intelligence")
         with target_admin_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0025_domain_intelligence_expansion"
+                "0025_domain_intelligence"
             )
 
 
@@ -411,7 +411,7 @@ def test_domain_expansion_downgrade_blocks_analysis_linked_to_transitive_commitm
         migration_url_text,
     ):
         scope = _create_migration_owner(migration_url_text, target_admin_engine)
-        command.upgrade(config, "0025_domain_intelligence_expansion")
+        command.upgrade(config, "0025_domain_intelligence")
         with migration_engine.begin() as connection:
             _set_company_scope(connection, scope)
             _base_id, _dependent_id, transitive_id = _insert_commitment_definition_chain(
@@ -431,5 +431,5 @@ def test_domain_expansion_downgrade_blocks_analysis_linked_to_transitive_commitm
             command.downgrade(config, "0024_company_wide_intelligence")
         with target_admin_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0025_domain_intelligence_expansion"
+                "0025_domain_intelligence"
             )

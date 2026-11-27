@@ -1,6 +1,6 @@
 """Add source-verified product links and commitment-aware BI source scoping.
 
-Revision ID: 0025_domain_intelligence_expansion
+Revision ID: 0025_domain_intelligence
 Revises: 0024_company_wide_intelligence
 Create Date: 2026-11-21
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0025_domain_intelligence_expansion"
+revision = "0025_domain_intelligence"
 down_revision = "0024_company_wide_intelligence"
 branch_labels = None
 depends_on = None

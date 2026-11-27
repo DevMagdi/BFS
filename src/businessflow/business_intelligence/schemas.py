@@ -101,7 +101,9 @@ MetricDimension = Literal[
     "currency_code",
     "status",
 ]
-MetricDatasetType = Literal["universal_records", "company_context", "m5", "core_financials"]
+MetricDatasetType = Literal[
+    "universal_records", "customer_commitments", "company_context", "m5", "core_financials"
+]
 TimeGranularity = Literal["none", "day", "week", "month", "quarter", "year"]
 PeriodBoundary = Literal[
     "calendar_period",
@@ -145,6 +147,11 @@ class UniversalDistinctSourceValuesCalculation(CalculationModel):
     field: UniversalValueField
 
 
+class ManualCustomerCommitmentCountCalculation(CalculationModel):
+    kind: Literal["manual_customer_commitment_count"]
+    date_field: Literal["order_date", "requested_delivery_date"] = "requested_delivery_date"
+
+
 class M5MetricCalculation(CalculationModel):
     kind: Literal["m5_metric"]
     metric_id: M5MetricId
@@ -163,6 +170,7 @@ MetricCalculation = Annotated[
     UniversalRecordCountCalculation
     | UniversalSourceAmountSumCalculation
     | UniversalDistinctSourceValuesCalculation
+    | ManualCustomerCommitmentCountCalculation
     | M5MetricCalculation
     | CoreFinancialMeasureCalculation
     | CustomFormulaCalculation,
@@ -378,6 +386,7 @@ class MetricDefinitionCreateRequest(StrictModel):
             "universal_record_count": "universal_records",
             "universal_source_amount_sum": "universal_records",
             "universal_distinct_source_values": "universal_records",
+            "manual_customer_commitment_count": "customer_commitments",
             "m5_metric": "m5",
             "core_financial_measure": "core_financials",
         }.get(calculation_key)
@@ -429,7 +438,7 @@ class MetricDefinitionCreateRequest(StrictModel):
                 "customer": {"customer", "country", "customer_segment"},
                 "supplier": {"supplier", "country"},
                 "product": {"product", "category"},
-                "sales_transaction": {"customer", "currency_code", "status"},
+                "sales_transaction": {"customer", "product", "currency_code", "status"},
                 "expense": {"supplier", "category", "currency_code"},
                 "business_activity": {"activity_type", "status"},
                 "operational_record": {"record_type", "status"},
@@ -469,6 +478,22 @@ class MetricDefinitionCreateRequest(StrictModel):
             raise ValueError(
                 "source fields, filters, and semantic relationships require a Universal Data metric"
             )
+
+        if isinstance(self.calculation, ManualCustomerCommitmentCountCalculation):
+            allowed_time_dimensions = {"day", "week", "month", "quarter", "year"}
+            if not set(self.dimensions) <= allowed_time_dimensions:
+                raise ValueError(
+                    "manual customer commitment metrics support only requested-date dimensions"
+                )
+            if (
+                self.time_granularity != "none"
+                and self.time_granularity not in allowed_time_dimensions
+            ):
+                raise ValueError("manual commitment time granularity must be calendar-based")
+            if self.unit != "records":
+                raise ValueError("manual customer commitment counts must use records")
+            if self.policy.currency_behavior != "not_applicable" or self.currency_code is not None:
+                raise ValueError("manual customer commitment counts do not have currency behavior")
 
         if not universal_calculation:
             if self.completeness_requirements:
@@ -512,6 +537,7 @@ class MetricDefinitionCreateRequest(StrictModel):
             "universal_record_count": "count",
             "universal_source_amount_sum": "sum",
             "universal_distinct_source_values": "distinct_count",
+            "manual_customer_commitment_count": "count",
             "m5_metric": "source_defined",
             "core_financial_measure": "source_defined",
         }.get(calculation_key)
@@ -719,6 +745,7 @@ class MetricRegistryCatalog(StrictModel):
     calculations: list[dict[str, object]]
     expression_operators: list[str]
     unsupported: list[dict[str, object]]
+    governance_blockers: list[str]
 
 
 def metric_calculation_dict(calculation: MetricCalculation) -> dict[str, object]:
@@ -736,7 +763,7 @@ def _allowed_domains(calculation_key: str) -> frozenset[str]:
 
 
 class SourcePrecedenceInput(StrictModel):
-    dataset_type: Literal["universal_records"] = "universal_records"
+    dataset_type: Literal["universal_records", "customer_commitments"] = "universal_records"
     source_id: UUID
 
 
@@ -800,16 +827,25 @@ class MetricReadinessCheck(StrictModel):
 
 
 class MetricReadinessResponse(StrictModel):
+    tenant_id: UUID
+    company_id: UUID
+    domain: MetricDomain
     metric_key: str
     metric_version: int | None
     definition_hash: str
     configuration_version: int | None
+    analysis_id: UUID | None
+    period_start: date | None
+    period_end: date | None
+    dimensions: list[str]
     readiness_status: Literal["ready", "conditional", "blocked", "unknown"]
     calculation_supported: bool
     checks: list[MetricReadinessCheck]
     blockers: list[str]
     warnings: list[str]
     limitations: list[str]
+    governance_blockers: list[str]
+    retention_status: Literal["unresolved"] = "unresolved"
 
 
 class MetricDependencyAnalysisInput(StrictModel):
@@ -860,6 +896,7 @@ class MetricEvidenceReference(StrictModel):
     evidence_index: int = Field(ge=0)
     evidence_kind: Literal[
         "universal_record",
+        "manual_customer_commitment",
         "semantic_relationship",
         "m5_metric_run",
         "core_financial_run",
@@ -875,6 +912,17 @@ class MetricEvidenceReference(StrictModel):
     source_profile_version_id: UUID | None = None
     row_hash: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")] | None = None
     attributes_hash: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")] | None = None
+    commitment_id: UUID | None = None
+    commitment_status: Literal["accepted"] | None = None
+    commitment_event_id: UUID | None = None
+    commitment_event_hash: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")] | None = (
+        None
+    )
+    commitment_snapshot_hash: (
+        Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")] | None
+    ) = None
+    analysis_date: date | None = None
+    analysis_date_field: Literal["order_date", "requested_delivery_date"] | None = None
     relationship_version_id: UUID | None = None
     relationship_type: Annotated[str, StringConstraints(min_length=1, max_length=64)] | None = None
     relationship_version: int | None = Field(default=None, ge=1)
@@ -914,6 +962,18 @@ class MetricEvidenceReference(StrictModel):
                 self.source_profile_version_id,
                 self.row_hash,
                 self.attributes_hash,
+            )
+        elif self.evidence_kind == "manual_customer_commitment":
+            required = (
+                self.source_id,
+                self.source_profile_version_id,
+                self.commitment_id,
+                self.revision,
+                self.commitment_status,
+                self.commitment_event_id,
+                self.commitment_event_hash,
+                self.commitment_snapshot_hash,
+                self.analysis_date_field,
             )
         elif self.evidence_kind == "semantic_relationship":
             required = (
@@ -965,15 +1025,26 @@ class MetricEvidenceReference(StrictModel):
 
 
 class MetricEvidencePage(StrictModel):
+    tenant_id: UUID
+    company_id: UUID
     analysis_id: UUID
+    metric_key: str
+    domain: MetricDomain
+    period_start: date | None
+    period_end: date | None
     items: list[MetricEvidenceReference]
     total: int
     limit: int
     offset: int
+    governance_blockers: list[str]
+    retention_status: Literal["unresolved"] = "unresolved"
 
 
 class MetricAnalysisResponse(StrictModel):
     id: UUID
+    tenant_id: UUID
+    company_id: UUID
+    domain: MetricDomain
     metric_key: str
     metric_version: int | None
     system_metric_version: str | None
@@ -988,6 +1059,8 @@ class MetricAnalysisResponse(StrictModel):
     result_hash: str
     result_snapshot: dict[str, object]
     evidence_count: int
+    governance_blockers: list[str]
+    retention_status: Literal["unresolved"] = "unresolved"
     created_at: datetime
 
 
@@ -999,9 +1072,14 @@ class MetricAnalysisPage(StrictModel):
 
 
 class MetricAnalysisReplayResponse(StrictModel):
+    tenant_id: UUID
+    company_id: UUID
+    domain: MetricDomain
     analysis_id: UUID
     replay_status: Literal["verified"]
     input_hash: str
     stored_result_hash: str
     replayed_result_hash: str
     result_snapshot: dict[str, object]
+    governance_blockers: list[str]
+    retention_status: Literal["unresolved"] = "unresolved"

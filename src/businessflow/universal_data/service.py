@@ -24,6 +24,7 @@ from businessflow.universal_data.catalog import (
     VALIDATION_RULE_VERSION,
     CanonicalEntity,
     canonical_contract_definition,
+    entity_for_contract_version,
 )
 from businessflow.universal_data.connectors import ConnectorError, LocalDirectoryConnector
 from businessflow.universal_data.models import (
@@ -113,9 +114,14 @@ def _require_company_access(
     write: bool,
     request_id: UUID | None = None,
 ):
-    permission = "company_context:write" if write else "company_context:read"
+    if write:
+        access = require_company_context_access(
+            session, user, tenant_id, "company_context:write", request_id=request_id
+        )
+        require_company_context_access(session, user, tenant_id, "universal_data:read")
+        return access
     return require_company_context_access(
-        session, user, tenant_id, permission, request_id=request_id
+        session, user, tenant_id, "universal_data:read", request_id=request_id
     )
 
 
@@ -194,7 +200,7 @@ def _source_summary(
         dataset_type=cast(Any, source.dataset_type),
         contract_key=source.contract_key,
         contract_version=source.contract_version,
-        contract_hash=content_hash(canonical_contract_definition()),
+        contract_hash=content_hash(canonical_contract_definition(source.contract_version)),
         version=profile.version,
         source_type=cast(Any, profile.source_type),
         display_name=profile.display_name,
@@ -214,11 +220,19 @@ def _source_summary(
     )
 
 
-def _contract(session: Session) -> CompanyDataContract:
+def _contract(session: Session, version: str = UNIVERSAL_CONTRACT_VERSION) -> CompanyDataContract:
+    try:
+        definition = canonical_contract_definition(version)
+    except ValueError:
+        raise _api_error(
+            409,
+            "universal_contract_version_unsupported",
+            "The source is pinned to an unsupported Universal Data contract version.",
+        ) from None
     contract = session.scalar(
         select(CompanyDataContract).where(
             CompanyDataContract.contract_key == UNIVERSAL_CONTRACT_KEY,
-            CompanyDataContract.version == UNIVERSAL_CONTRACT_VERSION,
+            CompanyDataContract.version == version,
             CompanyDataContract.dataset_type == _UNIVERSAL_SOURCE_TYPE,
         )
     )
@@ -228,7 +242,7 @@ def _contract(session: Session) -> CompanyDataContract:
             "universal_contract_integrity_error",
             "The published Universal Data contract is unavailable or failed its integrity check.",
         )
-    if content_hash(canonical_contract_definition()) != contract.definition_hash:
+    if content_hash(definition) != contract.definition_hash:
         raise _api_error(
             409,
             "universal_contract_integrity_error",
@@ -496,7 +510,7 @@ def list_source_profile_history(
 def list_entity_catalog(
     session: Session, user: UserAccount, tenant_id: UUID
 ) -> UniversalEntityCatalog:
-    _require_company_access(session, user, tenant_id, write=False)
+    require_company_context_access(session, user, tenant_id, "company_context:read")
     _contract(session)
     definition = canonical_contract_definition()
     entities = cast(list[dict[str, object]], definition["entities"])
@@ -731,7 +745,7 @@ def stage_file_ingestion(
     if parsed.total_rows == 0:
         raise _api_error(422, "empty_dataset", "The selected file contains no non-empty data rows.")
 
-    contract = _contract(session)
+    contract = _contract(session, source.contract_version)
     inspection = inspect_parsed_file(parsed, header_row=header_row)
     inspection["parse_options"] = parse_options
     snapshot = session.scalar(
@@ -976,10 +990,20 @@ def _mapping_response(
         raise _api_error(
             409, "universal_mapping_profile_missing", "The mapping profile is incomplete."
         )
-    entity = CANONICAL_ENTITIES.get(version.entity_type)
+    source = _company_source(session, version.tenant_id, version.company_id, version.source_id)
+    contract = _contract(session, source.contract_version)
+    if version.contract_hash != contract.definition_hash:
+        raise _api_error(
+            409,
+            "universal_mapping_contract_mismatch",
+            "The mapping uses a different canonical contract version.",
+        )
+    entity = entity_for_contract_version(version.entity_type, source.contract_version)
     if entity is None:
         raise _api_error(
-            409, "universal_mapping_entity_invalid", "The mapping entity is not supported."
+            409,
+            "universal_mapping_entity_invalid",
+            "The mapping entity is not supported by its source contract version.",
         )
     missing = [field for field in entity.required_fields if field not in version.field_mapping]
     return UniversalMappingProfileVersionResponse(
@@ -1003,20 +1027,23 @@ def _mapping_response(
 def _validate_mapping_against_ingestion(
     ingestion: UniversalIngestion,
     version: UniversalMappingProfileVersion,
+    *,
+    contract_version: str,
+    contract_hash: str,
 ) -> list[str]:
     headers = _mapping_headers(ingestion, version.worksheet_name)
-    if version.contract_hash != content_hash(canonical_contract_definition()):
+    if version.contract_hash != contract_hash:
         raise _api_error(
             409,
             "universal_mapping_contract_mismatch",
             "The mapping uses a different canonical contract version.",
         )
-    entity = CANONICAL_ENTITIES.get(version.entity_type)
+    entity = entity_for_contract_version(version.entity_type, contract_version)
     if entity is None:
         raise _api_error(
             422,
             "universal_mapping_entity_invalid",
-            "The selected canonical entity is not supported.",
+            "The selected canonical entity is not part of this source contract version.",
         )
     if not version.field_mapping:
         raise _api_error(
@@ -1063,6 +1090,7 @@ def _validate_mapping_against_ingestion(
 def _apply_mapping_version(
     session: Session,
     user: UserAccount,
+    source: CompanyDataSource,
     ingestion: UniversalIngestion,
     version: UniversalMappingProfileVersion,
     request_id: UUID,
@@ -1071,7 +1099,19 @@ def _apply_mapping_version(
         raise _api_error(
             409, "universal_ingestion_already_promoted", "A promoted ingestion is immutable."
         )
-    missing = _validate_mapping_against_ingestion(ingestion, version)
+    if source.id != ingestion.source_id or version.source_id != source.id:
+        raise _api_error(
+            409,
+            "universal_mapping_source_mismatch",
+            "The selected mapping, ingestion, and source do not share the same scope.",
+        )
+    contract = _contract(session, source.contract_version)
+    missing = _validate_mapping_against_ingestion(
+        ingestion,
+        version,
+        contract_version=source.contract_version,
+        contract_hash=contract.definition_hash,
+    )
     if ingestion.mapping_profile_version_id == version.id and ingestion.validation_hash is not None:
         saved_validation_snapshot = ingestion.validation_snapshot
         if (
@@ -1173,9 +1213,15 @@ def create_mapping_and_apply(
     ingestion = _ingestion(
         session, tenant_id, access.company.id, source.id, ingestion_id, lock=True
     )
-    _contract(session)
+    contract = _contract(session, source.contract_version)
     headers = _mapping_headers(ingestion, body.worksheet_name)
-    entity = CANONICAL_ENTITIES[body.entity_type]
+    entity = entity_for_contract_version(body.entity_type, source.contract_version)
+    if entity is None:
+        raise _api_error(
+            422,
+            "universal_mapping_entity_invalid",
+            "The selected canonical entity is not part of this source contract version.",
+        )
     unknown_fields = set(body.field_mapping) - set(entity.field_by_name)
     unknown_columns = set(body.field_mapping.values()) - set(headers)
     if unknown_fields or unknown_columns:
@@ -1270,12 +1316,12 @@ def create_mapping_and_apply(
         field_mapping=body.field_mapping,
         ignored_columns=body.ignored_columns,
         field_options=field_options,
-        contract_hash=content_hash(canonical_contract_definition()),
+        contract_hash=contract.definition_hash,
         created_by_user_id=user.id,
     )
     session.add(version)
     session.flush()
-    return _apply_mapping_version(session, user, ingestion, version, request_id)
+    return _apply_mapping_version(session, user, source, ingestion, version, request_id)
 
 
 def apply_existing_mapping(
@@ -1295,7 +1341,7 @@ def apply_existing_mapping(
     version = _mapping_profile_version(
         session, tenant_id, access.company.id, source.id, mapping_version_id
     )
-    return _apply_mapping_version(session, user, ingestion, version, request_id)
+    return _apply_mapping_version(session, user, source, ingestion, version, request_id)
 
 
 def list_mapping_profiles(
@@ -1434,8 +1480,25 @@ def _validate_ingestion_input(
         raise _api_error(
             409, "universal_mapping_changed", "Apply a mapping profile version before validation."
         )
-    _validate_mapping_against_ingestion(ingestion, version)
-    contract = _contract(session)
+    source = session.scalar(
+        select(CompanyDataSource).where(
+            CompanyDataSource.tenant_id == ingestion.tenant_id,
+            CompanyDataSource.company_id == ingestion.company_id,
+            CompanyDataSource.id == ingestion.source_id,
+            CompanyDataSource.dataset_type == _UNIVERSAL_SOURCE_TYPE,
+        )
+    )
+    if source is None:
+        raise _api_error(
+            409, "universal_source_missing", "The source bound to this ingestion is unavailable."
+        )
+    contract = _contract(session, source.contract_version)
+    _validate_mapping_against_ingestion(
+        ingestion,
+        version,
+        contract_version=source.contract_version,
+        contract_hash=contract.definition_hash,
+    )
     if version.contract_hash != contract.definition_hash:
         raise _api_error(
             409,
@@ -1714,7 +1777,13 @@ def validate_ingestion(
             "Apply a new mapping version before validating again.",
         )
 
-    entity = CANONICAL_ENTITIES[version.entity_type]
+    entity = entity_for_contract_version(version.entity_type, source.contract_version)
+    if entity is None:
+        raise _api_error(
+            409,
+            "universal_mapping_entity_invalid",
+            "The mapping entity is not part of this source contract version.",
+        )
     headers = _mapping_headers(ingestion, version.worksheet_name)
     rows = list(
         session.scalars(
@@ -1896,7 +1965,7 @@ def validate_ingestion(
     validation_snapshot: dict[str, object] = {
         "validation_rule_version": VALIDATION_RULE_VERSION,
         "contract_key": UNIVERSAL_CONTRACT_KEY,
-        "contract_version": UNIVERSAL_CONTRACT_VERSION,
+        "contract_version": source.contract_version,
         "contract_hash": version.contract_hash,
         "entity_type": version.entity_type,
         "ingestion_id": str(ingestion.id),
@@ -2627,6 +2696,7 @@ def list_record_lineage(
     )
     if record is None:
         raise _api_error(404, "canonical_record_not_found", "The canonical record was not found.")
+    source = _company_source(session, tenant_id, access.company.id, record.source_id)
     base = (
         select(
             CanonicalBusinessRecordRevision,
@@ -2723,7 +2793,7 @@ def list_record_lineage(
                 mapping_profile_version_id=mapping.id,
                 mapping_version=mapping.version,
                 contract_key=UNIVERSAL_CONTRACT_KEY,
-                contract_version=UNIVERSAL_CONTRACT_VERSION,
+                contract_version=source.contract_version,
                 contract_hash=mapping.contract_hash,
                 validation_hash=revision.validation_hash,
                 source_profile_version_id=source_profile.id,

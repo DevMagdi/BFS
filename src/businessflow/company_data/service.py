@@ -295,6 +295,7 @@ def list_sources(
     offset: int,
 ) -> CompanyDataSourceListResponse:
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     filters = (
         CompanyDataSource.tenant_id == tenant_id,
         CompanyDataSource.company_id == access.company.id,
@@ -327,6 +328,7 @@ def get_company_data_coverage(
 ) -> CompanyDataCoverageResponse:
     """Summarize registered M12 evidence without implying business-data completeness."""
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     evaluated_at = datetime.now(UTC)
     accumulators = {dataset: _DatasetCoverageAccumulator() for dataset in DATASETS}
     contract_versions: dict[ImportDataset, list[CompanyDataContractVersionSummary]] = {
@@ -487,6 +489,7 @@ def get_source(
     session: Session, user: UserAccount, tenant_id: UUID, source_id: UUID
 ) -> CompanyDataSourceSummary:
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     source = _source_query(session, tenant_id, access.company.id, source_id)
     if source is None:
         raise ApiError(
@@ -505,6 +508,9 @@ def create_source(
 ) -> CompanyDataSourceSummary:
     access = require_company_context_access(
         session, user, tenant_id, "company_context:write", request_id=request_id
+    )
+    require_company_context_access(
+        session, user, tenant_id, "workforce:read", request_id=request_id
     )
     if body.dataset_type == "customer_commitments":
         raise ApiError(
@@ -655,6 +661,9 @@ def create_ingestion(
 ) -> CompanyDataIngestionResponse:
     access = require_company_context_access(
         session, user, tenant_id, "company_context:write", request_id=request_id
+    )
+    require_company_context_access(
+        session, user, tenant_id, "workforce:read", request_id=request_id
     )
     source = session.scalar(
         select(CompanyDataSource).where(
@@ -850,6 +859,7 @@ def get_ingestion(
     ingestion_id: UUID,
 ) -> CompanyDataIngestionResponse:
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     source = _source_query(session, tenant_id, access.company.id, source_id)
     if source is None:
         raise ApiError(
@@ -882,6 +892,7 @@ def list_ingestions(
     offset: int,
 ) -> CompanyDataIngestionListResponse:
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     source = _source_query(session, tenant_id, access.company.id, source_id)
     if source is None:
         raise ApiError(
@@ -918,6 +929,7 @@ def list_lineage(
     offset: int,
 ) -> CompanyDataLineagePage:
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     source = _source_query(session, tenant_id, access.company.id, source_id)
     if source is None:
         raise ApiError(

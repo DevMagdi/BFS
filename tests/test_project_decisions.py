@@ -498,8 +498,12 @@ def test_tenant_company_authorization_and_member_read_policy(client):
     member_headers = auth_headers(member)
 
     history = client.get(f"{base}/project-intakes/{intake['id']}/decisions", headers=member_headers)
-    assert history.status_code == 200
-    assert history.json()["items"][0]["id"] == decision["id"]
+    assert history.status_code == 403
+    denied_member_detail = client.get(
+        f"{base}/project-intakes/{intake['id']}/decisions/{decision['id']}",
+        headers=member_headers,
+    )
+    assert denied_member_detail.status_code == 403
     denied_write = _submit(
         client,
         base,

@@ -26,10 +26,12 @@ SemanticReferenceKind = Literal[
 ]
 SemanticRelationshipType = Literal[
     "customer_has_sales_transaction",
+    "product_has_sales_transaction",
     "supplier_has_expense",
     "employee_belongs_to_department",
     "department_in_business_unit",
     "project_assigned_to_employee",
+    "project_managed_by_employee",
 ]
 
 

@@ -88,7 +88,7 @@ def migrated_clean_test_database() -> None:
         command.upgrade(config, "head")
         with migration_engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            assert revision == "0023_core_financial_guardrails"
+            assert revision == "0025_domain_intelligence_expansion"
     finally:
         if migration_engine is not None:
             migration_engine.dispose()

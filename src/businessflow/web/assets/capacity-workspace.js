@@ -43,6 +43,8 @@
     tenant: null,
     demo: null,
     canWrite: false,
+    importAccessDenied: false,
+    workforceAccessDenied: false,
     loadSequence: 0,
     intakeSequence: 0,
     assessmentSequence: 0,
@@ -239,7 +241,7 @@
     state.canWrite = ["owner", "admin"].includes(state.tenant?.role);
     const notice = $("#role-notice");
     if (!state.canWrite) {
-      notice.textContent = "Read-only Company membership. You can inspect saved imports, assessments, and decisions; M4 writes, M6 assessments, M7 submissions, and approvals require an authorized owner/admin. The server remains authoritative for every permission check.";
+      notice.textContent = "Read-only Company membership. You can inspect project-intake details and static catalogs, but staged imports, M6 capacity assessments, and M7 decisions contain workforce evidence and require workforce access. M4 writes, assessments, submissions, and approvals require an authorized owner/admin. The server remains authoritative for every permission check.";
       setVisible(notice, true);
     } else {
       notice.textContent = "Owner/admin access is active for this Company. M7 approval still requires a different authorized person than the decision submitter.";
@@ -280,6 +282,8 @@
     state.assessmentSequence += 1;
     state.intakeLoading = false;
     state.demo = null;
+    state.importAccessDenied = false;
+    state.workforceAccessDenied = false;
     state.importItems = [];
     state.stagedImport = null;
     state.mappingResponse = null;
@@ -320,11 +324,15 @@
     setStatus("Loading company-scoped M4–M7 evidence…");
     try {
       const [importsResult, intakesResult, demoResult] = await Promise.all([
-        request(`/tenants/${tenantId}/imports?limit=100&offset=0`),
+        request(`/tenants/${tenantId}/imports?limit=100&offset=0`).catch((error) => {
+          if (error.status === 403) return { data: { items: [] }, permissionDenied: true };
+          throw error;
+        }),
         request(`/tenants/${tenantId}/project-intakes?limit=100&offset=0`),
         request(`/tenants/${tenantId}/position-reviews/demo`).catch(() => ({ data: null })),
       ]);
       if (sequence !== state.loadSequence || state.tenant?.id !== tenantId) return;
+      state.importAccessDenied = importsResult.permissionDenied === true;
       state.importItems = importsResult.data?.items || [];
       state.intakeItems = intakesResult.data?.items || [];
       state.demo = demoResult.data;
@@ -332,7 +340,10 @@
       renderIntakeOptions();
       renderSyntheticFixtureActions();
       const role = state.tenant.role || "member";
-      setStatus(`Workspace ready · ${state.tenant.company?.legal_name || state.tenant.name} · ${role} · ${state.importItems.length} recent M4 imports · ${state.intakeItems.length} saved proposals.`, "is-success");
+      const importSummary = state.importAccessDenied
+        ? "M4 import history requires workforce access"
+        : `${state.importItems.length} recent M4 imports`;
+      setStatus(`Workspace ready · ${state.tenant.company?.legal_name || state.tenant.name} · ${role} · ${importSummary} · ${state.intakeItems.length} saved proposals.`, "is-success");
       if (!state.intakeItems.length) {
         resetIntakeForm();
         renderAssessmentSelect();
@@ -410,6 +421,11 @@
   function renderImportHistory() {
     const target = $("#import-history");
     target.replaceChildren();
+    $("#refresh-imports-button").disabled = state.importAccessDenied;
+    if (state.importAccessDenied) {
+      target.append(node("p", "cw-empty-state", "M4 import history can contain employee evidence and requires workforce:read."));
+      return;
+    }
     if (!state.importItems.length) {
       target.append(node("p", "cw-empty-state", "No M4 imports are saved for this Company. Upload an operational CSV or XLSX to begin."));
       return;
@@ -911,6 +927,7 @@
     state.assessmentSequence += 1;
     state.intakeLoading = false;
     state.intake = null;
+    state.workforceAccessDenied = false;
     clearAssessmentAttestations();
     clearDecisionDraft();
     $("#intake-select").value = "";
@@ -1096,25 +1113,44 @@
     if (!state.tenant || !intakeId) return;
     const context = captureWorkspace();
     const intakeSequence = state.intakeSequence;
-    const [assessmentResult, decisionResult] = await Promise.all([
-      request(`/tenants/${context.tenantId}/project-intakes/${intakeId}/assessments?limit=100&offset=0`),
-      request(`/tenants/${context.tenantId}/project-intakes/${intakeId}/decisions?limit=100&offset=0`),
-    ]);
-    if (
-      !workspaceIsCurrent(context) ||
-      state.intakeSequence !== intakeSequence ||
-      state.intake?.id !== intakeId
-    ) return;
-    state.assessmentItems = assessmentResult.data?.items || [];
-    state.decisions = decisionResult.data || { items: [], total: 0, current_version: null };
-    state.currentDecision = state.decisions.items.find((item) => item.is_current) || null;
-    renderAssessmentSelect();
-    renderDecisionPanel();
-    if (state.assessmentItems.length) {
-      await loadAssessment(state.assessmentItems[0].id);
-    } else {
+    try {
+      const [assessmentResult, decisionResult] = await Promise.all([
+        request(`/tenants/${context.tenantId}/project-intakes/${intakeId}/assessments?limit=100&offset=0`),
+        request(`/tenants/${context.tenantId}/project-intakes/${intakeId}/decisions?limit=100&offset=0`),
+      ]);
+      if (
+        !workspaceIsCurrent(context) ||
+        state.intakeSequence !== intakeSequence ||
+        state.intake?.id !== intakeId
+      ) return;
+      state.workforceAccessDenied = false;
+      state.assessmentItems = assessmentResult.data?.items || [];
+      state.decisions = decisionResult.data || { items: [], total: 0, current_version: null };
+      state.currentDecision = state.decisions.items.find((item) => item.is_current) || null;
+      renderAssessmentSelect();
+      renderDecisionPanel();
+      if (state.assessmentItems.length) {
+        await loadAssessment(state.assessmentItems[0].id);
+      } else {
+        state.assessment = null;
+        state.metricRun = null;
+        renderAssessmentResult();
+        renderDecisionPanel();
+      }
+    } catch (error) {
+      if (
+        !workspaceIsCurrent(context) ||
+        state.intakeSequence !== intakeSequence ||
+        state.intake?.id !== intakeId
+      ) return;
+      if (error.status !== 403) throw error;
+      state.workforceAccessDenied = true;
+      state.assessmentItems = [];
       state.assessment = null;
       state.metricRun = null;
+      state.decisions = { items: [], total: 0, current_version: null };
+      state.currentDecision = null;
+      renderAssessmentSelect();
       renderAssessmentResult();
       renderDecisionPanel();
     }
@@ -1124,7 +1160,9 @@
     const select = $("#assessment-select");
     select.replaceChildren();
     if (!state.assessmentItems.length) {
-      const option = node("option", "", "No assessment yet");
+      const option = node("option", "", state.workforceAccessDenied
+        ? "M6 evidence requires workforce access"
+        : "No assessment yet");
       option.value = "";
       select.append(option);
       select.disabled = true;
@@ -1246,7 +1284,12 @@
     target.replaceChildren();
     const assessment = state.assessment;
     if (!assessment) {
-      target.append(node("p", "cw-empty-state", state.intake ? "No M6 assessment has been saved for this proposal yet. Record assumptions and run a comparison." : "Save a proposal and run M6 to create a capacity-only assessment."));
+      const message = state.workforceAccessDenied
+        ? "M6 assessments include M5 workforce evidence and require workforce:read. The saved project-intake demand remains readable."
+        : state.intake
+          ? "No M6 assessment has been saved for this proposal yet. Record assumptions and run a comparison."
+          : "Save a proposal and run M6 to create a capacity-only assessment.";
+      target.append(node("p", "cw-empty-state", message));
       return;
     }
     const result = assessment.result_snapshot || {};
@@ -1479,12 +1522,19 @@
     const current = state.currentDecision;
     const intakeId = state.intake?.id;
 
-    $("#refresh-decisions-button").disabled = !intakeId;
+    $("#refresh-decisions-button").disabled = !intakeId || state.workforceAccessDenied;
     if (!intakeId) {
       $("#decision-scope-badge").textContent = "No decision selected";
       entry.hidden = true;
       approvalPanel.hidden = true;
       history.append(node("p", "cw-empty-state", "Choose a saved proposal to load its M7 history."));
+      return;
+    }
+    if (state.workforceAccessDenied) {
+      $("#decision-scope-badge").textContent = "Workforce access required";
+      entry.hidden = true;
+      approvalPanel.hidden = true;
+      history.append(node("p", "cw-empty-state", "M6 assessment and M7 decision history bind workforce evidence and require workforce:read. Project-intake demand remains available under Company Context read access."));
       return;
     }
     if (!assessment) {
@@ -1631,7 +1681,7 @@
   }
 
   async function refreshDecisionHistory() {
-    if (!state.tenant || !state.intake) return;
+    if (!state.tenant || !state.intake || state.workforceAccessDenied) return;
     const context = captureWorkspace();
     const intakeId = state.intake.id;
     const intakeSequence = state.intakeSequence;

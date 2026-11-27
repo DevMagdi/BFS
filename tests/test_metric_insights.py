@@ -5,7 +5,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from businessflow.metrics.snapshot import content_hash
-from tests.helpers import auth_headers, create_tenant, register_user
+from tests.helpers import auth_headers, create_member, create_tenant, register_user
 
 WEEK_START = "2025-11-03"
 
@@ -341,6 +341,33 @@ def test_metric_insight_runs_are_versioned_evidence_gated_replayable_and_tenant_
     saved = client.get(f"{base}/metrics/insights/runs/{insight['id']}", headers=headers)
     assert saved.status_code == 200, saved.text
     assert saved.json() == insight
+
+    member_email = "m13-workforce-member@example.com"
+    member = register_user(client, member_email, display_name="M13 Workforce Member")
+    create_member(client, owner, tenant["id"], member_email)
+    member_headers = auth_headers(member)
+    member_catalog = client.get(f"{base}/metrics/insights/catalog", headers=member_headers)
+    assert member_catalog.status_code == 200, member_catalog.text
+    denied_member_create = _create_insight(
+        client,
+        base,
+        member_headers,
+        baseline_id=baseline["id"],
+        comparison_id=comparison["id"],
+    )
+    assert denied_member_create.status_code == 403
+    assert (
+        client.get(
+            f"{base}/metrics/insights/runs/{insight['id']}", headers=member_headers
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            f"{base}/metrics/insights/runs/{insight['id']}/replay", headers=member_headers
+        ).status_code
+        == 403
+    )
 
     later_capacity_import = _apply_import(
         client,

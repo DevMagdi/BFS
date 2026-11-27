@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -86,7 +87,11 @@ def _source_amount_definition(
 
 
 def _register_and_promote_sales_source(
-    client: TestClient, tenant_id: str, owner_headers: dict[str, str]
+    client: TestClient,
+    tenant_id: str,
+    owner_headers: dict[str, str],
+    *,
+    product_code: str | None = None,
 ) -> str:
     base = f"/api/v1/tenants/{tenant_id}/company-data/universal"
     registered = client.post(
@@ -102,10 +107,31 @@ def _register_and_promote_sales_source(
     )
     assert registered.status_code == 201, registered.text
     source_id = str(registered.json()["source_id"])
-    csv = (
-        b"transaction_reference,transaction_date,currency_code,amount,status\n"
-        b"TX-001,2025-01-06,USD,125.50,posted\n"
-    )
+    if product_code is None:
+        csv = (
+            b"transaction_reference,transaction_date,currency_code,amount,status\n"
+            b"TX-001,2025-01-06,USD,125.50,posted\n"
+        )
+        field_mapping = {
+            "transaction_reference": "transaction_reference",
+            "transaction_date": "transaction_date",
+            "currency_code": "currency_code",
+            "amount": "amount",
+            "status": "status",
+        }
+    else:
+        csv = (
+            "transaction_reference,transaction_date,product_code,currency_code,amount,status\n"
+            f"TX-001,2025-01-06,{product_code},USD,125.50,posted\n"
+        ).encode()
+        field_mapping = {
+            "transaction_reference": "transaction_reference",
+            "transaction_date": "transaction_date",
+            "product_code": "product_code",
+            "currency_code": "currency_code",
+            "amount": "amount",
+            "status": "status",
+        }
     staged = client.post(
         f"{base}/sources/{source_id}/ingestions",
         files={"file": ("sales.csv", csv, "text/csv")},
@@ -120,13 +146,7 @@ def _register_and_promote_sales_source(
             "display_name": "Sales transaction export",
             "entity_type": "sales_transaction",
             "worksheet_name": "CSV",
-            "field_mapping": {
-                "transaction_reference": "transaction_reference",
-                "transaction_date": "transaction_date",
-                "currency_code": "currency_code",
-                "amount": "amount",
-                "status": "status",
-            },
+            "field_mapping": field_mapping,
             "field_options": {"amount": {"decimal_separator": "."}},
             "ignored_columns": [],
         },
@@ -139,6 +159,10 @@ def _register_and_promote_sales_source(
     )
     assert validated.status_code == 200, validated.text
     assert validated.json()["ingestion"]["status"] == "validated"
+    assert (
+        validated.json()["validation_snapshot"]["contract_version"]
+        == registered.json()["contract_version"]
+    )
     promoted = client.post(
         f"{base}/sources/{source_id}/ingestions/{ingestion_id}/promote",
         json={},
@@ -249,7 +273,9 @@ def test_business_intelligence_metric_migration_downgrade_refuses_retained_defin
         DBAPIError,
         match=(
             r"archived source bytes or idempotent runs remain|"
-            r"business metric definition data is retained"
+            r"business metric definition data is retained|"
+            r"project-manager semantic relationship evidence is retained|"
+            r"workforce-sensitive analysis evidence is retained"
         ),
     ):
         command.downgrade(config, "0020_business_semantic_layer")
@@ -257,7 +283,7 @@ def test_business_intelligence_metric_migration_downgrade_refuses_retained_defin
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0023_core_financial_guardrails"
+            == "0025_domain_intelligence_expansion"
         )
         assert (
             connection.scalar(
@@ -327,6 +353,183 @@ def test_bi_readiness_blocks_a_source_over_the_bounded_record_limit(client, monk
     assert source_check["evidence"]["record_count"] == 1
 
 
+def test_manual_commitment_metric_uses_accepted_private_evidence_and_customer_permission(client):
+    owner = register_user(client, "bi-commitment-owner@example.com")
+    owner_headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="BI Commitment Tenant",
+        company_name="BI Commitment Company",
+        key="bi-commitment-tenant-0001",
+    )
+    tenant_id = str(tenant["id"])
+    base = _bi_base(tenant_id)
+    member = register_user(client, "bi-commitment-member@example.com")
+    create_member(client, owner, tenant_id, "bi-commitment-member@example.com")
+    member_headers = auth_headers(member)
+    delivery_date = date.today() + timedelta(days=14)
+    commitment_base = f"/api/v1/tenants/{tenant_id}/company-data/customer-commitments"
+    created = client.post(
+        commitment_base,
+        json={
+            "customer_name": "Confidential BI Customer",
+            "customer_reference": "PRIVATE-ORDER-01",
+            "order_date": date.today().isoformat(),
+            "requested_delivery_date": delivery_date.isoformat(),
+            "summary": "Private operational commitment details",
+            "notes": "Do not copy these notes into analytics.",
+        },
+        headers=member_headers,
+    )
+    assert created.status_code == 201, created.text
+    commitment = created.json()["commitment"]
+    commitment_id = commitment["id"]
+    source_id = commitment["source_id"]
+    submitted = client.post(
+        f"{commitment_base}/{commitment_id}/submit",
+        json={"expected_revision": commitment["current_revision"], "acknowledge_warnings": True},
+        headers=member_headers,
+    )
+    assert submitted.status_code == 200, submitted.text
+    accepted = client.post(
+        f"{commitment_base}/{commitment_id}/review",
+        json={
+            "expected_revision": submitted.json()["commitment"]["current_revision"],
+            "decision": "accept",
+            "criteria_confirmed": True,
+            "acknowledge_warnings": True,
+        },
+        headers=owner_headers,
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["commitment"]["status"] == "accepted"
+
+    configuration = client.post(
+        f"{base}/configurations",
+        json={
+            "expected_version": 0,
+            "source_precedence": [{"dataset_type": "customer_commitments", "source_id": source_id}],
+        },
+        headers=owner_headers,
+    )
+    assert configuration.status_code == 201, configuration.text
+    metric_key = "operations.accepted_customer_commitment_count"
+    readiness = client.get(
+        f"{base}/metrics/{metric_key}/readiness"
+        f"?period_start={delivery_date.isoformat()}&period_end={delivery_date.isoformat()}",
+        headers=owner_headers,
+    )
+    assert readiness.status_code == 200, readiness.text
+    assert readiness.json()["readiness_status"] == "conditional"
+    assert readiness.json()["calculation_supported"] is True
+    assert readiness.json()["period_start"] == delivery_date.isoformat()
+    assert "manual_commitment_source_is_a_human_assertion" in readiness.json()["warnings"]
+
+    analysis = client.post(
+        f"{base}/analyses",
+        json={
+            "metric_key": metric_key,
+            "configuration_version": 1,
+            "period_start": delivery_date.isoformat(),
+            "period_end": delivery_date.isoformat(),
+        },
+        headers=owner_headers,
+    )
+    assert analysis.status_code == 201, analysis.text
+    assert analysis.json()["result_snapshot"]["status"] == "partial"
+    assert analysis.json()["result_snapshot"]["groups"][0]["value"] == "1"
+    evidence = client.get(
+        f"{base}/analyses/{analysis.json()['id']}/evidence?limit=10",
+        headers=owner_headers,
+    )
+    assert evidence.status_code == 200, evidence.text
+    assert evidence.json()["total"] == 1
+    evidence_item = evidence.json()["items"][0]
+    assert evidence_item["evidence_kind"] == "manual_customer_commitment"
+    assert evidence_item["commitment_status"] == "accepted"
+    assert evidence_item["analysis_date"] == delivery_date.isoformat()
+    assert evidence_item["analysis_date_field"] == "requested_delivery_date"
+    assert "Confidential BI Customer" not in str(evidence.json())
+    assert "PRIVATE-ORDER-01" not in str(evidence.json())
+    assert "Private operational commitment details" not in str(evidence.json())
+
+    saved_readiness = client.get(
+        f"{base}/analyses/{analysis.json()['id']}/readiness", headers=member_headers
+    )
+    assert saved_readiness.status_code == 200, saved_readiness.text
+    assert saved_readiness.json()["analysis_id"] == analysis.json()["id"]
+
+
+def test_system_product_metrics_are_readiness_checked_and_keep_currency_separate(client):
+    owner = register_user(client, "bi-product-owner@example.com")
+    owner_headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="BI Product Tenant",
+        company_name="BI Product Company",
+        key="bi-product-tenant-0001",
+    )
+    tenant_id = str(tenant["id"])
+    base = _bi_base(tenant_id)
+    source_id = _register_and_promote_sales_source(
+        client, tenant_id, owner_headers, product_code="SKU-BI-001"
+    )
+    configuration = client.post(
+        f"{base}/configurations",
+        json={
+            "expected_version": 0,
+            "source_precedence": [{"dataset_type": "universal_records", "source_id": source_id}],
+        },
+        headers=owner_headers,
+    )
+    assert configuration.status_code == 201, configuration.text
+
+    count_metric = "sales.source_transaction_record_count_by_product"
+    readiness = client.get(f"{base}/metrics/{count_metric}/readiness", headers=owner_headers)
+    assert readiness.status_code == 200, readiness.text
+    assert readiness.json()["readiness_status"] == "ready"
+    assert readiness.json()["dimensions"] == ["product"]
+    assert readiness.json()["warnings"] == []
+
+    count_analysis = client.post(
+        f"{base}/analyses",
+        json={"metric_key": count_metric, "configuration_version": 1},
+        headers=owner_headers,
+    )
+    assert count_analysis.status_code == 201, count_analysis.text
+    count_result = count_analysis.json()["result_snapshot"]
+    assert count_result["status"] == "complete"
+    assert count_result["groups"][0]["dimensions"] == {"product": "SKU-BI-001"}
+    assert count_result["groups"][0]["value"] == "1"
+    count_evidence = client.get(
+        f"{base}/analyses/{count_analysis.json()['id']}/evidence?limit=10",
+        headers=owner_headers,
+    )
+    assert count_evidence.status_code == 200, count_evidence.text
+    assert count_evidence.json()["total"] == 1
+    assert count_evidence.json()["items"][0]["evidence_kind"] == "universal_record"
+    saved_readiness = client.get(
+        f"{base}/analyses/{count_analysis.json()['id']}/readiness", headers=owner_headers
+    )
+    assert saved_readiness.status_code == 200, saved_readiness.text
+    assert saved_readiness.json()["readiness_status"] == "ready"
+
+    amount_metric = "sales.source_amount_observed_by_product"
+    amount_analysis = client.post(
+        f"{base}/analyses",
+        json={"metric_key": amount_metric, "configuration_version": 1},
+        headers=owner_headers,
+    )
+    assert amount_analysis.status_code == 201, amount_analysis.text
+    amount_result = amount_analysis.json()["result_snapshot"]
+    assert amount_result["status"] == "complete"
+    assert amount_result["groups"][0]["dimensions"] == {"product": "SKU-BI-001"}
+    assert amount_result["groups"][0]["currency_code"] == "USD"
+    assert amount_result["groups"][0]["value"] == "125.50"
+
+
 def test_bi_registry_analysis_replay_evidence_and_exact_formula_dependencies(
     client, runtime_engine, migration_engine
 ):
@@ -344,6 +547,25 @@ def test_bi_registry_analysis_replay_evidence_and_exact_formula_dependencies(
     reviewer = register_user(client, "bi-phase3-reviewer@example.com")
     create_member(client, owner, tenant_id, "bi-phase3-reviewer@example.com", role="admin")
     reviewer_headers = auth_headers(reviewer)
+
+    customer_key = "customers.source_customer_record_count"
+    customer_readiness = client.get(
+        f"{base}/metrics/{customer_key}/readiness", headers=owner_headers
+    )
+    assert customer_readiness.status_code == 200, customer_readiness.text
+    assert customer_readiness.json()["readiness_status"] == "blocked"
+    assert (
+        "customer_data_processing_authorization_required" in customer_readiness.json()["blockers"]
+    )
+    blocked_customer_analysis = client.post(
+        f"{base}/analyses",
+        json={"metric_key": customer_key, "configuration_version": 1},
+        headers=owner_headers,
+    )
+    assert blocked_customer_analysis.status_code == 409
+    assert blocked_customer_analysis.json()["error"]["code"] == (
+        "customer_data_processing_authorization_required"
+    )
 
     source_id = _register_and_promote_sales_source(client, tenant_id, owner_headers)
     configuration = client.post(
@@ -367,22 +589,112 @@ def test_bi_registry_analysis_replay_evidence_and_exact_formula_dependencies(
     assert configuration_history.json()["total"] == 1
 
     metric_key = "sales.source_amount_observed"
+    amount_definition = _source_amount_definition()
+    amount_definition["dimensions"] = ["month"]
     metric_v1 = _create_and_publish_metric(
         client,
         base,
         owner_headers,
         reviewer_headers,
-        _source_amount_definition(),
+        amount_definition,
     )
     assert metric_v1["version"] == 1
     readiness = client.get(
-        f"{base}/metrics/{metric_key}/readiness?configuration_version=1",
+        f"{base}/metrics/{metric_key}/readiness"
+        "?configuration_version=1&domain=sales&period_start=2025-01-01"
+        "&period_end=2025-01-31&dimensions=month",
         headers=owner_headers,
     )
     assert readiness.status_code == 200, readiness.text
-    assert readiness.json()["readiness_status"] == "ready"
-    assert readiness.json()["calculation_supported"] is True
-    assert readiness.json()["warnings"] == []
+    readiness_data = readiness.json()
+    assert readiness_data["readiness_status"] == "ready"
+    assert readiness_data["calculation_supported"] is True
+    assert readiness_data["tenant_id"] == tenant_id
+    assert readiness_data["company_id"] == tenant["company"]["id"]
+    assert readiness_data["domain"] == "sales"
+    assert readiness_data["analysis_id"] is None
+    assert readiness_data["period_start"] == "2025-01-01"
+    assert readiness_data["period_end"] == "2025-01-31"
+    assert readiness_data["dimensions"] == ["month"]
+    assert readiness_data["retention_status"] == "unresolved"
+    assert readiness_data["governance_blockers"]
+    assert readiness_data["warnings"] == []
+
+    customer_grouping_readiness = client.get(
+        f"{base}/metrics/sales.source_transaction_record_count/readiness?dimensions=customer",
+        headers=owner_headers,
+    )
+    assert customer_grouping_readiness.status_code == 200, customer_grouping_readiness.text
+    assert customer_grouping_readiness.json()["readiness_status"] == "blocked"
+    assert (
+        "customer_data_processing_authorization_required"
+        in customer_grouping_readiness.json()["blockers"]
+    )
+    blocked_customer_grouping = client.post(
+        f"{base}/analyses",
+        json={
+            "metric_key": "sales.source_transaction_record_count",
+            "configuration_version": 1,
+            "dimensions": ["customer"],
+        },
+        headers=owner_headers,
+    )
+    assert blocked_customer_grouping.status_code == 409
+    assert blocked_customer_grouping.json()["error"]["code"] == (
+        "customer_data_processing_authorization_required"
+    )
+    blocked_customer_filter = client.post(
+        f"{base}/analyses",
+        json={
+            "metric_key": "sales.source_transaction_record_count",
+            "configuration_version": 1,
+            "filters": [
+                {
+                    "entity_type": "sales_transaction",
+                    "field": "customer_code",
+                    "operation": "equals",
+                    "value": "CUST-1",
+                }
+            ],
+        },
+        headers=owner_headers,
+    )
+    assert blocked_customer_filter.status_code == 409
+    assert blocked_customer_filter.json()["error"]["code"] == (
+        "customer_data_processing_authorization_required"
+    )
+
+    wrong_domain = client.get(
+        f"{base}/metrics/{metric_key}/readiness?domain=finance", headers=owner_headers
+    )
+    assert wrong_domain.status_code == 422
+    assert wrong_domain.json()["error"]["code"] == "metric_readiness_domain_mismatch"
+    missing_period_bound = client.get(
+        f"{base}/metrics/{metric_key}/readiness?period_start=2025-01-01",
+        headers=owner_headers,
+    )
+    assert missing_period_bound.status_code == 422
+    assert missing_period_bound.json()["error"]["code"] == "metric_readiness_period_invalid"
+    reversed_period = client.get(
+        f"{base}/metrics/{metric_key}/readiness?period_start=2025-02-01&period_end=2025-01-31",
+        headers=owner_headers,
+    )
+    assert reversed_period.status_code == 422
+    assert reversed_period.json()["error"]["code"] == "metric_readiness_period_invalid"
+    duplicate_dimensions = client.get(
+        f"{base}/metrics/{metric_key}/readiness?dimensions=month&dimensions=month",
+        headers=owner_headers,
+    )
+    assert duplicate_dimensions.status_code == 422
+    assert duplicate_dimensions.json()["error"]["code"] == "metric_readiness_dimensions_invalid"
+    excess_dimensions = client.get(
+        f"{base}/metrics/sales.source_transaction_record_count/readiness"
+        "?dimensions=currency_code&dimensions=status&dimensions=month",
+        headers=owner_headers,
+    )
+    assert excess_dimensions.status_code == 200, excess_dimensions.text
+    assert excess_dimensions.json()["readiness_status"] == "blocked"
+    assert "metric_dimension_limit_exceeded" in excess_dimensions.json()["blockers"]
 
     draft_v2_body = _source_amount_definition(expected_version=1)
     draft_v2_body["description"] = "Unpublished candidate definition."
@@ -461,13 +773,32 @@ def test_bi_registry_analysis_replay_evidence_and_exact_formula_dependencies(
     assert analysis.status_code == 201, analysis.text
     analysis_data = analysis.json()
     assert analysis_data["metric_version"] == 1
+    assert analysis_data["tenant_id"] == tenant_id
+    assert analysis_data["company_id"] == tenant["company"]["id"]
+    assert analysis_data["domain"] == "sales"
+    assert analysis_data["retention_status"] == "unresolved"
+    assert analysis_data["governance_blockers"]
     assert analysis_data["status"] == "complete"
     assert analysis_data["result_snapshot"]["groups"][0]["value"] == "125.50"
     assert analysis_data["result_snapshot"]["groups"][0]["currency_code"] == "USD"
 
+    saved_readiness = client.get(
+        f"{base}/analyses/{analysis_data['id']}/readiness", headers=owner_headers
+    )
+    assert saved_readiness.status_code == 200, saved_readiness.text
+    assert saved_readiness.json()["analysis_id"] == analysis_data["id"]
+    assert saved_readiness.json()["period_start"] == "2025-01-01"
+    assert saved_readiness.json()["period_end"] == "2025-01-31"
+    assert saved_readiness.json()["dimensions"] == []
+
     replay = client.get(f"{base}/analyses/{analysis_data['id']}/replay", headers=owner_headers)
     assert replay.status_code == 200, replay.text
     assert replay.json()["replay_status"] == "verified"
+    assert replay.json()["tenant_id"] == tenant_id
+    assert replay.json()["company_id"] == tenant["company"]["id"]
+    assert replay.json()["domain"] == "sales"
+    assert replay.json()["retention_status"] == "unresolved"
+    assert replay.json()["governance_blockers"]
     assert replay.json()["replayed_result_hash"] == analysis_data["result_hash"]
 
     evidence = client.get(
@@ -475,9 +806,29 @@ def test_bi_registry_analysis_replay_evidence_and_exact_formula_dependencies(
         headers=owner_headers,
     )
     assert evidence.status_code == 200, evidence.text
+    assert evidence.json()["tenant_id"] == tenant_id
+    assert evidence.json()["company_id"] == tenant["company"]["id"]
+    assert evidence.json()["metric_key"] == metric_key
+    assert evidence.json()["domain"] == "sales"
+    assert evidence.json()["period_start"] == "2025-01-01"
+    assert evidence.json()["period_end"] == "2025-01-31"
+    assert evidence.json()["retention_status"] == "unresolved"
+    assert evidence.json()["governance_blockers"]
     assert evidence.json()["total"] == 1
     assert evidence.json()["items"][0]["evidence_kind"] == "universal_record"
     assert evidence.json()["items"][0]["source_id"] == source_id
+
+    record_count_analysis = client.post(
+        f"{base}/analyses",
+        json={
+            "metric_key": "sales.source_transaction_record_count",
+            "configuration_version": 1,
+            "period_start": "2025-01-01",
+            "period_end": "2025-01-31",
+        },
+        headers=owner_headers,
+    )
+    assert record_count_analysis.status_code == 201, record_count_analysis.text
 
     formula_key = "sales.source_amount_passthrough"
     formula = _create_and_publish_metric(
@@ -530,8 +881,68 @@ def test_bi_registry_analysis_replay_evidence_and_exact_formula_dependencies(
     member = register_user(client, "bi-phase3-member@example.com")
     create_member(client, owner, tenant_id, "bi-phase3-member@example.com")
     member_headers = auth_headers(member)
+    denied_m5_readiness = client.get(
+        f"{base}/metrics/m5.available_capacity_hours/readiness", headers=member_headers
+    )
+    assert denied_m5_readiness.status_code == 403
+    denied_m5_analysis = client.post(
+        f"{base}/analyses",
+        json={"metric_key": "m5.available_capacity_hours", "configuration_version": 1},
+        headers=member_headers,
+    )
+    assert denied_m5_analysis.status_code == 403
+    denied_universal_analysis = client.post(
+        f"{base}/analyses",
+        json={
+            "metric_key": "sales.source_transaction_record_count",
+            "configuration_version": 1,
+            "period_start": "2025-01-01",
+            "period_end": "2025-01-31",
+        },
+        headers=member_headers,
+    )
+    assert denied_universal_analysis.status_code == 403
     readable = client.get(f"{base}/analyses/{analysis_data['id']}", headers=member_headers)
     assert readable.status_code == 403, readable.text
+    assert (
+        client.get(
+            f"{base}/analyses/{record_count_analysis.json()['id']}", headers=member_headers
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            f"{base}/analyses/{record_count_analysis.json()['id']}/replay",
+            headers=member_headers,
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            f"{base}/analyses/{record_count_analysis.json()['id']}/evidence",
+            headers=member_headers,
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            f"{base}/analyses/{record_count_analysis.json()['id']}/readiness",
+            headers=member_headers,
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            f"{base}/metrics/sales.source_transaction_record_count/readiness",
+            headers=member_headers,
+        ).status_code
+        == 403
+    )
+    assert client.get(f"{base}/configuration", headers=member_headers).status_code == 403
+    member_configurations = client.get(f"{base}/configurations", headers=member_headers)
+    assert member_configurations.status_code == 200, member_configurations.text
+    assert member_configurations.json()["total"] == 0
+    assert member_configurations.json()["items"] == []
     member_analysis_page = client.get(f"{base}/analyses", headers=member_headers)
     assert member_analysis_page.status_code == 200, member_analysis_page.text
     assert member_analysis_page.json()["total"] == 0
@@ -548,13 +959,20 @@ def test_bi_registry_analysis_replay_evidence_and_exact_formula_dependencies(
     assert denied_formula_read.status_code == 403, denied_formula_read.text
     member_catalog = client.get(f"{base}/registry", headers=member_headers)
     assert member_catalog.status_code == 200, member_catalog.text
+    assert member_catalog.json()["governance_blockers"]
+    assert not any(
+        item["calculation"].get("kind", "").startswith("universal_")
+        for item in member_catalog.json()["system_metrics"]
+    )
     assert not any(
         item["metric_key"].startswith("core_financials.")
         for item in member_catalog.json()["system_metrics"]
     )
-    assert "universal_source_amount_sum" not in {
-        item["calculation_key"] for item in member_catalog.json()["calculations"]
-    }
+    assert not {
+        "universal_record_count",
+        "universal_source_amount_sum",
+        "universal_distinct_source_values",
+    } & {item["calculation_key"] for item in member_catalog.json()["calculations"]}
     member_analysis = client.post(
         f"{base}/analyses",
         json={
@@ -815,20 +1233,42 @@ def test_business_intelligence_m5_metric_uses_exact_saved_run_and_evidence(clien
     member = register_user(client, "bi-phase3-m5-member@example.com")
     create_member(client, owner, tenant_id, "bi-phase3-m5-member@example.com")
     member_headers = auth_headers(member)
-    member_page = client.get(
-        f"{base}/analyses",
-        headers=member_headers,
-    )
+    member_page = client.get(f"{base}/analyses", headers=member_headers)
     assert member_page.status_code == 200, member_page.text
-    assert member_page.json()["total"] == 1
-    assert member_page.json()["items"][0]["id"] == analysis.json()["id"]
+    assert member_page.json()["total"] == 0
+    assert member_page.json()["items"] == []
     member_metric_page = client.get(
-        f"{base}/metrics?metric_key={metric_key}",
-        headers=member_headers,
+        f"{base}/metrics?metric_key={metric_key}", headers=member_headers
     )
     assert member_metric_page.status_code == 200, member_metric_page.text
-    assert member_metric_page.json()["total"] == 1
-    assert member_metric_page.json()["items"][0]["metric_key"] == metric_key
+    assert member_metric_page.json()["total"] == 0
+    assert member_metric_page.json()["items"] == []
+    assert client.get(f"{base}/metrics/{metric_key}", headers=member_headers).status_code == 403
+    assert (
+        client.get(f"{base}/analyses/{analysis.json()['id']}", headers=member_headers).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            f"{base}/analyses/{analysis.json()['id']}/readiness", headers=member_headers
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(f"{base}/metrics/{metric_key}/readiness", headers=member_headers).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            f"{m5_base}/metrics/runs/{saved_run.json()['id']}", headers=member_headers
+        ).status_code
+        == 403
+    )
+    member_registry = client.get(f"{base}/registry", headers=member_headers)
+    assert member_registry.status_code == 200, member_registry.text
+    assert not any(
+        item["metric_key"].startswith("m5.") for item in member_registry.json()["system_metrics"]
+    )
 
 
 def test_business_intelligence_core_financial_metric_requires_matching_verified_run(client):
@@ -920,6 +1360,36 @@ def test_business_intelligence_core_financial_metric_requires_matching_verified_
     assert evidence.json()["items"][0]["evidence_kind"] == "core_financial_run"
     assert evidence.json()["items"][0]["run_id"] == core_run["id"]
 
+    member_email = "bi-phase3-finance-member@example.com"
+    member = register_user(client, member_email)
+    create_member(client, owner, tenant_id, member_email)
+    member_headers = auth_headers(member)
+    assert client.get(f"{base}/registry", headers=member_headers).status_code == 200
+    assert client.get(f"{base}/metrics/{revenue_key}", headers=member_headers).status_code == 403
+    assert (
+        client.get(f"{base}/metrics/{revenue_key}/readiness", headers=member_headers).status_code
+        == 403
+    )
+    denied_analysis = client.post(
+        f"{base}/analyses",
+        json={
+            "metric_key": revenue_key,
+            "metric_version": 1,
+            "configuration_version": configuration.json()["version"],
+            "core_financial_run_id": core_run["id"],
+        },
+        headers=member_headers,
+    )
+    assert denied_analysis.status_code == 403
+    assert (
+        client.get(f"{base}/analyses/{analysis.json()['id']}", headers=member_headers).status_code
+        == 403
+    )
+    member_analyses = client.get(f"{base}/analyses", headers=member_headers)
+    assert member_analyses.status_code == 200, member_analyses.text
+    assert member_analyses.json()["items"] == []
+    assert member_analyses.json()["total"] == 0
+
 
 def test_business_intelligence_tables_force_company_rls_and_restrict_runtime_grants(
     admin_engine,
@@ -997,7 +1467,9 @@ def test_business_intelligence_migration_downgrade_refuses_retained_evidence(
         DBAPIError,
         match=(
             r"archived source bytes or idempotent runs remain|"
-            r"Company configuration or BI evidence is retained"
+            r"Company configuration or BI evidence is retained|"
+            r"project-manager semantic relationship evidence is retained|"
+            r"workforce-sensitive analysis evidence is retained"
         ),
     ):
         command.downgrade(config, "0021_bi_registry")
@@ -1005,7 +1477,7 @@ def test_business_intelligence_migration_downgrade_refuses_retained_evidence(
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0023_core_financial_guardrails"
+            == "0025_domain_intelligence_expansion"
         )
         assert (
             connection.scalar(

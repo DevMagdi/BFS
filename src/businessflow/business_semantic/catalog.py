@@ -26,7 +26,7 @@ class SemanticRelationshipDefinition:
     analytic_use: bool
 
 
-SEMANTIC_CATALOG_VERSION = "businessflow.semantic.v1"
+SEMANTIC_CATALOG_VERSION = "businessflow.semantic.v2"
 
 # These concepts are backed by the existing Company Context and Universal Data models.
 # Invoice, payment, account, service, and other concepts are intentionally not advertised
@@ -142,6 +142,14 @@ SEMANTIC_RELATIONSHIPS: dict[str, SemanticRelationshipDefinition] = {
         "Same-source customer_code equals the transaction customer_code.",
         True,
     ),
+    "product_has_sales_transaction": SemanticRelationshipDefinition(
+        "product_has_sales_transaction",
+        "Product or service has a sales transaction",
+        "product",
+        "sales_transaction",
+        "Same-source product_code equals the transaction product_code.",
+        True,
+    ),
     "supplier_has_expense": SemanticRelationshipDefinition(
         "supplier_has_expense",
         "Supplier has expense",
@@ -173,6 +181,14 @@ SEMANTIC_RELATIONSHIPS: dict[str, SemanticRelationshipDefinition] = {
         "employee",
         "A committed or completed Company Context resource assignment exists; "
         "proposed assignments do not verify an allocation.",
+        True,
+    ),
+    "project_managed_by_employee": SemanticRelationshipDefinition(
+        "project_managed_by_employee",
+        "Project is managed by employee",
+        "project",
+        "employee",
+        "Project.project_manager_employee_id references the Company Context employee.",
         True,
     ),
 }

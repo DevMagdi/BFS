@@ -32,6 +32,13 @@ def test_capacity_workspace_page_assets_and_existing_workflow_routes_are_served(
     assert "/decisions/${decision.id}/approval" in script.text
     assert "expected_decision_hash" in script.text
     assert "expected_evidence_hash" in script.text
+    assert (
+        "M4 import history can contain employee evidence and requires workforce:read" in script.text
+    )
+    assert "permissionDenied: true" in script.text
+    assert "request(`/tenants/${tenantId}/project-intakes?limit=100&offset=0`)" in script.text
+    assert "if (error.status !== 403) throw error;" in script.text
+    assert "M6 assessment and M7 decision history bind workforce evidence" in script.text
     assert "Overall business feasibility: INCOMPLETE" in script.text
     assert "innerHTML" not in script.text
     assert styles.status_code == 200

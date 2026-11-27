@@ -131,9 +131,10 @@ def test_company_data_registry_binds_m4_quality_freshness_lineage_and_tenant_sco
     source = source_response.json()
     assert source["owner_user_id"] == current_user.json()["id"]
     assert source["contract_key"] == employee_contract["contract_key"]
-    member_sources = client.get(f"{base}/sources", headers=auth_headers(member))
-    assert member_sources.status_code == 200, member_sources.text
-    assert member_sources.json()["total"] == 1
+    member_headers = auth_headers(member)
+    member_sources = client.get(f"{base}/sources", headers=member_headers)
+    assert member_sources.status_code == 403
+    assert client.get(f"{base}/coverage", headers=member_headers).status_code == 403
 
     import_id = _apply_employee_import(client, tenant_id, headers)
     source_as_of_at = datetime.now(UTC).isoformat()
@@ -191,6 +192,25 @@ def test_company_data_registry_binds_m4_quality_freshness_lineage_and_tenant_sco
     assert lineage_row["canonical_type"] == "employee"
     assert lineage_row["canonical_id"]
     assert lineage_row["canonical_fingerprint"]
+    assert client.get(f"{base}/sources/{source['id']}", headers=member_headers).status_code == 403
+    assert (
+        client.get(f"{base}/sources/{source['id']}/ingestions", headers=member_headers).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            f"{base}/sources/{source['id']}/ingestions/{ingestion_id}",
+            headers=member_headers,
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            f"{base}/sources/{source['id']}/ingestions/{ingestion_id}/lineage",
+            headers=member_headers,
+        ).status_code
+        == 403
+    )
 
     source_list = client.get(f"{base}/sources", headers=headers)
     assert source_list.status_code == 200, source_list.text
@@ -461,7 +481,7 @@ def test_company_data_coverage_counts_each_sources_latest_snapshot_and_checks_co
     member = register_user(client, "m12-coverage-member@example.com")
     create_member(client, owner, tenant_id, "m12-coverage-member@example.com")
     member_coverage = client.get(f"{base}/coverage", headers=auth_headers(member))
-    assert member_coverage.status_code == 200, member_coverage.text
+    assert member_coverage.status_code == 403
 
     other_owner = register_user(client, "m12-coverage-other@example.com")
     other_tenant = create_tenant(

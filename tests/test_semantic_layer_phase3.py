@@ -85,6 +85,192 @@ def _create_employee(
     return response.json()
 
 
+def _promote_universal_record(
+    client: TestClient,
+    universal_base: str,
+    headers: dict[str, str],
+    source_id: str,
+    *,
+    file_name: str,
+    content: bytes,
+    idempotency_key: str,
+    profile_key: str,
+    display_name: str,
+    entity_type: str,
+    field_mapping: dict[str, str],
+    field_options: dict[str, object] | None = None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    staged = client.post(
+        f"{universal_base}/sources/{source_id}/ingestions",
+        files={"file": (file_name, content, "text/csv")},
+        headers={**headers, "Idempotency-Key": idempotency_key},
+    )
+    assert staged.status_code == 201, staged.text
+    ingestion_id = str(staged.json()["ingestion"]["id"])
+    mapping = client.post(
+        f"{universal_base}/sources/{source_id}/ingestions/{ingestion_id}/mapping",
+        json={
+            "profile_key": profile_key,
+            "display_name": display_name,
+            "entity_type": entity_type,
+            "worksheet_name": "CSV",
+            "field_mapping": field_mapping,
+            "field_options": field_options or {},
+            "ignored_columns": [],
+        },
+        headers=headers,
+    )
+    assert mapping.status_code == 200, mapping.text
+    validated = client.post(
+        f"{universal_base}/sources/{source_id}/ingestions/{ingestion_id}/validate",
+        headers=headers,
+    )
+    assert validated.status_code == 200, validated.text
+    assert validated.json()["ingestion"]["status"] == "validated"
+    promoted = client.post(
+        f"{universal_base}/sources/{source_id}/ingestions/{ingestion_id}/promote",
+        json={},
+        headers=headers,
+    )
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["created_records"] == 1
+    records = client.get(f"{universal_base}/records?entity_type={entity_type}", headers=headers)
+    assert records.status_code == 200, records.text
+    assert records.json()["total"] == 1
+    return mapping.json(), records.json()["items"][0]
+
+
+def test_product_to_sales_relationship_is_verified_from_versioned_universal_records(client):
+    owner = register_user(client, "semantic-product-owner@example.com")
+    headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="Semantic Product Tenant",
+        company_name="Semantic Product Company",
+        key="semantic-product-tenant-0001",
+    )
+    tenant_id = str(tenant["id"])
+    universal_base = f"/api/v1/tenants/{tenant_id}/company-data/universal"
+    semantic_base = _semantic_base(tenant_id)
+    registered = client.post(
+        f"{universal_base}/sources",
+        json={
+            "source_key": "sales.products",
+            "display_name": "Product and transaction export",
+            "source_type": "csv",
+            "authority_classification": "owner_asserted_primary",
+            "freshness_max_age_hours": 24,
+        },
+        headers=headers,
+    )
+    assert registered.status_code == 201, registered.text
+    source_id = str(registered.json()["source_id"])
+    assert registered.json()["contract_version"] == "1.1.0"
+
+    product_mapping, product_record = _promote_universal_record(
+        client,
+        universal_base,
+        headers,
+        source_id,
+        file_name="products.csv",
+        content=b"product_code,name,category\nSKU-SEM-001,Semantic Widget,Services\n",
+        idempotency_key="semantic-product-upload-0001",
+        profile_key="sales.products",
+        display_name="Product catalog export",
+        entity_type="product",
+        field_mapping={
+            "product_code": "product_code",
+            "name": "name",
+            "category": "category",
+        },
+    )
+    sales_mapping, sales_record = _promote_universal_record(
+        client,
+        universal_base,
+        headers,
+        source_id,
+        file_name="sales.csv",
+        content=(
+            b"transaction_reference,transaction_date,product_code,currency_code,amount,status\n"
+            b"SALE-SEM-001,2025-01-15,SKU-SEM-001,USD,120.00,posted\n"
+        ),
+        idempotency_key="semantic-product-sales-upload-0001",
+        profile_key="sales.transactions",
+        display_name="Sales transaction export",
+        entity_type="sales_transaction",
+        field_mapping={
+            "transaction_reference": "transaction_reference",
+            "transaction_date": "transaction_date",
+            "product_code": "product_code",
+            "currency_code": "currency_code",
+            "amount": "amount",
+            "status": "status",
+        },
+        field_options={"amount": {"decimal_separator": "."}},
+    )
+    assert product_mapping["contract_hash"] == sales_mapping["contract_hash"]
+
+    product_identity = _create_entity(
+        client,
+        semantic_base,
+        headers,
+        entity_type="product",
+        entity_key="product-semantic-widget",
+        display_name="Reviewed semantic widget",
+    )
+    sales_identity = _create_entity(
+        client,
+        semantic_base,
+        headers,
+        entity_type="sales_transaction",
+        entity_key="sales-semantic-transaction-1",
+        display_name="Reviewed sales transaction",
+    )
+    product_semantic_mapping = client.post(
+        f"{semantic_base}/mappings",
+        json={
+            "reference_kind": "universal_record",
+            "reference_id": product_record["id"],
+            "semantic_entity_id": product_identity["id"],
+            "expected_version": 0,
+            "review_note": "Reviewed the source product code and catalog record",
+        },
+        headers=headers,
+    )
+    assert product_semantic_mapping.status_code == 201, product_semantic_mapping.text
+    sales_semantic_mapping = client.post(
+        f"{semantic_base}/mappings",
+        json={
+            "reference_kind": "universal_record",
+            "reference_id": sales_record["id"],
+            "semantic_entity_id": sales_identity["id"],
+            "expected_version": 0,
+            "review_note": "Reviewed the source transaction and optional product code",
+        },
+        headers=headers,
+    )
+    assert sales_semantic_mapping.status_code == 201, sales_semantic_mapping.text
+
+    relationship = client.post(
+        f"{semantic_base}/relationships",
+        json={
+            "subject_entity_id": product_identity["id"],
+            "relationship_type": "product_has_sales_transaction",
+            "object_entity_id": sales_identity["id"],
+            "expected_version": 0,
+            "evidence_kind": "source_verified",
+            "subject_mapping_version_id": product_semantic_mapping.json()["id"],
+            "object_mapping_version_id": sales_semantic_mapping.json()["id"],
+            "evidence_note": "The same source product code appears on the catalog and transaction",
+        },
+        headers=headers,
+    )
+    assert relationship.status_code == 201, relationship.text
+    assert relationship.json()["analytically_usable"] is True
+    assert relationship.json()["relationship_type"] == "product_has_sales_transaction"
+
+
 def test_semantic_catalog_entity_rbac_and_company_isolation(client, runtime_engine):
     owner = register_user(client, "semantic-catalog-owner@example.com")
     owner_headers = auth_headers(owner)
@@ -106,7 +292,7 @@ def test_semantic_catalog_entity_rbac_and_company_isolation(client, runtime_engi
 
     catalog = client.get(f"{base}/catalog", headers=owner_headers)
     assert catalog.status_code == 200, catalog.text
-    assert catalog.json()["catalog_version"] == "businessflow.semantic.v1"
+    assert catalog.json()["catalog_version"] == "businessflow.semantic.v2"
     assert "customer" in {item["entity_type"] for item in catalog.json()["entities"]}
     assert "customer_has_sales_transaction" in {
         item["relationship_type"] for item in catalog.json()["relationships"]
@@ -143,7 +329,13 @@ def test_semantic_catalog_entity_rbac_and_company_isolation(client, runtime_engi
     member = register_user(client, "semantic-catalog-member@example.com")
     create_member(client, owner, tenant_id, "semantic-catalog-member@example.com")
     member_headers = auth_headers(member)
-    assert client.get(f"{base}/entities", headers=member_headers).json()["total"] == 1
+    member_entities = client.get(f"{base}/entities", headers=member_headers)
+    assert member_entities.status_code == 200, member_entities.text
+    assert member_entities.json()["total"] == 0
+    assert (
+        client.get(f"{base}/entities?entity_type=customer", headers=member_headers).status_code
+        == 403
+    )
     denied_write = client.post(
         f"{base}/entities",
         json={
@@ -201,6 +393,9 @@ def test_semantic_mappings_version_and_relationships_revalidate_company_context(
     tenant_id = tenant["id"]
     base = _company_base(tenant_id)
     semantic_base = _semantic_base(tenant_id)
+    member = register_user(client, "semantic-workforce-member@example.com")
+    create_member(client, owner, tenant_id, "semantic-workforce-member@example.com")
+    member_headers = auth_headers(member)
 
     unit_response = client.post(
         f"{base}/business-units", json={"name": "Operations"}, headers=headers
@@ -210,6 +405,17 @@ def test_semantic_mappings_version_and_relationships_revalidate_company_context(
     department_a = _create_department(client, base, headers, "Operations A", unit["id"])
     department_b = _create_department(client, base, headers, "Operations B", unit["id"])
     employee = _create_employee(client, base, headers, department_a["id"])
+    project_response = client.post(
+        f"{base}/projects",
+        json={
+            "project_code": "SEM-MANAGED-01",
+            "name": "Managed semantic project",
+            "project_manager_employee_id": employee["id"],
+        },
+        headers=headers,
+    )
+    assert project_response.status_code == 201, project_response.text
+    project = project_response.json()
 
     employee_identity = _create_entity(
         client,
@@ -218,6 +424,14 @@ def test_semantic_mappings_version_and_relationships_revalidate_company_context(
         entity_type="employee",
         entity_key="staff-identity-a",
         display_name="Reviewed staff identity A",
+    )
+    project_identity = _create_entity(
+        client,
+        semantic_base,
+        headers,
+        entity_type="project",
+        entity_key="managed-project-identity",
+        display_name="Reviewed managed project identity",
     )
     department_a_identity = _create_entity(
         client,
@@ -251,6 +465,19 @@ def test_semantic_mappings_version_and_relationships_revalidate_company_context(
     employee_mapping_v1 = employee_mapping_response.json()
     assert employee_mapping_v1["version"] == 1
     assert employee_mapping_v1["source_revision_current"] is None
+
+    project_mapping_response = client.post(
+        f"{semantic_base}/mappings",
+        json={
+            "reference_kind": "project",
+            "reference_id": project["id"],
+            "semantic_entity_id": project_identity["id"],
+            "expected_version": 0,
+            "review_note": "Verified against the current project profile",
+        },
+        headers=headers,
+    )
+    assert project_mapping_response.status_code == 201, project_mapping_response.text
 
     department_a_mapping = client.post(
         f"{semantic_base}/mappings",
@@ -319,6 +546,23 @@ def test_semantic_mappings_version_and_relationships_revalidate_company_context(
     relationships = client.get(f"{semantic_base}/relationships", headers=headers)
     assert relationships.status_code == 200, relationships.text
     assert relationships.json()["items"][0]["analytically_usable"] is False
+
+    manager_relationship = client.post(
+        f"{semantic_base}/relationships",
+        json={
+            "subject_entity_id": project_identity["id"],
+            "relationship_type": "project_managed_by_employee",
+            "object_entity_id": employee_identity["id"],
+            "expected_version": 0,
+            "evidence_kind": "source_verified",
+            "subject_mapping_version_id": project_mapping_response.json()["id"],
+            "object_mapping_version_id": employee_mapping_v1["id"],
+            "evidence_note": "The current project manager employee reference matches",
+        },
+        headers=headers,
+    )
+    assert manager_relationship.status_code == 201, manager_relationship.text
+    assert manager_relationship.json()["analytically_usable"] is True
 
     department_b_mapping = client.post(
         f"{semantic_base}/mappings",
@@ -426,6 +670,36 @@ def test_semantic_mappings_version_and_relationships_revalidate_company_context(
     assert manual_assertion.status_code == 201, manual_assertion.text
     assert manual_assertion.json()["analytically_usable"] is False
 
+    member_entities = client.get(f"{semantic_base}/entities", headers=member_headers)
+    assert member_entities.status_code == 200, member_entities.text
+    assert all(item["entity_type"] != "employee" for item in member_entities.json()["items"])
+    assert (
+        client.get(
+            f"{semantic_base}/entities?entity_type=employee", headers=member_headers
+        ).status_code
+        == 403
+    )
+    member_mappings = client.get(f"{semantic_base}/mappings", headers=member_headers)
+    assert member_mappings.status_code == 200, member_mappings.text
+    assert all(item["reference_kind"] != "employee" for item in member_mappings.json()["items"])
+    assert (
+        client.get(
+            f"{semantic_base}/mappings?semantic_entity_id={employee_identity_v2['id']}",
+            headers=member_headers,
+        ).status_code
+        == 403
+    )
+    member_relationships = client.get(f"{semantic_base}/relationships", headers=member_headers)
+    assert member_relationships.status_code == 200, member_relationships.text
+    assert member_relationships.json()["total"] == 0
+    assert (
+        client.get(
+            f"{semantic_base}/relationships?entity_id={employee_identity_v2['id']}",
+            headers=member_headers,
+        ).status_code
+        == 403
+    )
+
     other_owner = register_user(client, "semantic-relationship-other@example.com")
     other_tenant = create_tenant(
         client,
@@ -462,6 +736,9 @@ def test_universal_data_mapping_pins_phase_two_revision_and_requires_refresh(cli
     tenant_id = tenant["id"]
     semantic_base = _semantic_base(tenant_id)
     universal_base = f"/api/v1/tenants/{tenant_id}/company-data/universal"
+    member = register_user(client, "semantic-universal-member@example.com")
+    create_member(client, owner, tenant_id, "semantic-universal-member@example.com")
+    member_headers = auth_headers(member)
 
     source_response = client.post(
         f"{universal_base}/sources",
@@ -543,6 +820,19 @@ def test_universal_data_mapping_pins_phase_two_revision_and_requires_refresh(cli
     assert semantic_mapping_v1["source_revision"] == 1
     assert semantic_mapping_v1["source_revision_current"] is True
     assert semantic_mapping_v1["source_mapping_profile_version_id"] == mapping_response.json()["id"]
+    member_entities = client.get(f"{semantic_base}/entities", headers=member_headers)
+    assert member_entities.status_code == 200, member_entities.text
+    assert member_entities.json()["total"] == 0
+    member_mappings = client.get(f"{semantic_base}/mappings", headers=member_headers)
+    assert member_mappings.status_code == 200, member_mappings.text
+    assert member_mappings.json()["total"] == 0
+    assert (
+        client.get(
+            f"{semantic_base}/mappings?semantic_entity_id={identity['id']}",
+            headers=member_headers,
+        ).status_code
+        == 403
+    )
 
     sales_content = (
         b"transaction_reference,transaction_date,customer_code,currency_code,amount\n"
@@ -630,6 +920,16 @@ def test_universal_data_mapping_pins_phase_two_revision_and_requires_refresh(cli
     )
     assert relationship_v1.status_code == 201, relationship_v1.text
     assert relationship_v1.json()["analytically_usable"] is True
+    member_relationships = client.get(f"{semantic_base}/relationships", headers=member_headers)
+    assert member_relationships.status_code == 200, member_relationships.text
+    assert member_relationships.json()["total"] == 0
+    assert (
+        client.get(
+            f"{semantic_base}/relationships?entity_id={identity['id']}",
+            headers=member_headers,
+        ).status_code
+        == 403
+    )
 
     second_content = (
         b"customer_code,name,email\nCUS-SEM-1,Semantic Company Updated,updated@example.test\n"
@@ -826,14 +1126,18 @@ def test_semantic_migration_downgrade_is_rejected_when_data_is_retained(
     config.set_main_option("sqlalchemy.url", migration_url.replace("%", "%%"))
     with pytest.raises(
         DBAPIError,
-        match=r"archived source bytes or idempotent runs remain|semantic data is retained",
+        match=(
+            r"archived source bytes or idempotent runs remain|semantic data is retained|"
+            r"project-manager semantic relationship evidence is retained|"
+            r"workforce-sensitive analysis evidence is retained"
+        ),
     ):
         command.downgrade(config, "0019_universal_data_foundation")
 
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0023_core_financial_guardrails"
+            == "0025_domain_intelligence_expansion"
         )
         assert (
             connection.scalar(

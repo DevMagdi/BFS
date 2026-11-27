@@ -8,6 +8,7 @@ from sqlalchemy import and_, func, select, text
 from sqlalchemy.orm import Session
 
 from businessflow.audit import record_event
+from businessflow.authorization import role_allows
 from businessflow.business_semantic.catalog import (
     SEMANTIC_ENTITIES,
     SEMANTIC_RELATIONSHIPS,
@@ -38,7 +39,7 @@ from businessflow.company_context.models import (
     ResourceAssignment,
 )
 from businessflow.errors import ApiError
-from businessflow.models import UserAccount
+from businessflow.models import TenantMembership, UserAccount
 from businessflow.services.company_context_access import require_company_context_access
 from businessflow.universal_data.models import (
     CanonicalBusinessRecord,
@@ -48,6 +49,43 @@ from businessflow.universal_data.models import (
 
 def _error(status: int, code: str, message: str) -> ApiError:
     return ApiError(status, code, message)
+
+
+def _has_workforce_read_access(session: Session, user: UserAccount, tenant_id: UUID) -> bool:
+    role = session.scalar(
+        select(TenantMembership.role).where(
+            TenantMembership.tenant_id == tenant_id,
+            TenantMembership.user_id == user.id,
+            TenantMembership.status == "active",
+        )
+    )
+    return role is not None and role_allows(role, "workforce:read")
+
+
+def _require_workforce_read(session: Session, user: UserAccount, tenant_id: UUID) -> None:
+    require_company_context_access(session, user, tenant_id, "workforce:read")
+
+
+def _has_universal_data_read_access(session: Session, user: UserAccount, tenant_id: UUID) -> bool:
+    role = session.scalar(
+        select(TenantMembership.role).where(
+            TenantMembership.tenant_id == tenant_id,
+            TenantMembership.user_id == user.id,
+            TenantMembership.status == "active",
+        )
+    )
+    return role is not None and role_allows(role, "universal_data:read")
+
+
+def _require_universal_data_read(session: Session, user: UserAccount, tenant_id: UUID) -> None:
+    require_company_context_access(session, user, tenant_id, "universal_data:read")
+
+
+_UNIVERSAL_ENTITY_TYPES = frozenset(
+    entity_type
+    for entity_type, definition in SEMANTIC_ENTITIES.items()
+    if "universal_record" in definition.reference_kinds
+)
 
 
 def _lock(session: Session, key: str) -> None:
@@ -102,6 +140,8 @@ def create_entity(
     )
     if body.entity_type not in SEMANTIC_ENTITIES or body.entity_type == "company":
         raise _error(422, "semantic_entity_type_unsupported", "Choose a supported semantic entity.")
+    if body.entity_type == "employee":
+        _require_workforce_read(session, user, tenant_id)
     _lock(
         session,
         f"business-semantic-entity:{tenant_id}:{access.company.id}:{body.entity_type}:{body.entity_key}",
@@ -159,12 +199,25 @@ def list_entities(
         BusinessSemanticEntity.tenant_id == tenant_id,
         BusinessSemanticEntity.company_id == access.company.id,
     )
+    can_read_workforce = _has_workforce_read_access(session, user, tenant_id)
+    can_read_universal_data = _has_universal_data_read_access(session, user, tenant_id)
     if entity_type is not None:
         if entity_type not in SEMANTIC_ENTITIES or entity_type == "company":
             raise _error(
                 422, "semantic_entity_type_unsupported", "Choose a supported semantic entity."
             )
+        if entity_type == "employee" and not can_read_workforce:
+            _require_workforce_read(session, user, tenant_id)
+        if entity_type in _UNIVERSAL_ENTITY_TYPES and not can_read_universal_data:
+            _require_universal_data_read(session, user, tenant_id)
         statement = statement.where(BusinessSemanticEntity.entity_type == entity_type)
+    else:
+        if not can_read_workforce:
+            statement = statement.where(BusinessSemanticEntity.entity_type != "employee")
+        if not can_read_universal_data:
+            statement = statement.where(
+                BusinessSemanticEntity.entity_type.notin_(_UNIVERSAL_ENTITY_TYPES)
+            )
     total = session.scalar(select(func.count()).select_from(statement.subquery())) or 0
     items = list(
         session.scalars(
@@ -323,10 +376,16 @@ def create_mapping(
     access = require_company_context_access(
         session, user, tenant_id, "company_context:write", request_id=request_id
     )
+    if body.reference_kind == "universal_record":
+        _require_universal_data_read(session, user, tenant_id)
     details = _reference_details(
         session, tenant_id, access.company.id, body.reference_kind, body.reference_id
     )
     entity = _entity(session, tenant_id, access.company.id, body.semantic_entity_id)
+    if entity.entity_type in _UNIVERSAL_ENTITY_TYPES:
+        _require_universal_data_read(session, user, tenant_id)
+    if details["entity_type"] == "employee" or entity.entity_type == "employee":
+        _require_workforce_read(session, user, tenant_id)
     if details["entity_type"] != entity.entity_type:
         raise _error(
             422,
@@ -434,10 +493,36 @@ def list_mappings(
         BusinessSemanticMappingVersion.tenant_id == tenant_id,
         BusinessSemanticMappingVersion.company_id == access.company.id,
     )
+    can_read_workforce = _has_workforce_read_access(session, user, tenant_id)
+    can_read_universal_data = _has_universal_data_read_access(session, user, tenant_id)
     if semantic_entity_id is not None:
-        _entity(session, tenant_id, access.company.id, semantic_entity_id)
+        entity = _entity(session, tenant_id, access.company.id, semantic_entity_id)
+        if entity.entity_type == "employee" and not can_read_workforce:
+            _require_workforce_read(session, user, tenant_id)
+        if entity.entity_type in _UNIVERSAL_ENTITY_TYPES and not can_read_universal_data:
+            _require_universal_data_read(session, user, tenant_id)
         statement = statement.where(
             BusinessSemanticMappingVersion.semantic_entity_id == semantic_entity_id
+        )
+    if not can_read_workforce:
+        employee_entity_ids = select(BusinessSemanticEntity.id).where(
+            BusinessSemanticEntity.tenant_id == tenant_id,
+            BusinessSemanticEntity.company_id == access.company.id,
+            BusinessSemanticEntity.entity_type == "employee",
+        )
+        statement = statement.where(
+            BusinessSemanticMappingVersion.reference_kind != "employee",
+            ~BusinessSemanticMappingVersion.semantic_entity_id.in_(employee_entity_ids),
+        )
+    if not can_read_universal_data:
+        universal_entity_ids = select(BusinessSemanticEntity.id).where(
+            BusinessSemanticEntity.tenant_id == tenant_id,
+            BusinessSemanticEntity.company_id == access.company.id,
+            BusinessSemanticEntity.entity_type.in_(_UNIVERSAL_ENTITY_TYPES),
+        )
+        statement = statement.where(
+            BusinessSemanticMappingVersion.reference_kind != "universal_record",
+            ~BusinessSemanticMappingVersion.semantic_entity_id.in_(universal_entity_ids),
         )
     latest_versions = (
         select(
@@ -589,7 +674,11 @@ def _verified_relationship(
             "semantic_relationship_mapping_mismatch",
             "Evidence mappings must resolve to the requested relationship endpoints.",
         )
-    if relationship_type in {"customer_has_sales_transaction", "supplier_has_expense"}:
+    if relationship_type in {
+        "customer_has_sales_transaction",
+        "product_has_sales_transaction",
+        "supplier_has_expense",
+    }:
         if (
             subject_mapping.reference_kind != "universal_record"
             or object_mapping.reference_kind != "universal_record"
@@ -661,11 +750,11 @@ def _verified_relationship(
                 "semantic_relationship_evidence_missing",
                 "The cited source revisions are unavailable.",
             )
-        field_name = (
-            "customer_code"
-            if relationship_type == "customer_has_sales_transaction"
-            else "supplier_code"
-        )
+        field_name = {
+            "customer_has_sales_transaction": "customer_code",
+            "product_has_sales_transaction": "product_code",
+            "supplier_has_expense": "supplier_code",
+        }[relationship_type]
         left = subject_revision.attributes.get(field_name)
         right = object_revision.attributes.get(field_name)
         if (
@@ -793,6 +882,42 @@ def _verified_relationship(
             )
         return True
 
+    if relationship_type == "project_managed_by_employee":
+        if subject_mapping.project_id is None or object_mapping.employee_id is None:
+            raise _error(
+                422,
+                "semantic_relationship_evidence_incompatible",
+                "Use Company Context project and employee references.",
+            )
+        project_query = select(Project).where(
+            Project.tenant_id == tenant_id,
+            Project.company_id == company_id,
+            Project.id == subject_mapping.project_id,
+        )
+        employee_query = select(Employee).where(
+            Employee.tenant_id == tenant_id,
+            Employee.company_id == company_id,
+            Employee.id == object_mapping.employee_id,
+        )
+        if lock_source:
+            project_query = project_query.with_for_update()
+            employee_query = employee_query.with_for_update()
+        project = session.scalar(project_query)
+        employee = session.scalar(employee_query)
+        if project is None or employee is None:
+            raise _error(
+                409,
+                "semantic_relationship_evidence_missing",
+                "The cited Company Context project or employee is unavailable.",
+            )
+        if project.project_manager_employee_id != employee.id:
+            raise _error(
+                409,
+                "semantic_relationship_not_supported_by_source",
+                "The project's stored manager does not match this relationship.",
+            )
+        return True
+
     raise _error(
         422, "semantic_relationship_type_unsupported", "Choose a supported semantic relationship."
     )
@@ -827,6 +952,13 @@ def create_relationship(
             "semantic_relationship_type_mismatch",
             "The selected relationship does not accept these entity types.",
         )
+    if subject.entity_type == "employee" or object_.entity_type == "employee":
+        _require_workforce_read(session, user, tenant_id)
+    if (
+        subject.entity_type in _UNIVERSAL_ENTITY_TYPES
+        or object_.entity_type in _UNIVERSAL_ENTITY_TYPES
+    ):
+        _require_universal_data_read(session, user, tenant_id)
     subject_mapping = object_mapping = None
     if body.subject_mapping_version_id is not None:
         subject_mapping = _mapping_version(
@@ -1109,6 +1241,28 @@ def list_relationships(
         BusinessSemanticRelationshipVersion.tenant_id == tenant_id,
         BusinessSemanticRelationshipVersion.company_id == access.company.id,
     )
+    can_read_workforce = _has_workforce_read_access(session, user, tenant_id)
+    can_read_universal_data = _has_universal_data_read_access(session, user, tenant_id)
+    if not can_read_workforce:
+        employee_entity_ids = select(BusinessSemanticEntity.id).where(
+            BusinessSemanticEntity.tenant_id == tenant_id,
+            BusinessSemanticEntity.company_id == access.company.id,
+            BusinessSemanticEntity.entity_type == "employee",
+        )
+        statement = statement.where(
+            ~BusinessSemanticRelationshipVersion.subject_entity_id.in_(employee_entity_ids),
+            ~BusinessSemanticRelationshipVersion.object_entity_id.in_(employee_entity_ids),
+        )
+    if not can_read_universal_data:
+        universal_entity_ids = select(BusinessSemanticEntity.id).where(
+            BusinessSemanticEntity.tenant_id == tenant_id,
+            BusinessSemanticEntity.company_id == access.company.id,
+            BusinessSemanticEntity.entity_type.in_(_UNIVERSAL_ENTITY_TYPES),
+        )
+        statement = statement.where(
+            ~BusinessSemanticRelationshipVersion.subject_entity_id.in_(universal_entity_ids),
+            ~BusinessSemanticRelationshipVersion.object_entity_id.in_(universal_entity_ids),
+        )
     if not include_history:
         latest_versions = (
             select(
@@ -1139,7 +1293,11 @@ def list_relationships(
             ),
         )
     if entity_id is not None:
-        _entity(session, tenant_id, access.company.id, entity_id)
+        entity = _entity(session, tenant_id, access.company.id, entity_id)
+        if entity.entity_type == "employee" and not can_read_workforce:
+            _require_workforce_read(session, user, tenant_id)
+        if entity.entity_type in _UNIVERSAL_ENTITY_TYPES and not can_read_universal_data:
+            _require_universal_data_read(session, user, tenant_id)
         statement = statement.where(
             (BusinessSemanticRelationshipVersion.subject_entity_id == entity_id)
             | (BusinessSemanticRelationshipVersion.object_entity_id == entity_id)

@@ -10,6 +10,13 @@ from sqlalchemy.orm import Session
 
 from businessflow.audit import record_event
 from businessflow.authorization import role_allows
+from businessflow.business_intelligence.governance import (
+    UNRESOLVED_GOVERNANCE_BLOCKERS,
+    requires_customer_commitment_read,
+    requires_customer_data_processing_authorization,
+    requires_universal_data_read,
+    requires_workforce_read,
+)
 from businessflow.business_intelligence.models import (
     BusinessCompanySemanticConfigVersion,
     BusinessCompanySemanticSourcePrecedence,
@@ -23,7 +30,9 @@ from businessflow.business_intelligence.registry import (
     SYSTEM_METRIC_BY_KEY,
     metric_authority,
     system_metric_definition_hash,
+    system_metric_dimensions,
     system_metric_payloads,
+    system_metric_time_granularity,
 )
 from businessflow.business_intelligence.schemas import (
     CompanySemanticConfigurationCreateRequest,
@@ -69,6 +78,41 @@ def has_finance_read_access(session: Session, user: UserAccount, tenant_id: UUID
         )
     )
     return role is not None and role_allows(role, "finance:read")
+
+
+def has_workforce_read_access(session: Session, user: UserAccount, tenant_id: UUID) -> bool:
+    role = session.scalar(
+        select(TenantMembership.role).where(
+            TenantMembership.tenant_id == tenant_id,
+            TenantMembership.user_id == user.id,
+            TenantMembership.status == "active",
+        )
+    )
+    return role is not None and role_allows(role, "workforce:read")
+
+
+def has_universal_data_read_access(session: Session, user: UserAccount, tenant_id: UUID) -> bool:
+    role = session.scalar(
+        select(TenantMembership.role).where(
+            TenantMembership.tenant_id == tenant_id,
+            TenantMembership.user_id == user.id,
+            TenantMembership.status == "active",
+        )
+    )
+    return role is not None and role_allows(role, "universal_data:read")
+
+
+def has_customer_commitment_read_access(
+    session: Session, user: UserAccount, tenant_id: UUID
+) -> bool:
+    role = session.scalar(
+        select(TenantMembership.role).where(
+            TenantMembership.tenant_id == tenant_id,
+            TenantMembership.user_id == user.id,
+            TenantMembership.status == "active",
+        )
+    )
+    return role is not None and role_allows(role, "customer_commitment:read")
 
 
 def definition_requires_finance_read(definition: dict[str, object]) -> bool:
@@ -149,6 +193,251 @@ def metric_definition_requires_finance_read(
     return False
 
 
+def definition_requires_workforce_read(definition: dict[str, object]) -> bool:
+    return requires_workforce_read(definition)
+
+
+def metric_definition_requires_workforce_read(
+    session: Session,
+    row: BusinessMetricDefinitionVersion,
+    *,
+    visited: set[UUID] | None = None,
+) -> bool:
+    definition: dict[str, object] = {
+        "domain": row.domain,
+        "calculation": row.calculation_spec,
+        "required_relationships": row.required_relationships,
+        "dependencies": row.dependencies,
+        "dimensions": row.dimensions,
+    }
+    if definition_requires_workforce_read(definition):
+        return True
+    visited_ids = set() if visited is None else set(visited)
+    if row.id in visited_ids:
+        return True
+    for dependency in row.dependencies:
+        if not isinstance(dependency, dict):
+            return True
+        if dependency.get("workforce_sensitive") is True:
+            return True
+        metric_key = dependency.get("metric_key")
+        if not isinstance(metric_key, str):
+            return True
+        system = SYSTEM_METRIC_BY_KEY.get(metric_key)
+        if system is not None:
+            if requires_workforce_read(
+                {"domain": system.domain, "calculation": system.calculation}
+            ):
+                return True
+            continue
+        version_id = dependency.get("version_id")
+        if not isinstance(version_id, str):
+            return True
+        try:
+            parsed_version_id = UUID(version_id)
+        except ValueError:
+            return True
+        dependency_row = session.scalar(
+            select(BusinessMetricDefinitionVersion).where(
+                BusinessMetricDefinitionVersion.id == parsed_version_id,
+                BusinessMetricDefinitionVersion.tenant_id == row.tenant_id,
+                BusinessMetricDefinitionVersion.company_id == row.company_id,
+                BusinessMetricDefinitionVersion.metric_key == metric_key,
+            )
+        )
+        if dependency_row is None or metric_definition_requires_workforce_read(
+            session, dependency_row, visited=visited_ids | {row.id}
+        ):
+            return True
+    return False
+
+
+def definition_requires_universal_data_read(definition: dict[str, object]) -> bool:
+    return requires_universal_data_read(definition)
+
+
+def metric_definition_requires_universal_data_read(
+    session: Session,
+    row: BusinessMetricDefinitionVersion,
+    *,
+    visited: set[UUID] | None = None,
+) -> bool:
+    definition: dict[str, object] = {
+        "calculation": row.calculation_spec,
+        "calculation_key": row.calculation_key,
+        "required_source_datasets": row.required_source_datasets,
+        "required_relationships": row.required_relationships,
+        "dependencies": row.dependencies,
+    }
+    if definition_requires_universal_data_read(definition):
+        return True
+    visited_ids = set() if visited is None else set(visited)
+    if row.id in visited_ids:
+        return True
+    for dependency in row.dependencies:
+        if not isinstance(dependency, dict):
+            return True
+        if (
+            dependency.get("universal_data_required") is True
+            or dependency.get("sensitivity_scope") == "universal_data"
+        ):
+            return True
+        metric_key = dependency.get("metric_key")
+        if not isinstance(metric_key, str):
+            return True
+        system = SYSTEM_METRIC_BY_KEY.get(metric_key)
+        if system is not None:
+            if requires_universal_data_read(
+                {"domain": system.domain, "calculation": system.calculation}
+            ):
+                return True
+            continue
+        version_id = dependency.get("version_id")
+        if not isinstance(version_id, str):
+            return True
+        try:
+            parsed_version_id = UUID(version_id)
+        except ValueError:
+            return True
+        dependency_row = session.scalar(
+            select(BusinessMetricDefinitionVersion).where(
+                BusinessMetricDefinitionVersion.id == parsed_version_id,
+                BusinessMetricDefinitionVersion.tenant_id == row.tenant_id,
+                BusinessMetricDefinitionVersion.company_id == row.company_id,
+                BusinessMetricDefinitionVersion.metric_key == metric_key,
+            )
+        )
+        if dependency_row is None or metric_definition_requires_universal_data_read(
+            session, dependency_row, visited=visited_ids | {row.id}
+        ):
+            return True
+    return False
+
+
+def definition_requires_customer_data_processing_authorization(
+    definition: dict[str, object],
+) -> bool:
+    return requires_customer_data_processing_authorization(definition)
+
+
+def metric_definition_requires_customer_data_processing_authorization(
+    session: Session,
+    row: BusinessMetricDefinitionVersion,
+    *,
+    visited: set[UUID] | None = None,
+) -> bool:
+    definition: dict[str, object] = {
+        "domain": row.domain,
+        "calculation": row.calculation_spec,
+        "dimensions": row.dimensions,
+        "required_fields": row.required_fields,
+        "filters": row.filters,
+        "exclusions": row.exclusions,
+        "required_relationships": row.required_relationships,
+        "dependencies": row.dependencies,
+    }
+    if definition_requires_customer_data_processing_authorization(definition):
+        return True
+    visited_ids = set() if visited is None else set(visited)
+    if row.id in visited_ids:
+        return True
+    for dependency in row.dependencies:
+        if not isinstance(dependency, dict):
+            return True
+        if dependency.get("customer_data_processing_required") is True:
+            return True
+        metric_key = dependency.get("metric_key")
+        if not isinstance(metric_key, str):
+            return True
+        system = SYSTEM_METRIC_BY_KEY.get(metric_key)
+        if system is not None:
+            if requires_customer_data_processing_authorization(
+                {"domain": system.domain, "calculation": system.calculation}
+            ):
+                return True
+            continue
+        version_id = dependency.get("version_id")
+        if not isinstance(version_id, str):
+            return True
+        try:
+            parsed_version_id = UUID(version_id)
+        except ValueError:
+            return True
+        dependency_row = session.scalar(
+            select(BusinessMetricDefinitionVersion).where(
+                BusinessMetricDefinitionVersion.id == parsed_version_id,
+                BusinessMetricDefinitionVersion.tenant_id == row.tenant_id,
+                BusinessMetricDefinitionVersion.company_id == row.company_id,
+                BusinessMetricDefinitionVersion.metric_key == metric_key,
+            )
+        )
+        if dependency_row is None or (
+            metric_definition_requires_customer_data_processing_authorization(
+                session, dependency_row, visited=visited_ids | {row.id}
+            )
+        ):
+            return True
+    return False
+
+
+def definition_requires_customer_commitment_read(definition: dict[str, object]) -> bool:
+    return requires_customer_commitment_read(definition)
+
+
+def metric_definition_requires_customer_commitment_read(
+    session: Session,
+    row: BusinessMetricDefinitionVersion,
+    *,
+    visited: set[UUID] | None = None,
+) -> bool:
+    definition: dict[str, object] = {
+        "calculation": row.calculation_spec,
+        "calculation_key": row.calculation_key,
+        "required_source_datasets": row.required_source_datasets,
+        "dependencies": row.dependencies,
+    }
+    if definition_requires_customer_commitment_read(definition):
+        return True
+    visited_ids = set() if visited is None else set(visited)
+    if row.id in visited_ids:
+        return True
+    for dependency in row.dependencies:
+        if not isinstance(dependency, dict):
+            return True
+        if dependency.get("customer_commitment_read_required") is True:
+            return True
+        metric_key = dependency.get("metric_key")
+        if not isinstance(metric_key, str):
+            return True
+        system = SYSTEM_METRIC_BY_KEY.get(metric_key)
+        if system is not None:
+            if requires_customer_commitment_read(
+                {"domain": system.domain, "calculation": system.calculation}
+            ):
+                return True
+            continue
+        version_id = dependency.get("version_id")
+        if not isinstance(version_id, str):
+            return True
+        try:
+            parsed_version_id = UUID(version_id)
+        except ValueError:
+            return True
+        dependency_row = session.scalar(
+            select(BusinessMetricDefinitionVersion).where(
+                BusinessMetricDefinitionVersion.id == parsed_version_id,
+                BusinessMetricDefinitionVersion.tenant_id == row.tenant_id,
+                BusinessMetricDefinitionVersion.company_id == row.company_id,
+                BusinessMetricDefinitionVersion.metric_key == metric_key,
+            )
+        )
+        if dependency_row is None or metric_definition_requires_customer_commitment_read(
+            session, dependency_row, visited=visited_ids | {row.id}
+        ):
+            return True
+    return False
+
+
 def _lock(session: Session, key: str) -> None:
     raw = int.from_bytes(hashlib.sha256(key.encode("utf-8")).digest()[:8], "big", signed=False)
     if raw >= 1 << 63:
@@ -159,16 +448,37 @@ def _lock(session: Session, key: str) -> None:
 def registry_catalog(session: Session, user: UserAccount, tenant_id: UUID) -> MetricRegistryCatalog:
     require_company_context_access(session, user, tenant_id, "company_context:read")
     can_read_finance = has_finance_read_access(session, user, tenant_id)
+    can_read_workforce = has_workforce_read_access(session, user, tenant_id)
+    can_read_universal_data = has_universal_data_read_access(session, user, tenant_id)
+    can_read_customer_commitments = has_customer_commitment_read_access(session, user, tenant_id)
     visible_system_metrics = [
         item
         for item in system_metric_payloads()
-        if can_read_finance or not definition_requires_finance_read(item)
+        if (can_read_finance or not definition_requires_finance_read(item))
+        and (can_read_workforce or not definition_requires_workforce_read(item))
+        and (can_read_universal_data or not requires_universal_data_read(item))
+        and (can_read_customer_commitments or not requires_customer_commitment_read(item))
     ]
     visible_calculations = [
         item
         for item in CALCULATION_CAPABILITIES
-        if can_read_finance
-        or item["calculation_key"] not in {"universal_source_amount_sum", "core_financial_measure"}
+        if (
+            can_read_finance
+            or item["calculation_key"]
+            not in {
+                "universal_source_amount_sum",
+                "core_financial_measure",
+            }
+        )
+        and (can_read_workforce or item["calculation_key"] != "m5_metric")
+        and (
+            can_read_universal_data
+            or not requires_universal_data_read({"calculation_key": item["calculation_key"]})
+        )
+        and (
+            can_read_customer_commitments
+            or not requires_customer_commitment_read({"calculation_key": item["calculation_key"]})
+        )
     ]
     return MetricRegistryCatalog.model_validate(
         {
@@ -213,7 +523,21 @@ def registry_catalog(session: Session, user: UserAccount, tenant_id: UUID) -> Me
                     "supported": False,
                     "reason": "All arithmetic is performed by a deterministic Decimal engine.",
                 },
+                {
+                    "calculation_key": "revenue_from_source_record_volume",
+                    "supported": False,
+                    "reason": "Source-record volume is not revenue or an accounting fact.",
+                },
+                {
+                    "calculation_key": "customer_retention_or_churn",
+                    "supported": False,
+                    "reason": (
+                        "Customer identity, processing authorization, and legally approved "
+                        "retention windows are not established."
+                    ),
+                },
             ],
+            "governance_blockers": list(UNRESOLVED_GOVERNANCE_BLOCKERS),
         }
     )
 
@@ -294,6 +618,9 @@ def list_metric_definitions(
             ),
         )
         filters.append(~finance_sensitive)
+    can_read_workforce = has_workforce_read_access(session, user, tenant_id)
+    can_read_universal_data = has_universal_data_read_access(session, user, tenant_id)
+    can_read_customer_commitments = has_customer_commitment_read_access(session, user, tenant_id)
     if metric_key is not None:
         filters.append(BusinessMetricDefinitionVersion.metric_key == metric_key)
     if domain is not None:
@@ -321,17 +648,29 @@ def list_metric_definitions(
                 BusinessMetricDefinitionVersion.version == latest_versions.c.latest_version,
             ),
         )
-    total = session.scalar(select(func.count()).select_from(statement.subquery())) or 0
-    rows = list(
-        session.scalars(
-            statement.order_by(
-                BusinessMetricDefinitionVersion.metric_key,
-                BusinessMetricDefinitionVersion.version.desc(),
-            )
-            .limit(limit)
-            .offset(offset)
-        )
+    ordered_statement = statement.order_by(
+        BusinessMetricDefinitionVersion.metric_key,
+        BusinessMetricDefinitionVersion.version.desc(),
     )
+    if can_read_workforce and can_read_universal_data and can_read_customer_commitments:
+        total = session.scalar(select(func.count()).select_from(statement.subquery())) or 0
+        rows = list(session.scalars(ordered_statement.limit(limit).offset(offset)))
+    else:
+        visible_rows = [
+            row
+            for row in session.scalars(ordered_statement)
+            if (can_read_workforce or not metric_definition_requires_workforce_read(session, row))
+            and (
+                can_read_universal_data
+                or not metric_definition_requires_universal_data_read(session, row)
+            )
+            and (
+                can_read_customer_commitments
+                or not metric_definition_requires_customer_commitment_read(session, row)
+            )
+        ]
+        total = len(visible_rows)
+        rows = visible_rows[offset : offset + limit]
     return MetricDefinitionPage(
         items=[_definition_response(row) for row in rows],
         total=total,
@@ -403,6 +742,12 @@ def get_metric_definition(
         raise _error(404, "metric_definition_not_found", "The metric definition was not found.")
     if metric_definition_requires_finance_read(session, row):
         require_company_context_access(session, user, tenant_id, "finance:read")
+    if metric_definition_requires_workforce_read(session, row):
+        require_company_context_access(session, user, tenant_id, "workforce:read")
+    if metric_definition_requires_universal_data_read(session, row):
+        require_company_context_access(session, user, tenant_id, "universal_data:read")
+    if metric_definition_requires_customer_commitment_read(session, row):
+        require_company_context_access(session, user, tenant_id, "customer_commitment:read")
     return _definition_response(row)
 
 
@@ -468,22 +813,19 @@ def _resolve_dependencies(
         system = SYSTEM_METRIC_BY_KEY.get(dependency_key)
         if system is not None:
             system_calculation = system.calculation
-            system_metric_id = system_calculation.get("metric_id")
-            system_dimensions = (
-                ["week"]
-                if system_calculation.get("kind") == "m5_metric"
-                and system_metric_id != "recorded_skill_inventory_coverage"
-                else []
-            )
+            system_dimensions = list(system_metric_dimensions(system))
             _validate_formula_dependency_shape(
                 calculation_spec=system_calculation,
                 dependency_dimensions=system_dimensions,
-                dependency_time_granularity="week" if system_dimensions else "none",
+                dependency_time_granularity=system_metric_time_granularity(system),
                 formula_dimensions=list(body.dimensions),
             )
-            system_finance_sensitive = definition_requires_finance_read(
-                {"domain": system.domain, "calculation": system_calculation}
-            )
+            system_definition: dict[str, object] = {
+                "domain": system.domain,
+                "calculation": system_calculation,
+            }
+            system_finance_sensitive = definition_requires_finance_read(system_definition)
+            system_universal_data_sensitive = requires_universal_data_read(system_definition)
             result.append(
                 {
                     "metric_key": dependency_key,
@@ -493,7 +835,17 @@ def _resolve_dependencies(
                     "definition_hash": system_metric_definition_hash(system),
                     "sensitivity_scope": "finance"
                     if system_finance_sensitive
+                    else "universal_data"
+                    if system_universal_data_sensitive
                     else "company_context",
+                    "universal_data_required": system_universal_data_sensitive,
+                    "workforce_sensitive": requires_workforce_read(system_definition),
+                    "customer_commitment_read_required": (
+                        requires_customer_commitment_read(system_definition)
+                    ),
+                    "customer_data_processing_required": (
+                        requires_customer_data_processing_authorization(system_definition)
+                    ),
                 }
             )
             continue
@@ -512,6 +864,9 @@ def _resolve_dependencies(
             formula_dimensions=list(body.dimensions),
         )
         dependency_finance_sensitive = metric_definition_requires_finance_read(session, latest)
+        dependency_universal_data_sensitive = metric_definition_requires_universal_data_read(
+            session, latest
+        )
         result.append(
             {
                 "metric_key": latest.metric_key,
@@ -521,7 +876,19 @@ def _resolve_dependencies(
                 "definition_hash": latest.definition_hash,
                 "sensitivity_scope": "finance"
                 if dependency_finance_sensitive
+                else "universal_data"
+                if dependency_universal_data_sensitive
                 else "company_context",
+                "universal_data_required": dependency_universal_data_sensitive,
+                "workforce_sensitive": metric_definition_requires_workforce_read(session, latest),
+                "customer_commitment_read_required": (
+                    metric_definition_requires_customer_commitment_read(session, latest)
+                ),
+                "customer_data_processing_required": (
+                    metric_definition_requires_customer_data_processing_authorization(
+                        session, latest
+                    )
+                ),
             }
         )
     return result
@@ -573,14 +940,32 @@ def create_metric_definition(
         metric_key=body.metric_key,
         body=body,
     )
-    if definition_requires_finance_read(
-        {
-            "domain": body.domain,
-            "calculation": metric_calculation_dict(body.calculation),
-            "dependencies": dependencies,
-        }
-    ):
-        require_company_context_access(session, user, tenant_id, "finance:read")
+    definition_scope: dict[str, object] = {
+        "domain": body.domain,
+        "calculation": metric_calculation_dict(body.calculation),
+        "dimensions": body.dimensions,
+        "required_source_datasets": [
+            item.model_dump(mode="json") for item in body.required_source_datasets
+        ],
+        "required_relationships": body.required_relationships,
+        "dependencies": dependencies,
+    }
+    if definition_requires_finance_read(definition_scope):
+        require_company_context_access(
+            session, user, tenant_id, "finance:read", request_id=request_id
+        )
+    if definition_requires_workforce_read(definition_scope):
+        require_company_context_access(
+            session, user, tenant_id, "workforce:read", request_id=request_id
+        )
+    if definition_requires_universal_data_read(definition_scope):
+        require_company_context_access(
+            session, user, tenant_id, "universal_data:read", request_id=request_id
+        )
+    if definition_requires_customer_commitment_read(definition_scope):
+        require_company_context_access(
+            session, user, tenant_id, "customer_commitment:read", request_id=request_id
+        )
     owner_id = body.metric_owner_user_id or user.id
     owner_membership = session.scalar(
         select(TenantMembership).where(
@@ -696,7 +1081,21 @@ def transition_metric_definition(
     if row is None:
         raise _error(404, "metric_definition_not_found", "The metric definition was not found.")
     if metric_definition_requires_finance_read(session, row):
-        require_company_context_access(session, user, tenant_id, "finance:read")
+        require_company_context_access(
+            session, user, tenant_id, "finance:read", request_id=request_id
+        )
+    if metric_definition_requires_workforce_read(session, row):
+        require_company_context_access(
+            session, user, tenant_id, "workforce:read", request_id=request_id
+        )
+    if metric_definition_requires_universal_data_read(session, row):
+        require_company_context_access(
+            session, user, tenant_id, "universal_data:read", request_id=request_id
+        )
+    if metric_definition_requires_customer_commitment_read(session, row):
+        require_company_context_access(
+            session, user, tenant_id, "customer_commitment:read", request_id=request_id
+        )
     if body.expected_version != row.version:
         raise _error(
             409, "metric_definition_version_conflict", "Reload the metric definition and retry."
@@ -799,6 +1198,58 @@ def _config_precedence_rows(
     )
 
 
+def _configuration_uses_universal_data(
+    session: Session, row: BusinessCompanySemanticConfigVersion
+) -> bool:
+    return (
+        session.scalar(
+            select(BusinessCompanySemanticSourcePrecedence.id).where(
+                BusinessCompanySemanticSourcePrecedence.tenant_id == row.tenant_id,
+                BusinessCompanySemanticSourcePrecedence.company_id == row.company_id,
+                BusinessCompanySemanticSourcePrecedence.configuration_version_id == row.id,
+                BusinessCompanySemanticSourcePrecedence.dataset_type == "universal_records",
+            )
+        )
+        is not None
+    )
+
+
+def _configuration_uses_customer_commitments(
+    session: Session, row: BusinessCompanySemanticConfigVersion
+) -> bool:
+    return (
+        session.scalar(
+            select(BusinessCompanySemanticSourcePrecedence.id).where(
+                BusinessCompanySemanticSourcePrecedence.tenant_id == row.tenant_id,
+                BusinessCompanySemanticSourcePrecedence.company_id == row.company_id,
+                BusinessCompanySemanticSourcePrecedence.configuration_version_id == row.id,
+                BusinessCompanySemanticSourcePrecedence.dataset_type == "customer_commitments",
+            )
+        )
+        is not None
+    )
+
+
+def _require_configuration_universal_data_access(
+    session: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    row: BusinessCompanySemanticConfigVersion,
+) -> None:
+    if _configuration_uses_universal_data(session, row):
+        require_company_context_access(session, user, tenant_id, "universal_data:read")
+
+
+def _require_configuration_customer_commitment_access(
+    session: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    row: BusinessCompanySemanticConfigVersion,
+) -> None:
+    if _configuration_uses_customer_commitments(session, row):
+        require_company_context_access(session, user, tenant_id, "customer_commitment:read")
+
+
 def _config_response(
     session: Session,
     row: BusinessCompanySemanticConfigVersion,
@@ -860,6 +1311,15 @@ def create_company_semantic_configuration(
         raise _error(
             409, "company_timezone_invalid", "The Company time zone is not supported."
         ) from None
+
+    if any(item.dataset_type == "universal_records" for item in body.source_precedence):
+        require_company_context_access(
+            session, user, tenant_id, "universal_data:read", request_id=request_id
+        )
+    if any(item.dataset_type == "customer_commitments" for item in body.source_precedence):
+        require_company_context_access(
+            session, user, tenant_id, "customer_commitment:read", request_id=request_id
+        )
 
     selected_sources: list[tuple[CompanyDataSource, CompanyDataSourceProfileVersion, int]] = []
     priorities: dict[str, int] = {}
@@ -998,6 +1458,8 @@ def get_company_semantic_configuration(
             "company_semantic_config_not_found",
             "No published Company semantic configuration was found.",
         )
+    _require_configuration_universal_data_access(session, user, tenant_id, row)
+    _require_configuration_customer_commitment_access(session, user, tenant_id, row)
     return _config_response(session, row)
 
 
@@ -1010,11 +1472,29 @@ def list_company_semantic_configurations(
     offset: int,
 ) -> CompanySemanticConfigurationPage:
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
-    filters = (
+    filters = [
         BusinessCompanySemanticConfigVersion.tenant_id == tenant_id,
         BusinessCompanySemanticConfigVersion.company_id == access.company.id,
         BusinessCompanySemanticConfigVersion.status == "published",
-    )
+    ]
+    if not has_universal_data_read_access(session, user, tenant_id):
+        universal_configuration_ids = select(
+            BusinessCompanySemanticSourcePrecedence.configuration_version_id
+        ).where(
+            BusinessCompanySemanticSourcePrecedence.tenant_id == tenant_id,
+            BusinessCompanySemanticSourcePrecedence.company_id == access.company.id,
+            BusinessCompanySemanticSourcePrecedence.dataset_type == "universal_records",
+        )
+        filters.append(~BusinessCompanySemanticConfigVersion.id.in_(universal_configuration_ids))
+    if not has_customer_commitment_read_access(session, user, tenant_id):
+        commitment_configuration_ids = select(
+            BusinessCompanySemanticSourcePrecedence.configuration_version_id
+        ).where(
+            BusinessCompanySemanticSourcePrecedence.tenant_id == tenant_id,
+            BusinessCompanySemanticSourcePrecedence.company_id == access.company.id,
+            BusinessCompanySemanticSourcePrecedence.dataset_type == "customer_commitments",
+        )
+        filters.append(~BusinessCompanySemanticConfigVersion.id.in_(commitment_configuration_ids))
     total = (
         session.scalar(
             select(func.count()).select_from(BusinessCompanySemanticConfigVersion).where(*filters)

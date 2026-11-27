@@ -106,6 +106,15 @@ def test_company_organization_employee_api_rbac_pagination_and_isolation(client,
     create_member(client, owner_tokens, tenant["id"], "context-org-member@example.com")
     member_headers = auth_headers(member_tokens)
     assert client.get(f"{base}/departments", headers=member_headers).status_code == 200
+    assert client.get(f"{base}/employees", headers=member_headers).status_code == 403
+    assert (
+        client.get(f"{base}/employees/{employees[0]['id']}", headers=member_headers).status_code
+        == 403
+    )
+    assert client.get(f"{base}/skills", headers=member_headers).status_code == 403
+    assert client.get(f"{base}/projects", headers=member_headers).status_code == 403
+    assert client.get(f"{base}/resource-assignments", headers=member_headers).status_code == 403
+    assert client.get(f"{base}/company-context", headers=member_headers).status_code == 403
     assert (
         client.post(
             f"{base}/business-units", json={"name": "Member Write"}, headers=member_headers
@@ -371,6 +380,17 @@ def test_skills_weekly_capacity_projects_assignments_and_factual_summary(client)
     )
     assert assignment_filter.status_code == 200
     assert assignment_filter.json()["total"] == 1
+
+    member = register_user(client, "context-assignment-member@example.com")
+    create_member(client, owner_tokens, tenant["id"], "context-assignment-member@example.com")
+    member_headers = auth_headers(member)
+    for path in (
+        f"{base}/projects/{project['id']}",
+        f"{base}/projects/{project['id']}/assignments",
+        f"{base}/resource-assignments/{assignment['id']}",
+        f"{base}/resource-assignments/{assignment['id']}/history",
+    ):
+        assert client.get(path, headers=member_headers).status_code == 403
 
     summary = client.get(
         f"{base}/company-context?week_start_date={WEEK_START_TEXT}", headers=headers
@@ -726,7 +746,7 @@ def test_upgrade_from_milestone_2_schema_preserves_existing_data(admin_engine):
             )
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0023_core_financial_guardrails"
+                == "0025_domain_intelligence_expansion"
             )
             assert (
                 connection.scalar(

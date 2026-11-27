@@ -176,7 +176,18 @@ def test_employee_import_mapping_partial_apply_duplicate_links_and_idempotency(
     member = register_user(client, "import-employee-member@example.com")
     create_member(client, owner, tenant["id"], "import-employee-member@example.com")
     member_headers = auth_headers(member)
-    assert client.get(f"{base}/{import_id}", headers=member_headers).status_code == 200
+    assert client.get(f"{base}/{import_id}", headers=member_headers).status_code == 403
+    assert client.get(base, headers=member_headers).status_code == 403
+    assert (
+        client.get(
+            f"{base}/{import_id}/mapping",
+            params={"dataset_type": "employees", "worksheet_name": "CSV"},
+            headers=member_headers,
+        ).status_code
+        == 403
+    )
+    assert client.get(f"{base}/{import_id}/preview", headers=member_headers).status_code == 403
+    assert client.get(f"{base}/{import_id}/report", headers=member_headers).status_code == 403
     denied_mapping = client.put(
         f"{base}/{import_id}/mapping",
         json={

@@ -420,6 +420,9 @@ def create_metric_run(
     access = require_company_context_access(
         session, user, tenant_id, "company_context:read", request_id=request_id
     )
+    require_company_context_access(
+        session, user, tenant_id, "workforce:read", request_id=request_id
+    )
     input_snapshot = _load_metric_inputs(
         session,
         tenant_id,
@@ -475,6 +478,7 @@ def create_metric_run(
 
 def get_metric_run(session: Session, user: UserAccount, tenant_id: UUID, run_id: UUID) -> MetricRun:
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     run = session.scalar(
         select(MetricRun).where(
             MetricRun.id == run_id,

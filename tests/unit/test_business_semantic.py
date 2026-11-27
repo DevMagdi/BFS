@@ -21,7 +21,7 @@ from businessflow.universal_data.normalization import normalize_field
 def test_semantic_catalog_is_bounded_and_discloses_identity_limits():
     catalog = SemanticCatalogResponse.model_validate(entity_catalog_payload())
 
-    assert catalog.catalog_version == "businessflow.semantic.v1"
+    assert catalog.catalog_version == "businessflow.semantic.v2"
     assert {item["entity_type"] for item in catalog.entities} == set(SEMANTIC_ENTITIES)
     assert {item["relationship_type"] for item in catalog.relationships} == set(
         SEMANTIC_RELATIONSHIPS

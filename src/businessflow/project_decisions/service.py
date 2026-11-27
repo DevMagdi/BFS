@@ -1101,6 +1101,9 @@ def list_project_decisions(
     if not 1 <= limit <= MAX_HISTORY_PAGE_SIZE or not 0 <= offset <= MAX_HISTORY_OFFSET:
         raise ApiError(422, "invalid_page", "The requested page is outside supported limits.")
     access = require_company_context_access(session, user, tenant_id, "decision:read")
+    # Decision history binds M5/M6 capacity evidence, so decision permission alone
+    # must not expose workforce-sensitive results.
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     intake = _get_intake(session, tenant_id, access.company.id, intake_id)
     case = _get_case(
         session, tenant_id=tenant_id, company_id=access.company.id, intake_id=intake.id
@@ -1150,6 +1153,8 @@ def get_project_decision(
     decision_id: UUID,
 ) -> ProjectDecisionResponse:
     access = require_company_context_access(session, user, tenant_id, "decision:read")
+    # Exact-version reads disclose the same linked M5/M6 workforce evidence as history.
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     intake = _get_intake(session, tenant_id, access.company.id, intake_id)
     case = _get_case(
         session, tenant_id=tenant_id, company_id=access.company.id, intake_id=intake.id

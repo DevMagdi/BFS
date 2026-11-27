@@ -54,6 +54,7 @@ def company_context_summary(
     week_start_date: date | None,
 ) -> CompanyContextSummary:
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     requested_week = week_start_date or _week_start_in_company_timezone(access.company.timezone)
     if not is_monday(requested_week):
         raise ApiError(422, "invalid_week_start", "Weekly summaries must start on a Monday.")

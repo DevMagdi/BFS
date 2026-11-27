@@ -18,7 +18,22 @@ def test_company_data_foundation_page_exposes_scoped_inventory_and_existing_work
 
     assert script.status_code == 200
     assert "const base = `/tenants/${encodeURIComponent(tenantId)}/company-data`" in script.text
-    assert "request(`${base}/coverage`)" in script.text
+    assert "requestWithExpectedPermission(`${base}/coverage`)" in script.text
+    assert (
+        "requestWithExpectedPermission(`${base}/sources?limit=${PAGE_SIZE}&offset=0`)"
+        in script.text
+    )
+    assert (
+        "requestWithExpectedPermission(`/tenants/${encodeURIComponent(tenantId)}/imports?limit=${PAGE_SIZE}&offset=0`)"
+        in script.text
+    )
+    assert (
+        "requestWithExpectedPermission(`${commitmentPath}?limit=${PAGE_SIZE}&offset=0${commitmentQuery}`)"
+        in script.text
+    )
+    assert "if (error.status === 403) return null;" in script.text
+    assert "The static entity catalog remains Company-Context-readable" in script.text
+    assert "customer commitments keep their separate customer_commitment permissions" in script.text
     assert "const $$ = (selector, root = document)" in script.text
     assert "company-data/sources/${encodeURIComponent(sourceId)}/ingestions" in script.text
     assert "function clearTenantWorkspace()" in script.text

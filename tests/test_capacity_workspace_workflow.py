@@ -215,11 +215,7 @@ def test_m4_to_m7_workspace_covers_statuses_lineage_source_change_and_separate_r
     )
 
     member_import_history = client.get(f"{base}/imports?limit=100&offset=0", headers=member_headers)
-    assert member_import_history.status_code == 200
-    assert {item["id"] for item in member_import_history.json()["items"]} >= {
-        employee_import["id"],
-        capacity_import["id"],
-    }
+    assert member_import_history.status_code == 403
     member_write = client.post(
         f"{base}/project-intakes",
         json=_intake_payload("CAP-MEMBER-DENIED", WEEK_FEASIBLE, "10.00"),

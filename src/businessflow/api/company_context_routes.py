@@ -102,6 +102,30 @@ from businessflow.services.company_workforce import (
 )
 
 
+def _protect_workforce_detail_access(
+    request: Request,
+    tenant_id: UUID,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> None:
+    """Keep employee-level records behind the dedicated workforce permission."""
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", "")
+    # FastAPI stores the original APIRoute in request.scope even when it is included
+    # under /api/v1, so route.path intentionally omits that outer prefix here.
+    protected_prefixes = (
+        "/tenants/{tenant_id}/employees",
+        "/tenants/{tenant_id}/skills",
+        "/tenants/{tenant_id}/projects",
+        "/tenants/{tenant_id}/resource-assignments",
+        "/tenants/{tenant_id}/company-context",
+    )
+    if any(
+        route_path == prefix or route_path.startswith(prefix + "/") for prefix in protected_prefixes
+    ):
+        require_company_context_access(session, user, tenant_id, "workforce:read")
+
+
 def _protect_seeded_demo_workspace(
     request: Request,
     tenant_id: UUID,
@@ -143,7 +167,10 @@ def _protect_seeded_demo_workspace(
 router = APIRouter(
     prefix="/tenants/{tenant_id}",
     tags=["company context"],
-    dependencies=[Depends(_protect_seeded_demo_workspace)],
+    dependencies=[
+        Depends(_protect_seeded_demo_workspace),
+        Depends(_protect_workforce_detail_access),
+    ],
 )
 PageLimit = Annotated[int, Query(ge=1, le=100)]
 PageOffset = Annotated[int, Query(ge=0, le=100_000)]

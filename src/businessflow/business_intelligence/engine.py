@@ -30,7 +30,7 @@ from businessflow.metrics.snapshot import content_hash
 from businessflow.universal_data.catalog import CANONICAL_ENTITIES
 
 BI_CALCULATION_VERSION = "businessflow.bi-calculation.v2"
-BI_INPUT_SCHEMA_VERSION = 1
+BI_INPUT_SCHEMA_VERSION = 2
 BI_RESULT_SCHEMA_VERSION = 2
 MAX_FORMULA_PRECISION = 128
 DIMENSIONLESS_UNITS = frozenset({"dimensionless", "fraction", "percent", "percentage", "ratio"})
@@ -130,6 +130,7 @@ def _record_date(record: dict[str, object], entity_type: str) -> date | None:
     attributes = _mapping(record.get("attributes"))
     date_field = {
         "sales_transaction": "transaction_date",
+        "manual_customer_commitment": "analysis_date",
         "expense": "expense_date",
         "business_activity": "activity_date",
         "operational_record": "record_date",
@@ -216,6 +217,7 @@ def _dimension_value(
         },
         "sales_transaction": {
             "customer": "customer_code",
+            "product": "product_code",
             "currency_code": "currency_code",
             "status": "status",
         },
@@ -643,6 +645,63 @@ def _calculate_universal(
         status=result_status,
         groups=result_groups,
         reasons=result_reasons,
+    )
+
+
+def _calculate_manual_customer_commitment_count(
+    definition: dict[str, object],
+    configuration: dict[str, object],
+    input_snapshot: dict[str, object],
+) -> dict[str, object]:
+    inputs = _mapping(input_snapshot.get("calculation_inputs"))
+    blockers = [str(item) for item in _list(inputs.get("blockers", []))]
+    warnings = [str(item) for item in _list(inputs.get("warnings", []))]
+    if blockers:
+        return _common_result(
+            definition,
+            input_snapshot,
+            status="abstained",
+            groups=[
+                {
+                    "dimensions": {},
+                    "value": None,
+                    "record_count": 0,
+                    "reasons": sorted(set(blockers)),
+                }
+            ],
+            reasons=blockers,
+        )
+
+    records = [_mapping(item) for item in _list(inputs.get("records", []))]
+    dimensions = [str(item) for item in _list(input_snapshot.get("dimensions", []))]
+    groups = _group_records(
+        records,
+        dimensions,
+        config=configuration,
+        period_boundary=str(definition.get("period_boundary", "calendar_period")),
+    )
+    result_groups = [
+        {
+            "dimensions": _result_group_dimensions(key, dimensions),
+            "value": str(len(group)),
+            "unit": definition.get("unit"),
+            "currency_code": None,
+            "record_count": len(group),
+            "reasons": [],
+        }
+        for key, group in sorted(groups.items(), key=lambda item: str(item[0]))
+    ]
+    return _common_result(
+        definition,
+        input_snapshot,
+        status="partial" if warnings else "complete",
+        groups=result_groups,
+        reasons=warnings,
+        limitations=[
+            *_string_list(definition.get("limitations", [])),
+            "Only accepted, manually recorded commitments are counted; no delivery or "
+            "completion outcome is inferred.",
+        ],
     )
 
 
@@ -1151,6 +1210,10 @@ def calculate_saved_analysis(
         "universal_distinct_source_values",
     }:
         return _calculate_universal(definition, configuration, input_snapshot)
+    if calculation_key == "manual_customer_commitment_count":
+        return _calculate_manual_customer_commitment_count(
+            definition, configuration, input_snapshot
+        )
     if calculation_key == "m5_metric":
         return _calculate_m5(definition, input_snapshot)
     if calculation_key == "core_financial_measure":

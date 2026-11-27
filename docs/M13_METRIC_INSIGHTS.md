@@ -54,7 +54,7 @@ The percentage is a Decimal value rounded to two decimal places with `ROUND_HALF
 
 ## API
 
-All routes use `/api/v1/tenants/{tenant_id}/metrics` and existing `company_context:read` access. Comparison creation stores an immutable observation and does not modify M4/M5 source facts.
+All routes use `/api/v1/tenants/{tenant_id}/metrics`. The catalog requires `company_context:read`; comparison creation, saved-result reads, and replay additionally require both `company_context:read` and `workforce:read` because they use or expose M5 employee-capacity/assignment evidence. Comparison creation stores an immutable observation and does not modify M4/M5 source facts.
 
 | Method and path | Purpose |
 | --- | --- |

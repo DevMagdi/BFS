@@ -92,6 +92,7 @@ def _register_and_promote_sales_source(
     owner_headers: dict[str, str],
     *,
     product_code: str | None = None,
+    records: list[dict[str, str]] | None = None,
 ) -> str:
     base = f"/api/v1/tenants/{tenant_id}/company-data/universal"
     registered = client.post(
@@ -107,7 +108,18 @@ def _register_and_promote_sales_source(
     )
     assert registered.status_code == 201, registered.text
     source_id = str(registered.json()["source_id"])
-    if product_code is None:
+    if records is not None:
+        if not records:
+            raise ValueError("sales source test records must not be empty")
+        fields = ["transaction_reference", "transaction_date"]
+        if product_code is not None or any("product_code" in record for record in records):
+            fields.append("product_code")
+        fields.extend(["currency_code", "amount", "status"])
+        csv_lines = [",".join(fields)]
+        csv_lines.extend(",".join(record.get(field, "") for field in fields) for record in records)
+        csv = ("\n".join(csv_lines) + "\n").encode()
+        field_mapping = {field: field for field in fields}
+    elif product_code is None:
         csv = (
             b"transaction_reference,transaction_date,currency_code,amount,status\n"
             b"TX-001,2025-01-06,USD,125.50,posted\n"
@@ -169,7 +181,7 @@ def _register_and_promote_sales_source(
         headers=owner_headers,
     )
     assert promoted.status_code == 200, promoted.text
-    assert promoted.json()["created_records"] == 1
+    assert promoted.json()["created_records"] == (len(records) if records is not None else 1)
     return source_id
 
 
@@ -529,6 +541,112 @@ def test_system_product_metrics_are_readiness_checked_and_keep_currency_separate
     assert amount_result["groups"][0]["dimensions"] == {"product": "SKU-BI-001"}
     assert amount_result["groups"][0]["currency_code"] == "USD"
     assert amount_result["groups"][0]["value"] == "125.50"
+
+
+def test_average_source_transaction_amount_end_to_end_is_currency_safe_and_replayable(client):
+    owner = register_user(client, "bi-average-sales-owner@example.com")
+    owner_headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="BI Average Sales Tenant",
+        company_name="BI Average Sales Company",
+        key="bi-average-sales-tenant-0001",
+    )
+    tenant_id = str(tenant["id"])
+    base = _bi_base(tenant_id)
+    source_id = _register_and_promote_sales_source(
+        client,
+        tenant_id,
+        owner_headers,
+        records=[
+            {
+                "transaction_reference": "AVG-TX-001",
+                "transaction_date": "2025-01-06",
+                "product_code": "SKU-AVG-A",
+                "currency_code": "USD",
+                "amount": "100.00",
+                "status": "posted",
+            },
+            {
+                "transaction_reference": "AVG-TX-002",
+                "transaction_date": "2025-01-07",
+                "product_code": "SKU-AVG-A",
+                "currency_code": "USD",
+                "amount": "300.00",
+                "status": "posted",
+            },
+            {
+                "transaction_reference": "AVG-TX-003",
+                "transaction_date": "2025-01-08",
+                "product_code": "SKU-AVG-A",
+                "currency_code": "EUR",
+                "amount": "90.00",
+                "status": "posted",
+            },
+            {
+                "transaction_reference": "AVG-TX-004",
+                "transaction_date": "2025-01-09",
+                "product_code": "SKU-AVG-B",
+                "currency_code": "USD",
+                "amount": "500.00",
+                "status": "posted",
+            },
+        ],
+    )
+    configuration = client.post(
+        f"{base}/configurations",
+        json={
+            "expected_version": 0,
+            "source_precedence": [{"dataset_type": "universal_records", "source_id": source_id}],
+        },
+        headers=owner_headers,
+    )
+    assert configuration.status_code == 201, configuration.text
+
+    metric_key = "sales.average_source_transaction_amount"
+    readiness = client.get(
+        f"{base}/metrics/{metric_key}/readiness?dimensions=product", headers=owner_headers
+    )
+    assert readiness.status_code == 200, readiness.text
+    assert readiness.json()["readiness_status"] == "ready"
+    assert readiness.json()["dimensions"] == ["product"]
+
+    analysis = client.post(
+        f"{base}/analyses",
+        json={
+            "metric_key": metric_key,
+            "configuration_version": configuration.json()["version"],
+            "dimensions": ["product"],
+        },
+        headers=owner_headers,
+    )
+    assert analysis.status_code == 201, analysis.text
+    result = analysis.json()["result_snapshot"]
+    assert result["status"] == "complete"
+    assert {
+        (group["dimensions"]["product"], group["currency_code"]): group["value"]
+        for group in result["groups"]
+    } == {
+        ("SKU-AVG-A", "USD"): "200.00",
+        ("SKU-AVG-A", "EUR"): "90.00",
+        ("SKU-AVG-B", "USD"): "500.00",
+    }
+    assert all("currency_code" not in group["dimensions"] for group in result["groups"])
+
+    evidence = client.get(
+        f"{base}/analyses/{analysis.json()['id']}/evidence?limit=10",
+        headers=owner_headers,
+    )
+    assert evidence.status_code == 200, evidence.text
+    assert evidence.json()["total"] == 4
+    assert all(item["evidence_kind"] == "universal_record" for item in evidence.json()["items"])
+
+    replay = client.get(f"{base}/analyses/{analysis.json()['id']}/replay", headers=owner_headers)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["replay_status"] == "verified"
+    assert replay.json()["stored_result_hash"] == analysis.json()["result_hash"]
+    assert replay.json()["replayed_result_hash"] == analysis.json()["result_hash"]
 
 
 def test_bi_registry_analysis_replay_evidence_and_exact_formula_dependencies(

@@ -198,14 +198,13 @@ def _system_definition(metric_key: str) -> dict[str, object] | None:
     else:
         result["dimensions"] = []
         result["time_granularity"] = "none"
-    if calculation_key in {
-        "universal_record_count",
-        "universal_source_amount_sum",
-        "manual_customer_commitment_count",
-    }:
+    if calculation_key == "universal_source_amount_sum":
+        amount_aggregation = _dict(result.get("calculation")).get("aggregation")
         result["aggregation_method"] = (
-            "sum" if calculation_key == "universal_source_amount_sum" else "count"
+            "average" if amount_aggregation == "arithmetic_mean" else "sum"
         )
+    elif calculation_key in {"universal_record_count", "manual_customer_commitment_count"}:
+        result["aggregation_method"] = "count"
     if calculation_key in {"universal_record_count", "universal_source_amount_sum"}:
         policy = cast(dict[str, object], result["policy"])
         policy["currency_behavior"] = (

@@ -451,6 +451,12 @@ def _calculate_universal(
 ) -> dict[str, object]:
     calculation = _mapping(definition.get("calculation"))
     calc_kind = _text(calculation.get("kind"), name="calculation kind")
+    amount_aggregation = calculation.get("aggregation", "sum")
+    if calc_kind == "universal_source_amount_sum" and amount_aggregation not in {
+        "sum",
+        "arithmetic_mean",
+    }:
+        raise ValueError("source amount aggregation is unsupported")
     inputs = _mapping(input_snapshot.get("calculation_inputs"))
     blockers = [str(item) for item in _list(inputs.get("blockers", []))]
     warnings = [str(item) for item in _list(inputs.get("warnings", []))]
@@ -472,6 +478,23 @@ def _calculate_universal(
         )
 
     records = _filtered_records(definition, input_snapshot)
+    if not records:
+        return _common_result(
+            definition,
+            input_snapshot,
+            status="abstained",
+            groups=[
+                {
+                    "dimensions": {},
+                    "value": None,
+                    "record_count": 0,
+                    "reasons": ["no_matching_source_records"],
+                }
+            ],
+            reasons=["no_matching_source_records"],
+            limitations=_string_list(definition.get("limitations", [])),
+        )
+
     requested_dimensions = [str(item) for item in _list(input_snapshot.get("dimensions", []))]
     policy = _mapping(definition.get("policy", {}))
     currency_behavior = str(policy.get("currency_behavior", "not_applicable"))
@@ -512,23 +535,6 @@ def _calculate_universal(
                 ],
                 reasons=["source_currency_missing_or_invalid"],
             )
-
-    if not records:
-        return _common_result(
-            definition,
-            input_snapshot,
-            status="abstained",
-            groups=[
-                {
-                    "dimensions": {},
-                    "value": None,
-                    "record_count": 0,
-                    "reasons": ["no_matching_source_records"],
-                }
-            ],
-            reasons=["no_matching_source_records"],
-            limitations=_string_list(definition.get("limitations", [])),
-        )
 
     period_boundary = str(definition.get("period_boundary", "calendar_period"))
     include_currency = (
@@ -602,9 +608,12 @@ def _calculate_universal(
                 all_values_available = False
             else:
                 try:
-                    amount_sum = exact_decimal_sum(amounts)
-                    value = _decimal_result(amount_sum, definition)
-                except ValueError:
+                    amount_result = exact_decimal_sum(amounts)
+                    if amount_aggregation == "arithmetic_mean":
+                        with localcontext(Context(prec=256, rounding=ROUND_HALF_EVEN)):
+                            amount_result /= Decimal(len(amounts))
+                    value = _decimal_result(amount_result, definition)
+                except (ValueError, DecimalException):
                     value = None
                     all_values_available = False
                     group_reasons.append("decimal_precision_limit_exceeded")

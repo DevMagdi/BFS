@@ -37,13 +37,18 @@ CALCULATION_CAPABILITIES: tuple[dict[str, object], ...] = (
     },
     {
         "calculation_key": "universal_source_amount_sum",
-        "label": "Sum source amounts",
+        "label": "Aggregate source amounts",
         "source_kind": "universal_data",
-        "description": "Sums exact source amount strings for one entity and currency.",
+        "description": (
+            "Sums or calculates the arithmetic mean of exact source amount strings for one "
+            "entity and currency."
+        ),
         "limitations": [
             "Amounts remain source observations; no FX conversion or accounting "
             "recognition is applied.",
             "A source amount is not automatically revenue, expense, profit, or cash.",
+            "An arithmetic mean is per accepted source record and is not an order-level "
+            "average unless source transaction semantics are verified.",
         ],
     },
     {
@@ -252,6 +257,36 @@ SYSTEM_METRICS: tuple[SystemMetric, ...] = (
             version=f"{METRIC_REGISTRY_VERSION}:1.0.0",
         ),
         SystemMetric(
+            metric_key="sales.average_source_transaction_amount",
+            name="Average source-reported sales transaction amount",
+            description=(
+                "Calculates the arithmetic mean of accepted source-reported transaction amounts "
+                "for one selected source, keeping each supplied currency separate."
+            ),
+            domain="sales",
+            category="sales_activity",
+            unit="source currency amount per transaction",
+            calculation={
+                "kind": "universal_source_amount_sum",
+                "entity_type": "sales_transaction",
+                "field": "amount",
+                "currency_field": "currency_code",
+                "aggregation": "arithmetic_mean",
+                "optional_dimensions": ["product"],
+            },
+            limitations=(
+                "This is an average of source transaction-record amounts, not Average Order Value "
+                "unless the source confirms that transaction references represent orders.",
+                "It is not recognized revenue, net sales, profit, or an accounting fact; no FX "
+                "conversion is applied.",
+                "Source statuses, refunds, reversals, and adjustments are not interpreted or "
+                "excluded; signed accepted amounts are included as supplied.",
+                "Transaction references remain source-scoped; no cross-source deduplication, "
+                "completeness, or independent source-control check is performed.",
+            ),
+            version=f"{METRIC_REGISTRY_VERSION}:1.0.0",
+        ),
+        SystemMetric(
             metric_key="sales.source_transaction_record_count_by_product",
             name="Sales transaction source record count by source product code",
             description=(
@@ -392,8 +427,9 @@ def system_metric_dimensions(metric: SystemMetric) -> tuple[str, ...]:
         return ("day", "week", "month", "quarter", "year")
     if kind not in {"universal_record_count", "universal_source_amount_sum"}:
         return ()
+    dimensions: tuple[str, ...]
     if calculation.get("grouping_dimension") == "product":
-        return (
+        dimensions = (
             "product",
             "currency_code",
             "status",
@@ -403,38 +439,48 @@ def system_metric_dimensions(metric: SystemMetric) -> tuple[str, ...]:
             "quarter",
             "year",
         )
-    return {
-        "customer": ("country", "customer_segment"),
-        "product": ("category",),
-        "sales_transaction": (
-            "customer",
-            "currency_code",
-            "status",
-            "day",
-            "week",
-            "month",
-            "quarter",
-            "year",
-        ),
-        "business_activity": (
-            "activity_type",
-            "status",
-            "day",
-            "week",
-            "month",
-            "quarter",
-            "year",
-        ),
-        "operational_record": (
-            "record_type",
-            "status",
-            "day",
-            "week",
-            "month",
-            "quarter",
-            "year",
-        ),
-    }.get(str(calculation.get("entity_type")), ())
+    else:
+        dimensions = {
+            "customer": ("country", "customer_segment"),
+            "product": ("category",),
+            "sales_transaction": (
+                "customer",
+                "currency_code",
+                "status",
+                "day",
+                "week",
+                "month",
+                "quarter",
+                "year",
+            ),
+            "business_activity": (
+                "activity_type",
+                "status",
+                "day",
+                "week",
+                "month",
+                "quarter",
+                "year",
+            ),
+            "operational_record": (
+                "record_type",
+                "status",
+                "day",
+                "week",
+                "month",
+                "quarter",
+                "year",
+            ),
+        }.get(str(calculation.get("entity_type")), ())
+    optional_dimensions = calculation.get("optional_dimensions", ())
+    if (
+        str(calculation.get("entity_type")) == "sales_transaction"
+        and isinstance(optional_dimensions, (list, tuple))
+        and "product" in optional_dimensions
+        and "product" not in dimensions
+    ):
+        return (*dimensions, "product")
+    return dimensions
 
 
 def system_metric_time_granularity(metric: SystemMetric) -> str:

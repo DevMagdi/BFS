@@ -228,6 +228,30 @@ def test_universal_sync_json_limit_rejects_chunked_body_as_it_crosses_cap(settin
     assert MAX_UNIVERSAL_SYNC_REQUEST_BODY_BYTES < received_bytes <= len(body)
 
 
+def test_universal_fixture_sync_json_limit_rejects_oversize_before_auth_or_parsing(
+    settings,
+) -> None:
+    app = _limited_app(settings)
+    tenant_id = str(uuid4())
+    source_id = str(uuid4())
+    path = f"/api/v1/tenants/{tenant_id}/company-data/universal/sources/{source_id}/fixture-sync"
+    body = b'{"fixture_key":"synthetic_customer_export_v1"}'
+    body += b" " * (MAX_UNIVERSAL_SYNC_REQUEST_BODY_BYTES + 1 - len(body))
+    status, payload, received_bytes = _raw_asgi_post(
+        app,
+        path,
+        [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode("ascii")),
+        ],
+        body,
+        1024,
+    )
+    assert status == 413
+    assert payload["error"]["code"] == "request_body_too_large"
+    assert received_bytes == 0
+
+
 def test_authenticated_import_rejects_over_file_cap_below_route_body_cap(settings) -> None:
     max_file_bytes = 1024
     app = _limited_app(settings)

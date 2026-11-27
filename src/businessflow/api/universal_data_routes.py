@@ -36,6 +36,7 @@ from businessflow.universal_data.schemas import (
     UniversalConnectorSyncRequest,
     UniversalEntityCatalog,
     UniversalFileIngestionResponse,
+    UniversalFixtureSyncRequest,
     UniversalIngestionDetail,
     UniversalIngestionPage,
     UniversalMappingApplyRequest,
@@ -70,6 +71,7 @@ from businessflow.universal_data.service import (
     promote_ingestion,
     stage_connector_ingestion,
     stage_file_ingestion,
+    stage_fixture_connector_ingestion,
     update_source_profile,
     validate_ingestion,
 )
@@ -373,6 +375,42 @@ def post_universal_local_sync(
         csv_delimiter=body.csv_delimiter,
         csv_encoding=body.csv_encoding,
         header_row=body.header_row,
+        request_id=request.state.request_id,
+    )
+
+
+@router.post(
+    "/sources/{source_id}/fixture-sync",
+    response_model=UniversalFileIngestionResponse,
+    status_code=201,
+    summary="Manually stage a synthetic M19 connector fixture",
+    description=(
+        "Default-off, non-production prototype only. This endpoint reads one fixed synthetic "
+        "CSV fixture and stages it through the existing Universal Data ingestion pipeline; it "
+        "does not contact an external source or use credentials."
+    ),
+)
+def post_universal_fixture_sync(
+    tenant_id: UUID,
+    source_id: UUID,
+    body: UniversalFixtureSyncRequest,
+    request: Request,
+    idempotency_key: IdempotencyKey,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> UniversalFileIngestionResponse:
+    return stage_fixture_connector_ingestion(
+        session,
+        user,
+        tenant_id,
+        source_id,
+        fixture_key=body.fixture_key,
+        idempotency_key=idempotency_key,
+        fixtures_enabled=settings.universal_connector_fixtures_enabled,
+        app_env=settings.app_env,
+        max_rows=settings.import_max_rows,
+        max_file_bytes=settings.import_max_file_bytes,
         request_id=request.state.request_id,
     )
 

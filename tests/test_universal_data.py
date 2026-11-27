@@ -13,7 +13,15 @@ from sqlalchemy import text
 
 from businessflow.config import Settings
 from businessflow.main import create_app
-from businessflow.universal_data.connectors import ConnectorError, LocalDirectoryConnector
+from businessflow.universal_data.connectors import (
+    M19_DUPLICATE_FIXTURE_KEY,
+    M19_FIXTURE_CONNECTION_REFERENCE,
+    M19_FIXTURE_KEY,
+    M19_UNMAPPED_FIXTURE_KEY,
+    ConnectorError,
+    LocalDirectoryConnector,
+    UniversalFixtureConnector,
+)
 from tests.helpers import auth_headers, create_member, create_tenant, register_user
 
 
@@ -270,6 +278,180 @@ def test_local_sync_accepts_exact_json_body_limit_with_padded_valid_json(setting
         )
         assert response.status_code == 201, response.text
         assert response.json()["ingestion"]["counts"]["total_rows"] == 1
+
+
+def test_m19_fixture_connector_is_default_off_manual_idempotent_and_lineaged(
+    settings, admin_engine
+):
+    disabled_app = create_app(settings)
+    with TestClient(disabled_app, raise_server_exceptions=False) as disabled_client:
+        owner = register_user(disabled_client, "m19-fixture-owner@example.com")
+        tenant = create_tenant(
+            disabled_client,
+            owner,
+            name="M19 Fixture Tenant",
+            company_name="M19 Fixture Company",
+            key="m19-fixture-tenant-0001",
+        )
+        base = _universal_base(tenant["id"])
+        source = _register_source(
+            disabled_client,
+            base,
+            auth_headers(owner),
+            "m19.fixture",
+            source_type="other",
+            connection_reference=M19_FIXTURE_CONNECTION_REFERENCE,
+        )
+        sync_url = f"{base}/sources/{source['source_id']}/fixture-sync"
+        request_body = {"fixture_key": M19_FIXTURE_KEY}
+        request_headers = {
+            **auth_headers(owner),
+            "Idempotency-Key": "m19-fixture-ingestion-0001",
+        }
+
+        disabled = disabled_client.post(sync_url, json=request_body, headers=request_headers)
+        assert disabled.status_code == 503
+        assert disabled.json()["error"]["code"] == "connector_fixture_disabled"
+        assert (
+            disabled_client.get(
+                f"{base}/sources/{source['source_id']}/ingestions",
+                headers=auth_headers(owner),
+            ).json()["total"]
+            == 0
+        )
+
+    enabled_settings = settings.model_copy(update={"universal_connector_fixtures_enabled": True})
+    enabled_app = create_app(enabled_settings)
+    with TestClient(enabled_app, raise_server_exceptions=False) as enabled_client:
+        unauthenticated = enabled_client.post(
+            sync_url,
+            json=request_body,
+            headers={"Idempotency-Key": "m19-fixture-unauth-0001"},
+        )
+        assert unauthenticated.status_code == 401
+
+        wrong_source = _register_source(
+            enabled_client,
+            base,
+            auth_headers(owner),
+            "m19.unconfigured",
+            source_type="csv",
+        )
+        wrong_connector = enabled_client.post(
+            f"{base}/sources/{wrong_source['source_id']}/fixture-sync",
+            json=request_body,
+            headers={**auth_headers(owner), "Idempotency-Key": "m19-fixture-wrong-src-0001"},
+        )
+        assert wrong_connector.status_code == 409
+        assert (
+            wrong_connector.json()["error"]["code"] == "universal_fixture_connector_not_configured"
+        )
+
+        other_owner = register_user(enabled_client, "m19-fixture-other-owner@example.com")
+        other_tenant = create_tenant(
+            enabled_client,
+            other_owner,
+            name="M19 Fixture Other Tenant",
+            company_name="M19 Fixture Other Company",
+            key="m19-fixture-other-tenant-0001",
+        )
+        other_base = _universal_base(other_tenant["id"])
+        cross_company = enabled_client.post(
+            f"{other_base}/sources/{source['source_id']}/fixture-sync",
+            json=request_body,
+            headers={
+                **auth_headers(other_owner),
+                "Idempotency-Key": "m19-fixture-cross-company-0001",
+            },
+        )
+        assert cross_company.status_code == 404
+
+        staged = enabled_client.post(sync_url, json=request_body, headers=request_headers)
+        assert staged.status_code == 201, staged.text
+        staged_body = staged.json()
+        ingestion = staged_body["ingestion"]
+        fixture = UniversalFixtureConnector().read_file(M19_FIXTURE_KEY)
+        assert ingestion["file_name"] == fixture.file_name
+        assert ingestion["source_id"] == source["source_id"]
+        assert ingestion["source_profile_version_id"]
+        assert source["version"] == 1
+        with admin_engine.connect() as connection:
+            registered_profile_id = connection.scalar(
+                text(
+                    "SELECT id FROM company_data_source_profile_versions "
+                    "WHERE source_id = CAST(:source_id AS uuid) AND version = 1"
+                ),
+                {"source_id": source["source_id"]},
+            )
+        assert str(registered_profile_id) == ingestion["source_profile_version_id"]
+        assert ingestion["input_fingerprint"] == hashlib.sha256(fixture.content).hexdigest()
+        assert ingestion["counts"]["total_rows"] == 2
+        assert staged_body["replayed"] is False
+
+        replay = enabled_client.post(sync_url, json=request_body, headers=request_headers)
+        assert replay.status_code == 201, replay.text
+        assert replay.json()["replayed"] is True
+        assert replay.json()["ingestion"]["id"] == ingestion["id"]
+
+        mapping = enabled_client.post(
+            f"{base}/sources/{source['source_id']}/ingestions/{ingestion['id']}/mapping",
+            json=_customer_mapping(),
+            headers=auth_headers(owner),
+        )
+        assert mapping.status_code == 200, mapping.text
+        validation = enabled_client.post(
+            f"{base}/sources/{source['source_id']}/ingestions/{ingestion['id']}/validate",
+            headers=auth_headers(owner),
+        )
+        assert validation.status_code == 200, validation.text
+        validated_counts = validation.json()["ingestion"]["counts"]
+        assert validated_counts["valid_rows"] == 2
+        assert validated_counts["invalid_rows"] == 0
+        assert validated_counts["duplicate_rows"] == 0
+
+        duplicate = enabled_client.post(
+            sync_url,
+            json={"fixture_key": M19_DUPLICATE_FIXTURE_KEY},
+            headers={
+                **auth_headers(owner),
+                "Idempotency-Key": "m19-fixture-duplicate-0001",
+            },
+        )
+        assert duplicate.status_code == 201, duplicate.text
+        duplicate_ingestion_id = duplicate.json()["ingestion"]["id"]
+        duplicate_mapping = enabled_client.post(
+            f"{base}/sources/{source['source_id']}/ingestions/{duplicate_ingestion_id}/mapping",
+            json=_customer_mapping(
+                profile_key="crm.customer.duplicate",
+                display_name="M19 duplicate fixture mapping",
+            ),
+            headers=auth_headers(owner),
+        )
+        assert duplicate_mapping.status_code == 200, duplicate_mapping.text
+        duplicate_validation = enabled_client.post(
+            f"{base}/sources/{source['source_id']}/ingestions/{duplicate_ingestion_id}/validate",
+            headers=auth_headers(owner),
+        )
+        assert duplicate_validation.status_code == 200, duplicate_validation.text
+        assert duplicate_validation.json()["ingestion"]["counts"]["duplicate_rows"] == 2
+
+        unmapped = enabled_client.post(
+            sync_url,
+            json={"fixture_key": M19_UNMAPPED_FIXTURE_KEY},
+            headers={**auth_headers(owner), "Idempotency-Key": "m19-fixture-unmapped-0001"},
+        )
+        assert unmapped.status_code == 201, unmapped.text
+        unmapped_ingestion_id = unmapped.json()["ingestion"]["id"]
+        unmapped_mapping = enabled_client.post(
+            f"{base}/sources/{source['source_id']}/ingestions/{unmapped_ingestion_id}/mapping",
+            json=_customer_mapping(
+                profile_key="crm.customer.unmapped",
+                display_name="M19 unmapped fixture mapping",
+            ),
+            headers=auth_headers(owner),
+        )
+        assert unmapped_mapping.status_code == 422
+        assert unmapped_mapping.json()["error"]["code"] == "universal_mapping_incomplete"
 
 
 def test_legacy_universal_source_keeps_its_contract_version_through_bi_lineage(

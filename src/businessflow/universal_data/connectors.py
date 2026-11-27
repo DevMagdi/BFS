@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 import stat
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from types import MappingProxyType
+from typing import ClassVar, Protocol
 from uuid import UUID
 
 
@@ -173,6 +175,59 @@ class LocalDirectoryConnector:
                 os.close(directory_fd)
             if root_fd is not None:
                 os.close(root_fd)
+
+
+M19_FIXTURE_CONNECTION_REFERENCE = "config://universal/m19-fixture"
+M19_FIXTURE_KEY = "synthetic_customer_export_v1"
+M19_DUPLICATE_FIXTURE_KEY = "synthetic_customer_export_duplicate_v1"
+M19_UNMAPPED_FIXTURE_KEY = "synthetic_customer_export_unmapped_v1"
+
+
+class UniversalFixtureConnector:
+    """Non-production, manual fixture adapter for exercising the M19 ingestion boundary."""
+
+    name = "m19_fixture"
+    _fixtures: ClassVar[Mapping[str, ConnectorFile]] = MappingProxyType(
+        {
+            M19_FIXTURE_KEY: ConnectorFile(
+                file_name="synthetic-customer-export-v1.csv",
+                content=(
+                    b"customer_code,name,email\n"
+                    b"CUS-001,Fixture Customer One,one@example.com\n"
+                    b"CUS-002,Fixture Customer Two,two@example.com\n"
+                ),
+                content_type="text/csv",
+            ),
+            M19_DUPLICATE_FIXTURE_KEY: ConnectorFile(
+                file_name="synthetic-customer-duplicate-export-v1.csv",
+                content=(
+                    b"customer_code,name,email\n"
+                    b"CUS-101,Fixture Customer One,one@example.com\n"
+                    b"CUS-101,Fixture Customer Duplicate,duplicate@example.com\n"
+                ),
+                content_type="text/csv",
+            ),
+            M19_UNMAPPED_FIXTURE_KEY: ConnectorFile(
+                file_name="synthetic-customer-unmapped-export-v1.csv",
+                content=(
+                    b"customer_code,name,email,external_note\n"
+                    b"CUS-201,Fixture Customer Three,three@example.com,synthetic-only\n"
+                ),
+                content_type="text/csv",
+            ),
+        }
+    )
+
+    def read_file(self, relative_path: str) -> ConnectorFile:
+        """Return a fixed, versioned synthetic fixture; no paths or network access are used."""
+        try:
+            return self._fixtures[relative_path]
+        except KeyError:
+            raise ConnectorError(
+                404,
+                "connector_fixture_not_found",
+                "The requested non-production connector fixture was not found.",
+            ) from None
 
 
 class UniversalConnectorRegistry:

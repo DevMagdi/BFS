@@ -554,5 +554,5 @@ def test_m18_downgrade_is_guarded_when_report_evidence_is_retained(client, migra
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0027_business_reports"
+            == "0028_universal_data_retention"
         )

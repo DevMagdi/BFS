@@ -33,11 +33,13 @@ from businessflow.universal_data.models import (
     CompanyDataSourceProfileVersion,
     UniversalIngestion,
     UniversalIngestionEvent,
+    UniversalIngestionPurgeTombstone,
     UniversalIngestionRecordLink,
     UniversalIngestionRow,
     UniversalMappingProfile,
     UniversalMappingProfileVersion,
     UniversalRowValidation,
+    UniversalSourceLifecycleEvent,
     UniversalSourceSnapshot,
 )
 from businessflow.universal_data.normalization import (
@@ -87,10 +89,10 @@ def _api_error(status: int, code: str, message: str) -> ApiError:
 
 
 def _advisory_lock(session: Session, key: str) -> None:
-    value = int.from_bytes(hashlib.sha256(key.encode("utf-8")).digest()[:8], "big", signed=False)
-    if value >= 1 << 63:
-        value -= 1 << 64
-    session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": value})
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": key},
+    )
 
 
 def _batches(values: Iterable[_T], *, size: int = UNIVERSAL_QUERY_BATCH_SIZE) -> Iterator[list[_T]]:
@@ -170,6 +172,62 @@ def _latest_source_profile(
             "The Universal Data source profile is incomplete and requires administrator repair.",
         )
     return profile
+
+
+def _reject_purged_idempotency_key(
+    session: Session,
+    tenant_id: UUID,
+    company_id: UUID,
+    source_id: UUID,
+    idempotency_key: str,
+) -> None:
+    idempotency_hash = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    purged_key = session.scalar(
+        select(UniversalIngestionPurgeTombstone.id).where(
+            UniversalIngestionPurgeTombstone.tenant_id == tenant_id,
+            UniversalIngestionPurgeTombstone.company_id == company_id,
+            UniversalIngestionPurgeTombstone.source_id == source_id,
+            UniversalIngestionPurgeTombstone.idempotency_key_hash == idempotency_hash,
+        )
+    )
+    if purged_key is not None:
+        raise _api_error(
+            409,
+            "idempotency_key_purged",
+            "This idempotency key belongs to a purged ingestion and cannot be reused.",
+        )
+
+
+def _require_source_not_revoked(
+    session: Session,
+    tenant_id: UUID,
+    company_id: UUID,
+    source_id: UUID,
+    *,
+    idempotency_key: str | None = None,
+) -> None:
+    revoked = session.scalar(
+        select(UniversalSourceLifecycleEvent.id).where(
+            UniversalSourceLifecycleEvent.tenant_id == tenant_id,
+            UniversalSourceLifecycleEvent.company_id == company_id,
+            UniversalSourceLifecycleEvent.source_id == source_id,
+            UniversalSourceLifecycleEvent.event_type == "revoked",
+        )
+    )
+    if revoked is not None:
+        if idempotency_key is not None:
+            _reject_purged_idempotency_key(
+                session,
+                tenant_id,
+                company_id,
+                source_id,
+                idempotency_key,
+            )
+        raise _api_error(
+            409,
+            "universal_source_revoked",
+            "This source has been revoked; no new ingestion or processing is allowed.",
+        )
 
 
 def _source_summary(
@@ -401,6 +459,7 @@ def update_source_profile(
 ) -> UniversalSourceProfileSummary:
     access = _require_company_access(session, user, tenant_id, write=True, request_id=request_id)
     source = _company_source(session, tenant_id, access.company.id, source_id, lock=True)
+    _require_source_not_revoked(session, tenant_id, access.company.id, source.id)
     previous = _latest_source_profile(session, tenant_id, access.company.id, source.id)
     profile_values = _source_profile_values(session, user, tenant_id, body, previous=previous)
     profile = CompanyDataSourceProfileVersion(
@@ -642,8 +701,20 @@ def _ingestion_response(
 
 
 def _require_enabled_profile(
-    session: Session, tenant_id: UUID, company_id: UUID, source_id: UUID
+    session: Session,
+    tenant_id: UUID,
+    company_id: UUID,
+    source_id: UUID,
+    *,
+    idempotency_key: str | None = None,
 ) -> CompanyDataSourceProfileVersion:
+    _require_source_not_revoked(
+        session,
+        tenant_id,
+        company_id,
+        source_id,
+        idempotency_key=idempotency_key,
+    )
     profile = _latest_source_profile(session, tenant_id, company_id, source_id)
     if profile.source_status != "enabled":
         raise _api_error(
@@ -669,8 +740,14 @@ def stage_file_ingestion(
     request_id: UUID,
 ) -> UniversalFileIngestionResponse:
     access = _require_company_access(session, user, tenant_id, write=True, request_id=request_id)
-    source = _company_source(session, tenant_id, access.company.id, source_id)
-    profile = _require_enabled_profile(session, tenant_id, access.company.id, source.id)
+    source = _company_source(session, tenant_id, access.company.id, source_id, lock=True)
+    profile = _require_enabled_profile(
+        session,
+        tenant_id,
+        access.company.id,
+        source.id,
+        idempotency_key=idempotency_key,
+    )
     if not content or len(content) > max_file_bytes:
         status = 413 if len(content) > max_file_bytes else 422
         code = "file_too_large" if status == 413 else "malformed_file"
@@ -703,6 +780,13 @@ def stage_file_ingestion(
     _advisory_lock(
         session,
         f"universal-idempotency:{tenant_id}:{access.company.id}:{source.id}:{idempotency_hash}",
+    )
+    _reject_purged_idempotency_key(
+        session,
+        tenant_id,
+        access.company.id,
+        source.id,
+        idempotency_key,
     )
     existing = session.scalar(
         select(UniversalIngestion).where(
@@ -868,8 +952,14 @@ def stage_connector_ingestion(
     request_id: UUID,
 ) -> UniversalFileIngestionResponse:
     access = _require_company_access(session, user, tenant_id, write=True, request_id=request_id)
-    source = _company_source(session, tenant_id, access.company.id, source_id)
-    profile = _require_enabled_profile(session, tenant_id, access.company.id, source.id)
+    source = _company_source(session, tenant_id, access.company.id, source_id, lock=True)
+    profile = _require_enabled_profile(
+        session,
+        tenant_id,
+        access.company.id,
+        source.id,
+        idempotency_key=idempotency_key,
+    )
     if (
         profile.source_type != "local_directory"
         or profile.connection_reference != "config://universal/local-directory"
@@ -1210,6 +1300,7 @@ def create_mapping_and_apply(
 ) -> UniversalMappingProfileVersionResponse:
     access = _require_company_access(session, user, tenant_id, write=True, request_id=request_id)
     source = _company_source(session, tenant_id, access.company.id, source_id, lock=True)
+    _require_source_not_revoked(session, tenant_id, access.company.id, source.id)
     ingestion = _ingestion(
         session, tenant_id, access.company.id, source.id, ingestion_id, lock=True
     )
@@ -1335,6 +1426,7 @@ def apply_existing_mapping(
 ) -> UniversalMappingProfileVersionResponse:
     access = _require_company_access(session, user, tenant_id, write=True, request_id=request_id)
     source = _company_source(session, tenant_id, access.company.id, source_id, lock=True)
+    _require_source_not_revoked(session, tenant_id, access.company.id, source.id)
     ingestion = _ingestion(
         session, tenant_id, access.company.id, source.id, ingestion_id, lock=True
     )
@@ -1712,6 +1804,7 @@ def validate_ingestion(
 ) -> UniversalValidationResult:
     access = _require_company_access(session, user, tenant_id, write=True, request_id=request_id)
     source = _company_source(session, tenant_id, access.company.id, source_id, lock=True)
+    _require_source_not_revoked(session, tenant_id, access.company.id, source.id)
     ingestion = _ingestion(
         session, tenant_id, access.company.id, source.id, ingestion_id, lock=True
     )
@@ -2175,6 +2268,7 @@ def promote_ingestion(
 ) -> UniversalPromotionResult:
     access = _require_company_access(session, user, tenant_id, write=True, request_id=request_id)
     source = _company_source(session, tenant_id, access.company.id, source_id, lock=True)
+    _require_source_not_revoked(session, tenant_id, access.company.id, source.id)
     ingestion = _ingestion(
         session, tenant_id, access.company.id, source.id, ingestion_id, lock=True
     )

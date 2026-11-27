@@ -1138,7 +1138,7 @@ def test_semantic_migration_downgrade_is_rejected_when_data_is_retained(
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0027_business_reports"
+            == "0028_universal_data_retention"
         )
         assert (
             connection.scalar(

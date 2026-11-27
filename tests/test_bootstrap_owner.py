@@ -242,7 +242,7 @@ def test_bootstrap_requires_0014_or_later_and_preserves_pristine_target(bootstra
     try:
         with inspection_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0027_business_reports"
+                "0028_universal_data_retention"
             )
             assert not connection.scalar(
                 text("SELECT has_table_privilege('bf_runtime', 'public.users', 'INSERT')")

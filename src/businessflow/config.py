@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -65,6 +66,18 @@ class Settings(BaseSettings):
     universal_local_connector_root: str | None = Field(
         default=None, validation_alias="UNIVERSAL_LOCAL_CONNECTOR_ROOT"
     )
+
+    @field_validator("universal_local_connector_root")
+    @classmethod
+    def require_absolute_universal_local_root(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
+            return None
+        root = Path(value).expanduser()
+        if not root.is_absolute():
+            raise ValueError("UNIVERSAL_LOCAL_CONNECTOR_ROOT must be an absolute path")
+        return str(root)
 
     @field_validator("app_secret_key")
     @classmethod

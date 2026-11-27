@@ -13,6 +13,7 @@ from businessflow.api.finance_source_limits import (
     finance_source_request_body_limit,
     multipart_upload_request_body_limit,
 )
+from businessflow.api.forecasting_limits import MAX_FORECAST_DATASET_REQUEST_BODY_BYTES
 from businessflow.main import create_app
 from tests.helpers import auth_headers, create_tenant, register_user
 
@@ -156,6 +157,30 @@ def _route_limits(max_file_bytes: int, tenant_id: str):
             True,
         ),
     )
+
+
+def test_forecast_dataset_json_body_limit_rejects_declared_oversize_before_parsing(
+    settings,
+) -> None:
+    app = _limited_app(settings)
+    tenant_id = str(uuid4())
+    path = f"/api/v1/tenants/{tenant_id}/forecasts/datasets"
+    status, payload, received_bytes = _raw_asgi_post(
+        app,
+        path,
+        [
+            (b"content-type", b"application/json"),
+            (
+                b"content-length",
+                str(MAX_FORECAST_DATASET_REQUEST_BODY_BYTES + 1).encode("ascii"),
+            ),
+        ],
+        b"{}",
+        2,
+    )
+    assert status == 413
+    assert payload["error"]["code"] == "request_body_too_large"
+    assert received_bytes == 0
 
 
 def test_authenticated_import_rejects_over_file_cap_below_route_body_cap(settings) -> None:

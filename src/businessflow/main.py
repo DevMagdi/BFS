@@ -33,6 +33,7 @@ from businessflow.api.finance_source_upload_limit import (
 )
 from businessflow.api.financial_assessment_routes import router as financial_assessment_router
 from businessflow.api.financial_calculation_routes import router as financial_calculation_router
+from businessflow.api.forecasting_routes import router as forecasting_router
 from businessflow.api.health_routes import router as health_router
 from businessflow.api.metrics_routes import router as metrics_router
 from businessflow.api.position_review_routes import router as position_review_router
@@ -181,6 +182,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(finance_source_router, prefix="/api/v1")
     application.include_router(financial_calculation_router, prefix="/api/v1")
     application.include_router(direct_cash_forecast_router, prefix="/api/v1")
+    application.include_router(forecasting_router, prefix="/api/v1")
     application.include_router(position_review_router, prefix="/api/v1")
     application.mount(
         "/",

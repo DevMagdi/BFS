@@ -11,6 +11,7 @@ from businessflow.api.finance_source_limits import (
     finance_source_request_body_limit,
     multipart_upload_request_body_limit,
 )
+from businessflow.api.forecasting_limits import MAX_FORECAST_DATASET_REQUEST_BODY_BYTES
 
 
 class UploadRequestBodyTooLarge(HTTPException):
@@ -87,6 +88,11 @@ def _upload_body_limit(scope: Scope, max_file_bytes: int) -> _UploadBodyLimit | 
                 finance_source_request_body_limit(max_file_bytes),
                 "The Core Financials import request exceeds the configured size limit.",
             )
+        if len(parts) == 6 and parts[4:] == ["forecasts", "datasets"]:
+            return _UploadBodyLimit(
+                MAX_FORECAST_DATASET_REQUEST_BODY_BYTES,
+                "The forecast dataset request exceeds the 32 MiB limit.",
+            )
     return None
 
 
@@ -131,7 +137,7 @@ async def _send_too_large(
 
 
 class UploadRequestBodyLimitMiddleware:
-    """Bound selected multipart bodies while streaming them through ASGI."""
+    """Bound selected multipart and JSON request bodies while streaming them through ASGI."""
 
     def __init__(self, app: ASGIApp, *, max_file_bytes: int) -> None:
         self.app = app

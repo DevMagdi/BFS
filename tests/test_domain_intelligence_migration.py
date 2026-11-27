@@ -212,7 +212,7 @@ def _insert_configuration_and_linked_analysis(
             "fiscal_year_start_month, fiscal_year_label, week_start_day, fallback_policy, "
             "semantic_policy, configuration_hash, created_by_user_id"
             ") VALUES ("
-            ":id, :tenant_id, :company_id, 1, 'published', 'USD', 'UTC', 1, 'start_year', "
+            ":id, :tenant_id, :company_id, 1, 'draft', 'USD', 'UTC', 1, 'start_year', "
             "1, 'strict_primary', '{}'::jsonb, :configuration_hash, :user_id"
             ")"
         ),
@@ -223,6 +223,13 @@ def _insert_configuration_and_linked_analysis(
             "configuration_hash": "0" * 64,
             "user_id": str(scope.user_id),
         },
+    )
+    connection.execute(
+        text(
+            "UPDATE business_company_semantic_config_versions "
+            "SET status = 'published' WHERE id = CAST(:configuration_id AS uuid)"
+        ),
+        {"configuration_id": str(configuration_id)},
     )
     connection.execute(
         text(

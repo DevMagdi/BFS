@@ -274,6 +274,7 @@ def test_business_intelligence_metric_migration_downgrade_refuses_retained_defin
         match=(
             r"archived source bytes or idempotent runs remain|"
             r"business metric definition data is retained|"
+            r"cannot downgrade: verified product relationship evidence exists|"
             r"project-manager semantic relationship evidence is retained|"
             r"workforce-sensitive analysis evidence is retained"
         ),

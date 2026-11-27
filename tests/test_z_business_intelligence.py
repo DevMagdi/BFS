@@ -296,7 +296,7 @@ def test_business_intelligence_metric_migration_downgrade_refuses_retained_defin
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0025_domain_intelligence"
+            == "0026_forecasting_engine"
         )
         assert (
             connection.scalar(
@@ -1597,7 +1597,7 @@ def test_business_intelligence_migration_downgrade_refuses_retained_evidence(
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0025_domain_intelligence"
+            == "0026_forecasting_engine"
         )
         assert (
             connection.scalar(

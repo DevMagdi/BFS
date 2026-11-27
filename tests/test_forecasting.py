@@ -18,6 +18,22 @@ def _base(tenant_id: str) -> str:
     return f"/api/v1/tenants/{tenant_id}/forecasts"
 
 
+@pytest.fixture
+def _clear_forecast_evidence(admin_engine):
+    try:
+        yield
+    finally:
+        # This integration test shares the disposable DB with migration downgrade tests.
+        # Clear only M17 records so those tests can reach the older guards they exercise.
+        with admin_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "TRUNCATE TABLE forecast_promotion_decisions, forecast_runs, "
+                "forecast_evaluation_model_versions, forecast_evaluations, "
+                "forecast_evaluation_protocol_versions, forecast_model_versions, "
+                "forecast_dataset_versions"
+            )
+
+
 def _dataset_body() -> dict[str, object]:
     observations = []
     for index in range(8):
@@ -208,7 +224,7 @@ def _assert_forecast_storage_controls(
 
 
 def test_forecasting_api_versions_replays_and_requires_independent_reviewer(
-    client, settings, runtime_engine, migration_engine, admin_engine
+    _clear_forecast_evidence, client, settings, runtime_engine, migration_engine, admin_engine
 ) -> None:
     owner_tokens = register_user(client, f"m17-owner-{uuid4().hex}@example.com")
     owner_headers = auth_headers(owner_tokens)

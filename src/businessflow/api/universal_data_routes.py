@@ -11,6 +11,25 @@ from sqlalchemy.orm import Session
 from businessflow.api.dependencies import get_current_user, get_session, get_settings
 from businessflow.config import Settings
 from businessflow.models import UserAccount
+from businessflow.universal_data.retention import (
+    approve_retention_policy,
+    build_purge_plan,
+    configure_retention_policy,
+    execute_purge,
+    list_retention_policies,
+    revoke_retention_policy,
+    revoke_source,
+)
+from businessflow.universal_data.retention_schemas import (
+    UniversalPurgeExecutionRequest,
+    UniversalPurgeExecutionResponse,
+    UniversalPurgePlanResponse,
+    UniversalRetentionPolicyCreateRequest,
+    UniversalRetentionPolicyPage,
+    UniversalRetentionPolicySummary,
+    UniversalSourceRevocationRequest,
+    UniversalSourceRevocationResponse,
+)
 from businessflow.universal_data.schemas import (
     CanonicalEntityType,
     CanonicalRecordPage,
@@ -61,7 +80,161 @@ router = APIRouter(
 )
 PageLimit = Annotated[int, Query(ge=1, le=100)]
 PageOffset = Annotated[int, Query(ge=0, le=100_000)]
+PurgePageOffset = Annotated[int, Query(ge=0, le=1_000_000)]
 IdempotencyKey = Annotated[str, Header(alias="Idempotency-Key", min_length=16, max_length=200)]
+
+
+@router.get("/retention/policies", response_model=UniversalRetentionPolicyPage)
+def get_universal_retention_policies(
+    tenant_id: UUID,
+    request: Request,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> UniversalRetentionPolicyPage:
+    return UniversalRetentionPolicyPage.model_validate(
+        list_retention_policies(session, user, tenant_id, request_id=request.state.request_id)
+    )
+
+
+@router.post(
+    "/retention/policies",
+    response_model=UniversalRetentionPolicySummary,
+    status_code=201,
+)
+def post_universal_retention_policy(
+    tenant_id: UUID,
+    body: UniversalRetentionPolicyCreateRequest,
+    request: Request,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> UniversalRetentionPolicySummary:
+    return UniversalRetentionPolicySummary.model_validate(
+        configure_retention_policy(
+            session,
+            user,
+            tenant_id,
+            retention_days=body.retention_days,
+            request_id=request.state.request_id,
+        )
+    )
+
+
+@router.post(
+    "/retention/policies/{policy_version_id}/approve",
+    response_model=UniversalRetentionPolicySummary,
+)
+def post_universal_retention_policy_approval(
+    tenant_id: UUID,
+    policy_version_id: UUID,
+    request: Request,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> UniversalRetentionPolicySummary:
+    return UniversalRetentionPolicySummary.model_validate(
+        approve_retention_policy(
+            session,
+            user,
+            tenant_id,
+            policy_version_id,
+            request_id=request.state.request_id,
+        )
+    )
+
+
+@router.post(
+    "/retention/policies/{policy_version_id}/revoke",
+    response_model=UniversalRetentionPolicySummary,
+)
+def post_universal_retention_policy_revocation(
+    tenant_id: UUID,
+    policy_version_id: UUID,
+    request: Request,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> UniversalRetentionPolicySummary:
+    return UniversalRetentionPolicySummary.model_validate(
+        revoke_retention_policy(
+            session,
+            user,
+            tenant_id,
+            policy_version_id,
+            request_id=request.state.request_id,
+        )
+    )
+
+
+@router.post(
+    "/sources/{source_id}/revoke",
+    response_model=UniversalSourceRevocationResponse,
+)
+def post_universal_source_revocation(
+    tenant_id: UUID,
+    source_id: UUID,
+    body: UniversalSourceRevocationRequest,
+    request: Request,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> UniversalSourceRevocationResponse:
+    return UniversalSourceRevocationResponse.model_validate(
+        revoke_source(
+            session,
+            user,
+            tenant_id,
+            source_id,
+            reason_code=body.reason_code,
+            request_id=request.state.request_id,
+        )
+    )
+
+
+@router.get("/sources/{source_id}/purge-plan", response_model=UniversalPurgePlanResponse)
+def get_universal_source_purge_plan(
+    tenant_id: UUID,
+    source_id: UUID,
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    offset: PurgePageOffset = 0,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> UniversalPurgePlanResponse:
+    return UniversalPurgePlanResponse.model_validate(
+        build_purge_plan(
+            session,
+            user,
+            tenant_id,
+            source_id,
+            limit=limit,
+            offset=offset,
+            request_id=request.state.request_id,
+        )
+    )
+
+
+@router.post(
+    "/sources/{source_id}/purge",
+    response_model=UniversalPurgeExecutionResponse,
+)
+def post_universal_source_purge(
+    tenant_id: UUID,
+    source_id: UUID,
+    body: UniversalPurgeExecutionRequest,
+    request: Request,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> UniversalPurgeExecutionResponse:
+    return UniversalPurgeExecutionResponse.model_validate(
+        execute_purge(
+            session,
+            user,
+            tenant_id,
+            source_id,
+            ingestion_ids=body.ingestion_ids,
+            policy_version_id=body.policy_version_id,
+            plan_limit=body.plan_limit,
+            plan_offset=body.plan_offset,
+            request_id=request.state.request_id,
+        )
+    )
 
 
 @router.get("/entities", response_model=UniversalEntityCatalog)

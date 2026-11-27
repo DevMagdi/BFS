@@ -819,3 +819,202 @@ class UniversalIngestionRecordLink(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class UniversalRetentionPolicyVersion(Base):
+    """Company-scoped retention policy configuration; no version is active without approval."""
+
+    __tablename__ = "universal_retention_policy_versions"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "company_id", "id", name="uq_udf_retention_policy_scope_id"),
+        UniqueConstraint(
+            "tenant_id", "company_id", "version", name="uq_udf_retention_policy_version"
+        ),
+        _scope_fk(
+            ["tenant_id", "company_id"],
+            ["companies.tenant_id", "companies.id"],
+            "fk_udf_retention_policy_company",
+        ),
+        _member_fk("created_by_user_id", "fk_udf_retention_policy_actor"),
+        CheckConstraint("version > 0", name="ck_udf_retention_policy_version"),
+        CheckConstraint("retention_days BETWEEN 1 AND 36500", name="ck_udf_retention_policy_days"),
+        Index("ix_udf_retention_policy_latest", "tenant_id", "company_id", "version"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    company_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    retention_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_by_user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class UniversalRetentionPolicyApproval(Base):
+    """Append-only approval that activates one exact retention policy version."""
+
+    __tablename__ = "universal_retention_policy_approvals"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "company_id", "policy_version_id", name="uq_udf_retention_policy_approval"
+        ),
+        _scope_fk(
+            ["tenant_id", "company_id", "policy_version_id"],
+            [
+                "universal_retention_policy_versions.tenant_id",
+                "universal_retention_policy_versions.company_id",
+                "universal_retention_policy_versions.id",
+            ],
+            "fk_udf_retention_approval_policy",
+        ),
+        _member_fk("approved_by_user_id", "fk_udf_retention_approval_actor"),
+        Index(
+            "ix_udf_retention_approvals_policy",
+            "tenant_id",
+            "company_id",
+            "policy_version_id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    company_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    policy_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    approved_by_user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    approved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class UniversalRetentionPolicyRevocation(Base):
+    """Append-only event that disables purging until a later policy is approved."""
+
+    __tablename__ = "universal_retention_policy_revocations"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "company_id",
+            "policy_version_id",
+            name="uq_udf_retention_policy_revocation",
+        ),
+        _scope_fk(
+            ["tenant_id", "company_id", "policy_version_id"],
+            [
+                "universal_retention_policy_versions.tenant_id",
+                "universal_retention_policy_versions.company_id",
+                "universal_retention_policy_versions.id",
+            ],
+            "fk_udf_retention_revocation_policy",
+        ),
+        _member_fk("revoked_by_user_id", "fk_udf_retention_revocation_actor"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    company_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    policy_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    revoked_by_user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    revoked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class UniversalSourceLifecycleEvent(Base):
+    """Company-scoped source revocation and evidence-purge completion tombstones."""
+
+    __tablename__ = "universal_source_lifecycle_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "company_id",
+            "source_id",
+            "event_type",
+            name="uq_udf_source_lifecycle_event",
+        ),
+        UniqueConstraint("tenant_id", "company_id", "id", name="uq_udf_source_lifecycle_scope_id"),
+        _source_fk("fk_udf_source_lifecycle_source"),
+        _member_fk("actor_user_id", "fk_udf_source_lifecycle_actor"),
+        CheckConstraint("event_type IN ('revoked', 'purged')", name="ck_udf_source_lifecycle_type"),
+        CheckConstraint(
+            "(event_type = 'revoked' AND reason_code IS NOT NULL AND reason_code IN "
+            "('owner_request', 'source_replaced', 'contract_ended', 'security_concern', 'other')) "
+            "OR (event_type = 'purged' AND reason_code IS NULL)",
+            name="ck_udf_source_lifecycle_reason",
+        ),
+        Index(
+            "ix_udf_source_lifecycle_source",
+            "tenant_id",
+            "company_id",
+            "source_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    company_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    source_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason_code: Mapped[str | None] = mapped_column(String(32))
+    actor_user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class UniversalIngestionPurgeTombstone(Base):
+    """Non-payload tombstone preserving idempotency after an ingestion is physically purged."""
+
+    __tablename__ = "universal_ingestion_purge_tombstones"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "company_id",
+            "source_id",
+            "ingestion_id",
+            name="uq_udf_purge_tombstone_ingestion",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "company_id",
+            "source_id",
+            "idempotency_key_hash",
+            name="uq_udf_purge_tombstone_idempotency",
+        ),
+        _source_fk("fk_udf_purge_tombstone_source"),
+        _scope_fk(
+            ["tenant_id", "company_id", "policy_version_id"],
+            [
+                "universal_retention_policy_versions.tenant_id",
+                "universal_retention_policy_versions.company_id",
+                "universal_retention_policy_versions.id",
+            ],
+            "fk_udf_purge_tombstone_policy",
+        ),
+        _member_fk("purged_by_user_id", "fk_udf_purge_tombstone_actor"),
+        CheckConstraint(
+            "idempotency_key_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_udf_purge_tombstone_key_hash",
+        ),
+        Index(
+            "ix_udf_purge_tombstones_source_purged",
+            "tenant_id",
+            "company_id",
+            "source_id",
+            "purged_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    company_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    source_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    ingestion_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    purged_by_user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    purged_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

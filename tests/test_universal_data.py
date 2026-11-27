@@ -8,8 +8,10 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
+from pydantic import ValidationError
 from sqlalchemy import text
 
+from businessflow.config import Settings
 from businessflow.main import create_app
 from businessflow.universal_data.connectors import ConnectorError, LocalDirectoryConnector
 from tests.helpers import auth_headers, create_member, create_tenant, register_user
@@ -71,6 +73,22 @@ def _customer_mapping(
     }
 
 
+def test_settings_require_an_absolute_universal_local_connector_root(settings, tmp_path):
+    settings_args = {
+        "_env_file": None,
+        "app_secret_key": settings.app_secret_key,
+        "app_env": settings.app_env,
+        "database_url": settings.database_url,
+    }
+    with pytest.raises(ValidationError, match="must be an absolute path"):
+        Settings(**settings_args, universal_local_connector_root="relative/approved")
+
+    unset = Settings(**settings_args, universal_local_connector_root="")
+    assert unset.universal_local_connector_root is None
+    configured = Settings(**settings_args, universal_local_connector_root=str(tmp_path))
+    assert configured.universal_local_connector_root == str(tmp_path)
+
+
 def test_local_directory_connector_rejects_traversal_symlinks_and_oversized_files(tmp_path):
     root = tmp_path / "approved"
     company_scope_id = UUID("00000000-0000-0000-0000-000000000001")
@@ -86,6 +104,12 @@ def test_local_directory_connector_rejects_traversal_symlinks_and_oversized_file
         os.mkfifo(incoming / "pipe.csv")
     (root / str(other_company_id)).mkdir()
     (root / str(other_company_id) / "private.csv").write_bytes(b"other company\n")
+
+    with pytest.raises(ConnectorError) as relative_root_error:
+        LocalDirectoryConnector(
+            "relative-root", company_scope_id=company_scope_id, max_file_bytes=8
+        )
+    assert relative_root_error.value.code == "connector_not_configured"
 
     connector = LocalDirectoryConnector(root, company_scope_id=company_scope_id, max_file_bytes=8)
     selected = connector.read_file("incoming/customers.csv")
@@ -202,6 +226,50 @@ def test_local_connector_sync_isolated_to_authorized_company_directory(settings,
         )
         assert second_sync.status_code == 503
         assert second_sync.json()["error"]["code"] == "connector_scope_not_configured"
+
+
+def test_local_sync_accepts_exact_json_body_limit_with_padded_valid_json(settings, tmp_path):
+    from businessflow.api.finance_source_upload_limit import MAX_UNIVERSAL_SYNC_REQUEST_BODY_BYTES
+
+    root = tmp_path / "approved"
+    content = b"customer_code,name\nCUS-2,Boundary\n"
+    app = create_app(settings.model_copy(update={"universal_local_connector_root": str(root)}))
+    with TestClient(app, raise_server_exceptions=False) as local_client:
+        owner = register_user(local_client, "universal-sync-body-boundary@example.com")
+        tenant = create_tenant(
+            local_client,
+            owner,
+            name="Universal Sync Boundary Tenant",
+            company_name="Universal Sync Boundary Company",
+            key="universal-sync-boundary-tenant-01",
+        )
+        base = _universal_base(tenant["id"])
+        source = _register_source(
+            local_client,
+            base,
+            auth_headers(owner),
+            "local.boundary",
+            source_type="local_directory",
+            connection_reference="config://universal/local-directory",
+        )
+        path = root / tenant["company"]["id"] / "incoming" / "customers.csv"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(content)
+        json_body = b'{"relative_path":"incoming/customers.csv"}'
+        padded_body = json_body + b" " * (MAX_UNIVERSAL_SYNC_REQUEST_BODY_BYTES - len(json_body))
+        assert len(padded_body) == MAX_UNIVERSAL_SYNC_REQUEST_BODY_BYTES
+
+        response = local_client.post(
+            f"{base}/sources/{source['source_id']}/sync",
+            content=padded_body,
+            headers={
+                **auth_headers(owner),
+                "Content-Type": "application/json",
+                "Idempotency-Key": "universal-sync-body-boundary-01",
+            },
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["ingestion"]["counts"]["total_rows"] == 1
 
 
 def test_legacy_universal_source_keeps_its_contract_version_through_bi_lineage(

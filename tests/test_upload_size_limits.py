@@ -13,6 +13,7 @@ from businessflow.api.finance_source_limits import (
     finance_source_request_body_limit,
     multipart_upload_request_body_limit,
 )
+from businessflow.api.finance_source_upload_limit import MAX_UNIVERSAL_SYNC_REQUEST_BODY_BYTES
 from businessflow.api.forecasting_limits import MAX_FORECAST_DATASET_REQUEST_BODY_BYTES
 from businessflow.main import create_app
 from tests.helpers import auth_headers, create_tenant, register_user
@@ -181,6 +182,50 @@ def test_forecast_dataset_json_body_limit_rejects_declared_oversize_before_parsi
     assert status == 413
     assert payload["error"]["code"] == "request_body_too_large"
     assert received_bytes == 0
+
+
+def test_universal_sync_json_limit_rejects_declared_oversize_before_auth_or_parsing(
+    settings,
+) -> None:
+    app = _limited_app(settings)
+    tenant_id = str(uuid4())
+    source_id = str(uuid4())
+    path = f"/api/v1/tenants/{tenant_id}/company-data/universal/sources/{source_id}/sync"
+    body = b'{"relative_path":"incoming/file.csv"}'
+    body += b" " * (MAX_UNIVERSAL_SYNC_REQUEST_BODY_BYTES + 1 - len(body))
+    status, payload, received_bytes = _raw_asgi_post(
+        app,
+        path,
+        [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode("ascii")),
+        ],
+        body,
+        1024,
+    )
+    assert len(body) == MAX_UNIVERSAL_SYNC_REQUEST_BODY_BYTES + 1
+    assert status == 413
+    assert payload["error"]["code"] == "request_body_too_large"
+    assert received_bytes == 0
+
+
+def test_universal_sync_json_limit_rejects_chunked_body_as_it_crosses_cap(settings) -> None:
+    app = _limited_app(settings)
+    tenant_id = str(uuid4())
+    source_id = str(uuid4())
+    path = f"/api/v1/tenants/{tenant_id}/company-data/universal/sources/{source_id}/sync"
+    body = b'{"relative_path":"incoming/file.csv"}'
+    body += b" " * (MAX_UNIVERSAL_SYNC_REQUEST_BODY_BYTES + 1 - len(body))
+    status, payload, received_bytes = _raw_asgi_post(
+        app,
+        path,
+        [(b"content-type", b"application/json")],
+        body,
+        1024,
+    )
+    assert status == 413
+    assert payload["error"]["code"] == "request_body_too_large"
+    assert MAX_UNIVERSAL_SYNC_REQUEST_BODY_BYTES < received_bytes <= len(body)
 
 
 def test_authenticated_import_rejects_over_file_cap_below_route_body_cap(settings) -> None:

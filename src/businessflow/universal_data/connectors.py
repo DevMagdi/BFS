@@ -39,8 +39,15 @@ class LocalDirectoryConnector:
             raise ConnectorError(
                 503, "connector_invalid_limit", "The local connector file limit must be positive."
             )
+        configured_root = Path(root).expanduser()
+        if not configured_root.is_absolute():
+            raise ConnectorError(
+                503,
+                "connector_not_configured",
+                "The operator-configured local connector root must be an absolute directory path.",
+            )
         try:
-            self.root = Path(root).expanduser().resolve(strict=True)
+            self.root = configured_root.resolve(strict=True)
         except (OSError, RuntimeError):
             raise ConnectorError(
                 503, "connector_not_configured", "The local connector directory is unavailable."

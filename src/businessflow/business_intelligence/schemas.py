@@ -139,6 +139,7 @@ class UniversalSourceAmountSumCalculation(CalculationModel):
     entity_type: Literal["sales_transaction", "expense"]
     field: Literal["amount"] = "amount"
     currency_field: Literal["currency_code"] = "currency_code"
+    aggregation: Literal["sum", "arithmetic_mean"] = "sum"
 
 
 class UniversalDistinctSourceValuesCalculation(CalculationModel):
@@ -329,7 +330,9 @@ class MetricDefinitionCreateRequest(StrictModel):
     formula: FormulaExpression | None = None
     numerator: FormulaExpression | None = None
     denominator: FormulaExpression | None = None
-    aggregation_method: Literal["count", "sum", "distinct_count", "ratio", "source_defined"]
+    aggregation_method: Literal[
+        "count", "sum", "average", "distinct_count", "ratio", "source_defined"
+    ]
     dimensions: list[MetricDimension] = Field(default_factory=list, max_length=20)
     required_source_datasets: list[MetricSourceRequirement] = Field(
         default_factory=list, max_length=12
@@ -541,6 +544,10 @@ class MetricDefinitionCreateRequest(StrictModel):
             "m5_metric": "source_defined",
             "core_financial_measure": "source_defined",
         }.get(calculation_key)
+        if isinstance(self.calculation, UniversalSourceAmountSumCalculation):
+            expected_aggregation = (
+                "average" if self.calculation.aggregation == "arithmetic_mean" else "sum"
+            )
         if calculation_key == "custom_formula":
             is_ratio = self.numerator is not None and self.denominator is not None
             expected_aggregation = "ratio" if is_ratio else "source_defined"
@@ -563,8 +570,18 @@ class MetricDefinitionCreateRequest(StrictModel):
             field = CANONICAL_ENTITIES[self.calculation.entity_type].field_by_name.get("amount")
             if field is None or field.field_type != "decimal":
                 raise ValueError("source amount metrics require a canonical decimal amount field")
-            if self.unit != "source currency amount":
-                raise ValueError("source amount metric units must match the source-currency amount")
+            average_basis = (
+                "transaction"
+                if self.calculation.entity_type == "sales_transaction"
+                else "expense record"
+            )
+            expected_unit = (
+                f"source currency amount per {average_basis}"
+                if self.calculation.aggregation == "arithmetic_mean"
+                else "source currency amount"
+            )
+            if self.unit != expected_unit:
+                raise ValueError("source amount metric units must match its declared aggregation")
             if self.policy.currency_behavior not in {"single_currency_only", "group_by_currency"}:
                 raise ValueError("source amount metrics must declare a supported currency behavior")
             if (

@@ -79,6 +79,16 @@ Company definitions use an allow-listed calculation schema:
   evidence, and incomplete inputs abstain or produce a non-complete status rather than being
   silently coerced.
 
+The first Step 3 Sales Intelligence vertical slice adds the published system metric
+`sales.average_source_transaction_amount`. It computes the arithmetic mean over the selected source's
+current canonical sales-transaction records, keeps each source currency separate, supports the
+validated product dimension, and uses the existing readiness, field-projected snapshot, evidence,
+replay, and authorization paths. It is explicitly an average source transaction-record amount—not
+Average Order Value unless the source's transaction-reference semantics are independently confirmed;
+source status, refunds, reversals, adjustments, completeness, and financial recognition are not
+inferred or approved. The existing `sales.source_amount_observed` continues to be a source amount
+sum, not revenue.
+
 Readiness evaluates source precedence, source-profile state, last promoted Universal Data ingestion,
 freshness, bounded record counts, required fields, and current analytically usable semantic
 relationships. Candidate-source checks count at most 10,001 matching records per configured source;

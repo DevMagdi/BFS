@@ -349,6 +349,59 @@ def test_product_sales_metrics_group_only_source_product_codes_without_currency_
     ] == [("SKU-A", "USD", "17.00"), ("SKU-B", "EUR", "7.50")]
 
 
+def test_average_source_transaction_amount_is_currency_separated_and_abstains_on_bad_amount():
+    definition = _system_definition("sales.average_source_transaction_amount")
+    assert definition is not None
+    assert definition["aggregation_method"] == "average"
+    assert definition["calculation"]["aggregation"] == "arithmetic_mean"
+    assert definition["unit"] == "source currency amount per transaction"
+
+    records = []
+    for record_id, amount, currency_code, product_code in (
+        ("tx-1", "100.00", "USD", "SKU-A"),
+        ("tx-2", "300.00", "USD", "SKU-A"),
+        ("tx-3", "90.00", "EUR", "SKU-A"),
+        ("tx-4", "500.00", "USD", "SKU-B"),
+        ("tx-5", "10.00", "USD", ""),
+        ("tx-6", "0.01", "USD", "SKU-C"),
+        ("tx-7", "0.02", "USD", "SKU-C"),
+    ):
+        record = _record(record_id, amount=amount, status="posted", currency_code=currency_code)
+        if product_code:
+            attributes = dict(record["attributes"])
+            attributes["product_code"] = product_code
+            record["attributes"] = attributes
+        records.append(record)
+
+    result = calculate_saved_analysis(
+        definition, {}, _universal_input(records, dimensions=["product"])
+    )
+    assert result["status"] == "complete"
+    assert {
+        (group["dimensions"]["product"], group["currency_code"]): group["value"]
+        for group in result["groups"]
+    } == {
+        ("SKU-A", "USD"): "200.00",
+        ("SKU-A", "EUR"): "90.00",
+        ("SKU-B", "USD"): "500.00",
+        (None, "USD"): "10.00",
+        ("SKU-C", "USD"): "0.02",
+    }
+    assert all("currency_code" not in group["dimensions"] for group in result["groups"])
+
+    empty_input = calculate_saved_analysis(definition, {}, _universal_input([]))
+    assert empty_input["status"] == "abstained"
+    assert "no_matching_source_records" in empty_input["reasons"]
+
+    invalid_amount = calculate_saved_analysis(
+        definition,
+        {},
+        _universal_input([_record("tx-invalid", amount="not-a-decimal", status="posted")]),
+    )
+    assert invalid_amount["status"] == "abstained"
+    assert "source_amount_missing_or_invalid" in invalid_amount["reasons"]
+
+
 def test_manual_commitment_count_uses_privacy_limited_snapshots_and_explicit_date_grain():
     definition = _system_definition("operations.accepted_customer_commitment_count")
     assert definition is not None
@@ -482,6 +535,42 @@ def test_metric_schema_binds_units_and_rejects_unverifiable_authority_claims():
     }
     with pytest.raises(ValidationError, match="source amount metric units"):
         MetricDefinitionCreateRequest.model_validate(amount_body)
+
+    average_body = {
+        **amount_body,
+        "metric_key": "sales.source_average_amount",
+        "name": "Average source transaction amount",
+        "business_meaning": "The arithmetic mean of source transaction record amounts.",
+        "calculation": {
+            "kind": "universal_source_amount_sum",
+            "entity_type": "sales_transaction",
+            "aggregation": "arithmetic_mean",
+        },
+        "aggregation_method": "average",
+        "unit": "source currency amount per transaction",
+        "policy": {"currency_behavior": "group_by_currency"},
+        "limitations": [
+            "This is an arithmetic mean of accepted source transaction records, not necessarily "
+            "average order value."
+        ],
+    }
+    average_metric = MetricDefinitionCreateRequest.model_validate(average_body)
+    assert average_metric.calculation.aggregation == "arithmetic_mean"
+    assert average_metric.aggregation_method == "average"
+    assert average_metric.unit == "source currency amount per transaction"
+
+    legacy_sum = MetricDefinitionCreateRequest.model_validate(
+        {
+            **amount_body,
+            "metric_key": "sales.source_amount_sum_legacy",
+            "unit": "source currency amount",
+            "aggregation_method": "sum",
+        }
+    )
+    assert legacy_sum.calculation.aggregation == "sum"
+
+    with pytest.raises(ValidationError, match="aggregation_method=average"):
+        MetricDefinitionCreateRequest.model_validate({**average_body, "aggregation_method": "sum"})
 
     count_body = {
         **amount_body,

@@ -199,6 +199,9 @@ def stage_import(
     access = require_company_context_access(
         session, user, tenant_id, "company_context:write", request_id=request_id
     )
+    require_company_context_access(
+        session, user, tenant_id, "workforce:read", request_id=request_id
+    )
     demo_seed = _m10_demo_seed_for_company(session, tenant_id, access.company.id)
     if demo_seed is None:
         # Serialize first imports against explicit demo seeding so no arbitrary M4 source can
@@ -311,6 +314,7 @@ def _get_import(
 ) -> DataImport:
     permission = "company_context:write" if write else "company_context:read"
     access = require_company_context_access(session, user, tenant_id, permission)
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     statement = select(DataImport).where(
         DataImport.id == import_id,
         DataImport.tenant_id == tenant_id,
@@ -577,6 +581,7 @@ def list_imports(
     offset: int,
 ) -> ImportSummaryPage:
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     filters = [DataImport.tenant_id == tenant_id, DataImport.company_id == access.company.id]
     total = session.scalar(select(func.count()).select_from(DataImport).where(*filters)) or 0
     rows = session.scalars(
@@ -601,6 +606,9 @@ def purge_expired_imports(
 ) -> ImportPurgeResult:
     access = require_company_context_access(
         session, user, tenant_id, "company_context:write", request_id=request_id
+    )
+    require_company_context_access(
+        session, user, tenant_id, "workforce:read", request_id=request_id
     )
     now = datetime.now(UTC)
     expired_imports = list(

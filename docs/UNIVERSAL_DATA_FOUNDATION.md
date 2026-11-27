@@ -50,7 +50,7 @@ The application stores original bytes and source rows in PostgreSQL; this increm
 
 ## API surface
 
-All routes are under `/api/v1/tenants/{tenant_id}/company-data/universal`. Authenticated Company members may read; owner/admin members with `company_context:write` are required for source-profile writes, uploads/sync, mapping, validation, and promotion. The server remains authoritative for tenant/company scope and permissions.
+All routes are under `/api/v1/tenants/{tenant_id}/company-data/universal`. The static `GET /entities` canonical-schema catalog requires only `company_context:read`. Reading source profiles/history, ingestion history/details, mapping profiles, raw rows, stored-file evidence, promoted records, and lineage requires `universal_data:read`; the default role matrix grants this only to owners and admins. This protects source rows that may contain customer/supplier contact details and tax identifiers. Source-profile writes, uploads/sync, mapping, validation, and promotion require both `company_context:write` and `universal_data:read`; the default owner/admin roles have both. Raw Universal Data access does not authorize customer-data analysis or processing: customer-domain, identifier-based, grouped, filtered, and linked BI analyses remain blocked until the separate processing authorization is established. The server remains authoritative for tenant/company scope and permissions.
 
 - `GET /entities`
 - `POST /sources`, `GET /sources`, `GET /sources/{source_id}`, `PATCH /sources/{source_id}/profile`, `GET /sources/{source_id}/profile-history`

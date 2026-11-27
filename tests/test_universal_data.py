@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 from io import BytesIO
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -204,6 +204,151 @@ def test_local_connector_sync_isolated_to_authorized_company_directory(settings,
         assert second_sync.json()["error"]["code"] == "connector_scope_not_configured"
 
 
+def test_legacy_universal_source_keeps_its_contract_version_through_bi_lineage(
+    client, migration_engine
+):
+    owner = register_user(client, "universal-legacy-contract-owner@example.com")
+    owner_headers = auth_headers(owner)
+    tenant = create_tenant(
+        client,
+        owner,
+        name="Universal Legacy Contract Tenant",
+        company_name="Universal Legacy Contract Company",
+        key="universal-legacy-contract-tenant-0001",
+    )
+    tenant_id = str(tenant["id"])
+    company_id = str(tenant["company"]["id"])
+    owner_response = client.get("/api/v1/auth/me", headers=owner_headers)
+    assert owner_response.status_code == 200, owner_response.text
+    owner_id = UUID(owner_response.json()["id"])
+    source_id = uuid4()
+    profile_id = uuid4()
+
+    with migration_engine.begin() as connection:
+        connection.execute(
+            text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": tenant_id},
+        )
+        connection.execute(
+            text("SELECT set_config('app.company_id', :company_id, true)"),
+            {"company_id": company_id},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO company_data_sources "
+                "(id, tenant_id, company_id, source_key, display_name, dataset_type, "
+                "contract_key, contract_version, owner_user_id, registered_by_user_id) "
+                "VALUES (:id, :tenant_id, :company_id, 'sales.legacy', "
+                "'Legacy sales export', 'universal_records', "
+                "'businessflow.universal.business_records', '1.0.0', :owner_id, :owner_id)"
+            ),
+            {
+                "id": str(source_id),
+                "tenant_id": tenant_id,
+                "company_id": company_id,
+                "owner_id": str(owner_id),
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO company_data_source_profile_versions "
+                "(id, tenant_id, company_id, source_id, version, source_type, display_name, "
+                "business_domain, owner_user_id, source_status, authority_classification, "
+                "freshness_max_age_hours, created_by_user_id) "
+                "VALUES (:id, :tenant_id, :company_id, :source_id, 1, 'csv', "
+                "'Legacy sales export', 'sales', :owner_id, 'enabled', "
+                "'owner_asserted_primary', 24, :owner_id)"
+            ),
+            {
+                "id": str(profile_id),
+                "tenant_id": tenant_id,
+                "company_id": company_id,
+                "source_id": str(source_id),
+                "owner_id": str(owner_id),
+            },
+        )
+
+    base = _universal_base(tenant_id)
+    legacy_source = client.get(f"{base}/sources/{source_id}", headers=owner_headers)
+    assert legacy_source.status_code == 200, legacy_source.text
+    assert legacy_source.json()["contract_version"] == "1.0.0"
+    csv = (
+        b"transaction_reference,transaction_date,currency_code,amount,status\n"
+        b"TX-LEGACY-001,2025-01-06,USD,125.50,posted\n"
+    )
+    staged = _stage_file(
+        client,
+        base,
+        str(source_id),
+        owner_headers,
+        "universal-legacy-sales-upload-0001",
+        csv,
+        file_name="legacy-sales.csv",
+    )
+    assert staged.status_code == 201, staged.text
+    ingestion_id = staged.json()["ingestion"]["id"]
+    mapping = client.post(
+        f"{base}/sources/{source_id}/ingestions/{ingestion_id}/mapping",
+        json={
+            "profile_key": "legacy.sales.transaction",
+            "display_name": "Legacy sales mapping",
+            "entity_type": "sales_transaction",
+            "worksheet_name": "CSV",
+            "field_mapping": {
+                "transaction_reference": "transaction_reference",
+                "transaction_date": "transaction_date",
+                "currency_code": "currency_code",
+                "amount": "amount",
+                "status": "status",
+            },
+            "field_options": {"amount": {"decimal_separator": "."}},
+            "ignored_columns": [],
+        },
+        headers=owner_headers,
+    )
+    assert mapping.status_code == 200, mapping.text
+    assert mapping.json()["contract_hash"] == legacy_source.json()["contract_hash"]
+    validated = client.post(
+        f"{base}/sources/{source_id}/ingestions/{ingestion_id}/validate",
+        headers=owner_headers,
+    )
+    assert validated.status_code == 200, validated.text
+    assert validated.json()["validation_snapshot"]["contract_version"] == "1.0.0"
+    promoted = client.post(
+        f"{base}/sources/{source_id}/ingestions/{ingestion_id}/promote",
+        json={},
+        headers=owner_headers,
+    )
+    assert promoted.status_code == 200, promoted.text
+
+    records = client.get(f"{base}/records?entity_type=sales_transaction", headers=owner_headers)
+    assert records.status_code == 200, records.text
+    record = records.json()["items"][0]
+    lineage = client.get(f"{base}/records/{record['id']}/lineage", headers=owner_headers)
+    assert lineage.status_code == 200, lineage.text
+    assert lineage.json()["items"][0]["contract_version"] == "1.0.0"
+
+    bi_base = f"/api/v1/tenants/{tenant_id}/business-intelligence"
+    configuration = client.post(
+        f"{bi_base}/configurations",
+        json={
+            "expected_version": 0,
+            "source_precedence": [
+                {"dataset_type": "universal_records", "source_id": str(source_id)}
+            ],
+        },
+        headers=owner_headers,
+    )
+    assert configuration.status_code == 201, configuration.text
+    readiness = client.get(
+        f"{bi_base}/metrics/sales.source_transaction_record_count_by_product/readiness",
+        headers=owner_headers,
+    )
+    assert readiness.status_code == 200, readiness.text
+    assert readiness.json()["readiness_status"] == "blocked"
+    assert "required_field_not_supported_by_source_contract" in readiness.json()["blockers"]
+
+
 def test_universal_data_isolation_mapping_history_evidence_and_governed_promotion(
     client, admin_engine
 ):
@@ -306,9 +451,16 @@ def test_universal_data_isolation_mapping_history_evidence_and_governed_promotio
     member = register_user(client, "universal-hub-member@example.com")
     create_member(client, owner, tenant_id, "universal-hub-member@example.com")
     member_headers = auth_headers(member)
+    member_catalog = client.get(f"{base}/entities", headers=member_headers)
+    assert member_catalog.status_code == 200, member_catalog.text
     member_sources = client.get(f"{base}/sources", headers=member_headers)
-    assert member_sources.status_code == 200, member_sources.text
-    assert member_sources.json()["total"] == 1
+    assert member_sources.status_code == 403
+    member_source = client.get(f"{base}/sources/{source_id}", headers=member_headers)
+    assert member_source.status_code == 403
+    member_profile_history = client.get(
+        f"{base}/sources/{source_id}/profile-history?limit=10", headers=member_headers
+    )
+    assert member_profile_history.status_code == 403
 
     other_owner = register_user(client, "universal-hub-other-owner@example.com")
     other_tenant = create_tenant(
@@ -339,6 +491,15 @@ def test_universal_data_isolation_mapping_history_evidence_and_governed_promotio
     ingestion_id = staged["ingestion"]["id"]
     assert staged["ingestion"]["counts"]["total_rows"] == 1
     assert staged["replayed"] is False
+
+    for protected_path in (
+        f"{base}/sources/{source_id}/ingestions",
+        f"{base}/sources/{source_id}/mapping-profiles",
+        f"{base}/sources/{source_id}/ingestions/{ingestion_id}",
+        f"{base}/sources/{source_id}/ingestions/{ingestion_id}/rows",
+        f"{base}/sources/{source_id}/ingestions/{ingestion_id}/evidence",
+    ):
+        assert client.get(protected_path, headers=member_headers).status_code == 403
 
     replay = _stage_file(
         client,
@@ -389,16 +550,16 @@ def test_universal_data_isolation_mapping_history_evidence_and_governed_promotio
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "idempotency_key_reused"
 
-    member_evidence = client.get(
+    owner_evidence = client.get(
         f"{base}/sources/{source_id}/ingestions/{ingestion_id}/evidence",
-        headers=member_headers,
+        headers=owner_headers,
     )
-    assert member_evidence.status_code == 200, member_evidence.text
-    assert member_evidence.content == original
-    assert member_evidence.headers["content-type"].startswith("text/csv")
-    assert member_evidence.headers["x-content-type-options"] == "nosniff"
+    assert owner_evidence.status_code == 200, owner_evidence.text
+    assert owner_evidence.content == original
+    assert owner_evidence.headers["content-type"].startswith("text/csv")
+    assert owner_evidence.headers["x-content-type-options"] == "nosniff"
     assert (
-        hashlib.sha256(member_evidence.content).hexdigest()
+        hashlib.sha256(owner_evidence.content).hexdigest()
         == staged["ingestion"]["input_fingerprint"]
     )
     cross_tenant_evidence = client.get(
@@ -518,6 +679,12 @@ def test_universal_data_isolation_mapping_history_evidence_and_governed_promotio
     assert (
         lineage.json()["items"][0]["input_fingerprint"] == staged["ingestion"]["input_fingerprint"]
     )
+    member_records = client.get(f"{base}/records?entity_type=customer", headers=member_headers)
+    assert member_records.status_code == 403
+    member_lineage = client.get(
+        f"{base}/records/{first_record['id']}/lineage", headers=member_headers
+    )
+    assert member_lineage.status_code == 403
 
     changed_content = b"customer_code,name,email\nCUS-1,Acme International,changed@example.test\n"
     staged_update = _stage_file(

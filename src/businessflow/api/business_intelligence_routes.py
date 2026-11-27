@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from businessflow.api.dependencies import (
 )
 from businessflow.business_intelligence.analysis_service import (
     assess_metric_readiness,
+    assess_saved_analysis_readiness,
     create_metric_analysis,
     get_metric_analysis,
     list_metric_analyses,
@@ -200,6 +202,10 @@ def get_metric_readiness(
     metric_key: str,
     version: int | None = Query(default=None, ge=1),
     configuration_version: int | None = Query(default=None, ge=1),
+    domain: MetricDomainFilter | None = None,
+    period_start: date | None = None,
+    period_end: date | None = None,
+    dimensions: list[str] = Query(default=[]),
     user: UserAccount = Depends(get_current_user),
     session: Session = Depends(get_metrics_session),
     settings: Settings = Depends(get_settings),
@@ -211,8 +217,26 @@ def get_metric_readiness(
         metric_key,
         version=version,
         configuration_version=configuration_version,
+        domain=domain,
+        period_start=period_start,
+        period_end=period_end,
+        dimensions=dimensions,
         settings=settings,
     )
+
+
+@router.get(
+    "/analyses/{analysis_id}/readiness",
+    response_model=MetricReadinessResponse,
+)
+def get_saved_metric_analysis_readiness(
+    tenant_id: UUID,
+    analysis_id: UUID,
+    user: UserAccount = Depends(get_current_user),
+    session: Session = Depends(get_metrics_session),
+    settings: Settings = Depends(get_settings),
+) -> MetricReadinessResponse:
+    return assess_saved_analysis_readiness(session, user, tenant_id, analysis_id, settings=settings)
 
 
 @router.get("/configurations", response_model=CompanySemanticConfigurationPage)

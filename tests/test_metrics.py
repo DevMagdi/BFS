@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from decimal import Decimal
 
 from businessflow.metrics.calculation import calculate_metrics
 from businessflow.metrics.snapshot import content_hash, deserialize_input_snapshot
@@ -311,7 +310,14 @@ def test_metric_catalog_and_runs_are_versioned_reproducible_authorized_and_linea
     create_member(client, owner, tenant["id"], "metrics-member@example.com")
     member_headers = auth_headers(member)
     assert client.get(f"{base}/metrics/catalog", headers=member_headers).status_code == 200
-    assert client.get(f"{base}/metrics/runs/{run['id']}", headers=member_headers).json() == run
+    denied_run_create = client.post(
+        f"{base}/metrics/runs",
+        json={"start_week_date": WEEK_START, "week_count": 1},
+        headers=member_headers,
+    )
+    assert denied_run_create.status_code == 403
+    denied_run_read = client.get(f"{base}/metrics/runs/{run['id']}", headers=member_headers)
+    assert denied_run_read.status_code == 403
 
     latest_unknown = client.post(
         f"{base}/employees/{employee_1['id']}/weekly-capacity/{WEEK_START}",
@@ -338,18 +344,7 @@ def test_metric_catalog_and_runs_are_versioned_reproducible_authorized_and_linea
     assert second_run["input_hash"] != run["input_hash"]
 
     saved_run = client.get(f"{base}/metrics/runs/{run['id']}", headers=member_headers)
-    assert saved_run.status_code == 200
-    assert saved_run.json()["input_hash"] == run["input_hash"]
-    assert saved_run.json()["result_hash"] == run["result_hash"]
-    saved_capacity = next(
-        row
-        for row in saved_run.json()["input_snapshot"]["weekly_capacity"]
-        if row["employee_id"] == employee_1["id"]
-    )
-    assert saved_capacity["version"] == 1
-    assert Decimal(
-        saved_run.json()["result_snapshot"]["confirmed_overloads"][0]["overload_hours"]
-    ) == Decimal("2.00")
+    assert saved_run.status_code == 403
 
     outsider = register_user(client, "metrics-outsider@example.com", display_name="Outsider")
     outsider_tenant = create_tenant(

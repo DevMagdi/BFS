@@ -95,9 +95,15 @@ def test_manual_customer_commitment_lifecycle_correction_evidence_history_and_co
     }
 
     source_list = client.get(
-        f"/api/v1/tenants/{tenant_id}/company-data/sources", headers=member_headers
+        f"/api/v1/tenants/{tenant_id}/company-data/sources", headers=owner_headers
     )
     assert source_list.status_code == 200, source_list.text
+    assert (
+        client.get(
+            f"/api/v1/tenants/{tenant_id}/company-data/sources", headers=member_headers
+        ).status_code
+        == 403
+    )
     assert source_list.json()["total"] == 1
     source = source_list.json()["items"][0]
     assert source["id"] == record["source_id"]
@@ -106,9 +112,15 @@ def test_manual_customer_commitment_lifecycle_correction_evidence_history_and_co
     assert source["latest_ingestion_id"] is None
 
     coverage = client.get(
-        f"/api/v1/tenants/{tenant_id}/company-data/coverage", headers=member_headers
+        f"/api/v1/tenants/{tenant_id}/company-data/coverage", headers=owner_headers
     )
     assert coverage.status_code == 200, coverage.text
+    assert (
+        client.get(
+            f"/api/v1/tenants/{tenant_id}/company-data/coverage", headers=member_headers
+        ).status_code
+        == 403
+    )
     assert len(coverage.json()["datasets"]) == 6
     assert all(item["registered_source_count"] == 0 for item in coverage.json()["datasets"])
 
@@ -460,7 +472,7 @@ def test_manual_customer_commitment_lifecycle_correction_evidence_history_and_co
         command.downgrade(config, "0017_core_financial_transfers")
     with admin_engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0023_core_financial_guardrails"
+            "0025_domain_intelligence"
         )
 
 

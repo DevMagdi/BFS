@@ -106,6 +106,15 @@ def test_company_organization_employee_api_rbac_pagination_and_isolation(client,
     create_member(client, owner_tokens, tenant["id"], "context-org-member@example.com")
     member_headers = auth_headers(member_tokens)
     assert client.get(f"{base}/departments", headers=member_headers).status_code == 200
+    assert client.get(f"{base}/employees", headers=member_headers).status_code == 403
+    assert (
+        client.get(f"{base}/employees/{employees[0]['id']}", headers=member_headers).status_code
+        == 403
+    )
+    assert client.get(f"{base}/skills", headers=member_headers).status_code == 403
+    assert client.get(f"{base}/projects", headers=member_headers).status_code == 403
+    assert client.get(f"{base}/resource-assignments", headers=member_headers).status_code == 403
+    assert client.get(f"{base}/company-context", headers=member_headers).status_code == 403
     assert (
         client.post(
             f"{base}/business-units", json={"name": "Member Write"}, headers=member_headers
@@ -372,6 +381,17 @@ def test_skills_weekly_capacity_projects_assignments_and_factual_summary(client)
     assert assignment_filter.status_code == 200
     assert assignment_filter.json()["total"] == 1
 
+    member = register_user(client, "context-assignment-member@example.com")
+    create_member(client, owner_tokens, tenant["id"], "context-assignment-member@example.com")
+    member_headers = auth_headers(member)
+    for path in (
+        f"{base}/projects/{project['id']}",
+        f"{base}/projects/{project['id']}/assignments",
+        f"{base}/resource-assignments/{assignment['id']}",
+        f"{base}/resource-assignments/{assignment['id']}/history",
+    ):
+        assert client.get(path, headers=member_headers).status_code == 403
+
     summary = client.get(
         f"{base}/company-context?week_start_date={WEEK_START_TEXT}", headers=headers
     )
@@ -566,10 +586,23 @@ def test_company_context_rejects_invalid_domain_inputs_and_pagination(client):
     )
     assert reversed_project_dates.status_code == 422
 
-    reversed_assignment_dates = client.post(
-        "/api/v1/tenants/00000000-0000-0000-0000-000000000001/projects/00000000-0000-0000-0000-000000000002/assignments",
+    assignment_date_employee = _create_employee(client, headers, base, code="EMP-DATE-VALIDATION")
+    assignment_date_project = client.post(
+        f"{base}/projects",
         json={
-            "employee_id": "00000000-0000-0000-0000-000000000003",
+            "project_code": "DATE-CHECK",
+            "name": "Assignment date validation",
+            "start_date": WEEK_START_TEXT,
+            "planned_end_date": "2026-11-30",
+            "project_manager_employee_id": assignment_date_employee["id"],
+        },
+        headers=headers,
+    )
+    assert assignment_date_project.status_code == 201, assignment_date_project.text
+    reversed_assignment_dates = client.post(
+        f"{base}/projects/{assignment_date_project.json()['id']}/assignments",
+        json={
+            "employee_id": assignment_date_employee["id"],
             "start_date": "2026-11-22",
             "end_date": WEEK_START_TEXT,
             "planned_hours_per_week": "8.00",
@@ -726,7 +759,7 @@ def test_upgrade_from_milestone_2_schema_preserves_existing_data(admin_engine):
             )
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0023_core_financial_guardrails"
+                == "0025_domain_intelligence"
             )
             assert (
                 connection.scalar(

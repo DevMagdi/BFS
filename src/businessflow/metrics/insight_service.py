@@ -673,6 +673,7 @@ def _find_metric_runs(
     comparison_metric_run_id: UUID,
 ) -> tuple[CompanyContextAccess, MetricRun, MetricRun]:
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     runs = session.scalars(
         select(MetricRun).where(
             MetricRun.tenant_id == tenant_id,
@@ -859,6 +860,7 @@ def get_metric_insight_run(
     insight_run_id: UUID,
 ) -> MetricInsightRun:
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     insight_run = session.scalar(
         select(MetricInsightRun).where(
             MetricInsightRun.id == insight_run_id,

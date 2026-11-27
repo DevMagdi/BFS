@@ -303,6 +303,9 @@ def create_capacity_assessment(
     access = require_company_context_access(
         session, user, tenant_id, "company_context:write", request_id=request_id
     )
+    require_company_context_access(
+        session, user, tenant_id, "workforce:read", request_id=request_id
+    )
     intake = _get_intake(session, tenant_id, access.company.id, intake_id)
     version_number = body.intake_version or intake.current_version
     if version_number > intake.current_version:
@@ -433,6 +436,7 @@ def list_capacity_assessments(
     if not 1 <= limit <= MAX_HISTORY_PAGE_SIZE or not 0 <= offset <= MAX_HISTORY_OFFSET:
         raise ApiError(422, "invalid_page", "The requested page is outside supported limits.")
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     _get_intake(session, tenant_id, access.company.id, intake_id)
     base_query = select(CapacityAssessment).where(
         CapacityAssessment.tenant_id == tenant_id,
@@ -458,6 +462,7 @@ def get_capacity_assessment(
     assessment_id: UUID,
 ) -> CapacityAssessment:
     access = require_company_context_access(session, user, tenant_id, "company_context:read")
+    require_company_context_access(session, user, tenant_id, "workforce:read")
     assessment = session.scalar(
         select(CapacityAssessment).where(
             CapacityAssessment.id == assessment_id,

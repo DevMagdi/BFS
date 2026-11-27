@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import importlib.util
+import json
 from dataclasses import replace
-from unittest.mock import Mock
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import ANY, Mock
 from uuid import uuid4
 
 import pytest
@@ -12,11 +16,22 @@ from businessflow.business_intelligence.analysis_service import (
     MAX_BI_SOURCE_RECORDS,
     _count_source_records,
     _definition_requires_finance_read,
+    _effective_dimensions,
+    _project_universal_records,
     _readiness_response,
     _source_authority_requirement_failure,
+    _system_definition,
     _system_metric_reference_for_calculation,
+    _universal_required_fields,
+    _universal_source_contract_issues,
 )
 from businessflow.business_intelligence.engine import calculate_saved_analysis
+from businessflow.business_intelligence.governance import (
+    UNRESOLVED_GOVERNANCE_BLOCKERS,
+    requires_customer_data_processing_authorization,
+    requires_universal_data_read,
+    requires_workforce_read,
+)
 from businessflow.business_intelligence.models import BusinessMetricDefinitionVersion
 from businessflow.business_intelligence.registry import (
     SYSTEM_METRIC_BY_KEY,
@@ -33,6 +48,11 @@ from businessflow.business_intelligence.schemas import (
     MetricReadinessCheck,
 )
 from businessflow.errors import ApiError
+from businessflow.metrics.snapshot import content_hash
+from businessflow.universal_data.catalog import (
+    canonical_contract_definition,
+    entity_for_contract_version,
+)
 
 
 def test_optional_metric_formula_jsonb_fields_use_sql_null() -> None:
@@ -40,6 +60,91 @@ def test_optional_metric_formula_jsonb_fields_use_sql_null() -> None:
         column = BusinessMetricDefinitionVersion.__table__.c[column_name]
         assert column.nullable
         assert column.type.none_as_null is True
+
+
+def test_effective_dimensions_include_required_and_time_grain_without_duplicates() -> None:
+    requested = ["week", "currency_code"]
+    definition = {
+        "required_dimensions": ["currency_code", "customer"],
+        "time_granularity": "week",
+    }
+
+    assert _effective_dimensions(definition, requested) == [
+        "week",
+        "currency_code",
+        "customer",
+    ]
+
+
+def test_versioned_universal_sales_contract_and_migration_payload_stay_in_sync() -> None:
+    legacy_sales = entity_for_contract_version("sales_transaction", "1.0.0")
+    current_sales = entity_for_contract_version("sales_transaction", "1.1.0")
+
+    assert legacy_sales is not None
+    assert current_sales is not None
+    assert "product_code" not in legacy_sales.field_by_name
+    assert current_sales.field_by_name["product_code"].required is False
+    assert entity_for_contract_version("sales_transaction", "2.0.0") is None
+    assert content_hash(canonical_contract_definition("1.0.0")) == (
+        "5f5fef068312aaa79ef0f863d7fb4a982626053fb9f06b322224d2e71aa5bd1e"
+    )
+
+    migration_path = (
+        Path(__file__).resolve().parents[2]
+        / "migrations"
+        / "versions"
+        / "0025_domain_intelligence_expansion.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "migration_0025_domain_intelligence", migration_path
+    )
+    assert spec is not None and spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    assert json.loads(migration.UNIVERSAL_CONTRACT_DEFINITION) == canonical_contract_definition(
+        "1.1.0"
+    )
+    assert content_hash(canonical_contract_definition("1.1.0")) == migration.UNIVERSAL_CONTRACT_HASH
+
+
+def test_universal_source_contract_validation_blocks_fields_absent_from_legacy_sources():
+    legacy_definition = canonical_contract_definition("1.0.0")
+    legacy_hash = content_hash(legacy_definition)
+    source = SimpleNamespace(
+        dataset_type="universal_records",
+        contract_key="businessflow.universal.business_records",
+        contract_version="1.0.0",
+    )
+    contract = SimpleNamespace(
+        dataset_type="universal_records",
+        definition=legacy_definition,
+        definition_hash=legacy_hash,
+    )
+    session = Mock()
+    session.get.return_value = contract
+
+    assert (
+        _universal_source_contract_issues(
+            session, source, entity_type="sales_transaction", required_fields={"amount"}
+        )
+        == []
+    )
+    assert _universal_source_contract_issues(
+        session,
+        source,
+        entity_type="sales_transaction",
+        required_fields={"product_code"},
+    ) == ["required_field_not_supported_by_source_contract"]
+
+    contract.definition_hash = "0" * 64
+    assert _universal_source_contract_issues(
+        session, source, entity_type="sales_transaction", required_fields=set()
+    ) == ["source_contract_integrity_invalid"]
+    session.get.assert_called_with(
+        ANY,
+        ("businessflow.universal.business_records", "1.0.0"),
+    )
 
 
 def _record(
@@ -188,6 +293,108 @@ def _formula_input(dependencies: list[dict[str, object]]) -> dict[str, object]:
             ],
         },
     }
+
+
+def test_product_sales_metrics_group_only_source_product_codes_without_currency_mixing():
+    count_definition = _system_definition("sales.source_transaction_record_count_by_product")
+    amount_definition = _system_definition("sales.source_amount_observed_by_product")
+    assert count_definition is not None
+    assert amount_definition is not None
+    assert count_definition["required_fields"] == [
+        {"entity_type": "sales_transaction", "field": "product_code"}
+    ]
+    assert amount_definition["required_fields"] == count_definition["required_fields"]
+    assert (
+        entity_for_contract_version("sales_transaction", "1.0.0").field_by_name.get("product_code")
+        is None
+    )
+
+    records = []
+    for record_id, product_code, amount, currency_code in (
+        ("tx-1", "SKU-A", "12.00", "USD"),
+        ("tx-2", "SKU-A", "5.00", "USD"),
+        ("tx-3", "SKU-B", "7.50", "EUR"),
+    ):
+        record = _record(record_id, amount=amount, status="posted", currency_code=currency_code)
+        attributes = dict(record["attributes"])
+        attributes["product_code"] = product_code
+        record["attributes"] = attributes
+        records.append(record)
+    input_snapshot = {
+        "period": {"start": None, "end": None},
+        "dimensions": ["product"],
+        "calculation_inputs": {
+            "records": records,
+            "evidence": [],
+            "blockers": [],
+            "warnings": [],
+        },
+    }
+
+    count_result = calculate_saved_analysis(count_definition, {}, input_snapshot)
+    amount_result = calculate_saved_analysis(amount_definition, {}, input_snapshot)
+
+    assert count_result["status"] == "complete"
+    assert [
+        (group["dimensions"]["product"], group["value"]) for group in count_result["groups"]
+    ] == [("SKU-A", "2"), ("SKU-B", "1")]
+    assert amount_result["status"] == "complete"
+    assert [group["dimensions"] for group in amount_result["groups"]] == [
+        {"product": "SKU-A"},
+        {"product": "SKU-B"},
+    ]
+    assert [
+        (group["dimensions"]["product"], group["currency_code"], group["value"])
+        for group in amount_result["groups"]
+    ] == [("SKU-A", "USD", "17.00"), ("SKU-B", "EUR", "7.50")]
+
+
+def test_manual_commitment_count_uses_privacy_limited_snapshots_and_explicit_date_grain():
+    definition = _system_definition("operations.accepted_customer_commitment_count")
+    assert definition is not None
+    input_snapshot = {
+        "period": {"start": "2025-04-01", "end": "2025-05-31"},
+        "dimensions": ["month"],
+        "sensitivity_scope": "customer_commitment",
+        "calculation_inputs": {
+            "records": [
+                {
+                    "record_id": "commitment-1",
+                    "entity_type": "manual_customer_commitment",
+                    "attributes": {"analysis_date": "2025-04-15"},
+                },
+                {
+                    "record_id": "commitment-2",
+                    "entity_type": "manual_customer_commitment",
+                    "attributes": {"analysis_date": "2025-04-20"},
+                },
+                {
+                    "record_id": "commitment-3",
+                    "entity_type": "manual_customer_commitment",
+                    "attributes": {"analysis_date": "2025-05-02"},
+                },
+            ],
+            "evidence": [
+                {
+                    "evidence_kind": "manual_customer_commitment",
+                    "record_id": "commitment-1",
+                }
+            ],
+            "blockers": [],
+            "warnings": [],
+        },
+    }
+
+    result = calculate_saved_analysis(definition, {}, input_snapshot)
+
+    assert result["status"] == "complete"
+    assert result["sensitivity_scope"] == "customer_commitment"
+    assert [(group["dimensions"]["month"], group["value"]) for group in result["groups"]] == [
+        ("2025-04", "2"),
+        ("2025-05", "1"),
+    ]
+    assert "customer_name" not in str(result)
+    assert "requested_delivery_date" not in str(result)
 
 
 def test_metric_schema_rejects_identity_distinct_values_and_non_scalar_m5_grain():
@@ -624,12 +831,129 @@ def test_source_candidate_record_count_query_is_hard_bounded():
     assert record_count == MAX_BI_SOURCE_RECORDS + 1
 
 
+def test_customer_processing_guard_covers_customer_dimensions_fields_and_filters():
+    transaction_definition = {
+        "domain": "sales",
+        "calculation": {"kind": "universal_record_count", "entity_type": "sales_transaction"},
+    }
+    assert requires_customer_data_processing_authorization(
+        transaction_definition, requested_dimensions=["customer"]
+    )
+    assert requires_customer_data_processing_authorization(
+        transaction_definition,
+        analysis_filters=[{"field": "customer_code"}],
+    )
+    assert requires_customer_data_processing_authorization(
+        {
+            "domain": "sales",
+            "calculation": {
+                "kind": "universal_distinct_source_values",
+                "entity_type": "sales_transaction",
+                "field": "customer_code",
+            },
+        }
+    )
+    assert requires_customer_data_processing_authorization(
+        {"domain": "customers", "calculation": {"kind": "universal_record_count"}}
+    )
+    assert requires_customer_data_processing_authorization(
+        {"required_relationships": ["customer_has_sales_transaction"]}
+    )
+    assert not requires_customer_data_processing_authorization(transaction_definition)
+
+
+def test_universal_data_read_guard_covers_calculations_sources_and_relationships():
+    for calculation_kind in (
+        "universal_record_count",
+        "universal_source_amount_sum",
+        "universal_distinct_source_values",
+    ):
+        assert requires_universal_data_read({"calculation": {"kind": calculation_kind}})
+    assert requires_universal_data_read(
+        {"required_source_datasets": [{"dataset_type": "universal_records"}]}
+    )
+    assert requires_universal_data_read(
+        {"required_relationships": ["customer_has_sales_transaction"]}
+    )
+    assert requires_universal_data_read({"dependencies": [{"sensitivity_scope": "universal_data"}]})
+    assert not requires_universal_data_read(
+        {"calculation": {"kind": "m5_metric"}, "domain": "people"}
+    )
+    assert not requires_universal_data_read({"calculation": {"kind": "custom_formula"}})
+
+
+def test_workforce_guard_covers_m5_people_and_pinned_dependencies():
+    assert requires_workforce_read({"domain": "people"})
+    assert requires_workforce_read({"dimensions": ["employee"]})
+    assert requires_workforce_read({"domain": "operations"}, requested_dimensions=["employee"])
+    assert requires_workforce_read({"calculation": {"kind": "m5_metric"}})
+    assert requires_workforce_read(
+        {"dependencies": [{"metric_key": "m5.available_capacity_hours"}]}
+    )
+    assert requires_workforce_read({"required_relationships": ["project_managed_by_employee"]})
+    assert not requires_workforce_read(
+        {"domain": "operations", "calculation": {"kind": "universal_record_count"}}
+    )
+
+
+def test_universal_input_projection_keeps_only_calculation_scope_fields():
+    definition = {
+        "calculation": {"kind": "universal_source_amount_sum", "entity_type": "sales_transaction"},
+        "required_fields": [],
+        "filters": [],
+        "exclusions": [],
+    }
+    required_fields = _universal_required_fields(
+        definition,
+        dimensions=["customer", "month"],
+        analysis_filters=[{"field": "status"}],
+        period_scoped=True,
+    )
+    assert required_fields == {
+        "amount",
+        "currency_code",
+        "customer_code",
+        "status",
+        "transaction_date",
+    }
+
+    records = [
+        {
+            "record_id": "source-record",
+            "attributes": {
+                "amount": "12.30",
+                "currency_code": "USD",
+                "customer_code": "source-customer",
+                "status": "posted",
+                "transaction_date": "2025-01-15",
+                "description": "unrequested data",
+            },
+        }
+    ]
+    projected = _project_universal_records(records, required_fields)
+    assert projected[0]["record_id"] == "source-record"
+    assert projected[0]["attributes"] == {
+        "amount": "12.30",
+        "currency_code": "USD",
+        "customer_code": "source-customer",
+        "status": "posted",
+        "transaction_date": "2025-01-15",
+    }
+
+
 def test_readiness_exposes_warnings_and_returns_conditional_status():
     readiness = _readiness_response(
+        tenant_id=uuid4(),
+        company_id=uuid4(),
+        domain="sales",
         definition={"metric_key": "sales.metric", "limitations": []},
         definition_hash="a" * 64,
         metric_version=1,
         configuration_version=1,
+        analysis_id=None,
+        period_start=None,
+        period_end=None,
+        dimensions=["month"],
         calculation_supported=True,
         checks=[
             MetricReadinessCheck(
@@ -643,4 +967,9 @@ def test_readiness_exposes_warnings_and_returns_conditional_status():
     )
 
     assert readiness.readiness_status == "conditional"
+    assert readiness.domain == "sales"
+    assert readiness.analysis_id is None
+    assert readiness.dimensions == ["month"]
+    assert readiness.governance_blockers == list(UNRESOLVED_GOVERNANCE_BLOCKERS)
+    assert readiness.retention_status == "unresolved"
     assert readiness.warnings == ["source_authority_unclassified"]

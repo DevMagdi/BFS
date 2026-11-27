@@ -338,9 +338,10 @@ class BusinessSemanticRelationshipVersion(Base):
             "fk_bse_relationship_supersedes",
         ),
         CheckConstraint(
-            "relationship_type IN ('customer_has_sales_transaction', 'supplier_has_expense', "
+            "relationship_type IN ('customer_has_sales_transaction', "
+            "'product_has_sales_transaction', 'supplier_has_expense', "
             "'employee_belongs_to_department', 'department_in_business_unit', "
-            "'project_assigned_to_employee')",
+            "'project_assigned_to_employee', 'project_managed_by_employee')",
             name="ck_bse_relationship_type",
         ),
         _member_fk("created_by_user_id", "fk_bse_relationship_actor"),

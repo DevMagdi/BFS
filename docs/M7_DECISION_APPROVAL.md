@@ -44,10 +44,10 @@ Each submission uses a database lock and `expected_version` check. Concurrent at
 
 ## Authorization and approval policy
 
-Authorization is enforced in the service layer and PostgreSQL RLS; URL IDs alone do not grant access. The current M2–M7 policy is explicit:
+Authorization is enforced in the service layer and PostgreSQL RLS; URL IDs alone do not grant access. M7 decision rows bind M6 capacity assessments and M5 workforce evidence, so reading them requires both the decision capability and workforce evidence access:
 
-- **Owner and admin:** `decision:read`, `decision:write` and `decision:approve` within their active tenant/company. They may submit; either may review a decision submitted by a different user.
-- **Member:** `decision:read` only. Members cannot submit or approve.
+- **Owner and admin:** `decision:read`, `decision:write`, `decision:approve`, and `workforce:read` within their active tenant/company. They may submit; either may review a decision submitted by a different user.
+- **Member:** The base role includes `decision:read`, but does not include `workforce:read`; therefore members cannot list or retrieve M7 decision history, submit, or approve. A future role must be granted both read permissions to inspect decision evidence.
 - **Separation of duties:** Supported and mandatory for this workflow. The authenticated submitter cannot approve the same version. The rule is enforced in the service and by a database trigger. At least two active owner/admin principals are needed to complete a submission/review cycle; no self-approval exception exists.
 - One approval record is allowed per decision version. A change or new evidence requires a superseding decision version and a new review. Approvals are never transferred to a superseding version.
 

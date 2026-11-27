@@ -617,6 +617,17 @@ def test_assessment_history_keeps_old_intake_and_metric_evidence_after_source_ch
     assert after_source_change["metric_input_hash"] != original["metric_input_hash"]
     assert after_source_change["metric_result_hash"] != original["metric_result_hash"]
 
+    member = register_user(client, "m6history-member@example.com")
+    create_member(client, _owner, _tenant["id"], "m6history-member@example.com")
+    member_headers = auth_headers(member)
+    assessment_collection = f"{base}/project-intakes/{intake['id']}/assessments"
+    for path in (
+        assessment_collection,
+        f"{assessment_collection}/{original['id']}",
+        f"{assessment_collection}/{original['id']}/evidence",
+    ):
+        assert client.get(path, headers=member_headers).status_code == 403
+
     old_again = client.get(
         f"{base}/project-intakes/{intake['id']}/assessments/{original['id']}/evidence",
         headers=headers,

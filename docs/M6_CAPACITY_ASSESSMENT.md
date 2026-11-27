@@ -21,7 +21,7 @@ Each create/update writes a content-hashed immutable `project_intake_versions` s
 
 ## Assessment lifecycle and API
 
-All paths below are under `/api/v1/tenants/{tenant_id}`. The tenant is accepted only in the path and verified against the authenticated principal. The company is resolved from that tenant's canonical active company; clients cannot select a `company_id` in a body or query. Owner/admin users with `company_context:write` may create/update intakes and request assessments. Authorized tenant members with `company_context:read` may read intake versions, evidence, and history.
+All paths below are under `/api/v1/tenants/{tenant_id}`. The tenant is accepted only in the path and verified against the authenticated principal. The company is resolved from that tenant's canonical active company; clients cannot select a `company_id` in a body or query. Owner/admin users with `company_context:write` may create/update intakes. Members with `company_context:read` may read the project-intake demand inputs and versions. Creating a capacity assessment requires both `company_context:write` and `workforce:read`; assessment history, detail, and evidence require both `company_context:read` and `workforce:read`, because those results include M5 workforce-capacity evidence. The current role matrix grants `workforce:read` only to owners/admins.
 
 - `POST /project-intakes` — create version 1.
 - `GET /project-intakes` — bounded, paginated company intake list.

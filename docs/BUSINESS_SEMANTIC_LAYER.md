@@ -19,9 +19,7 @@ All routes are under `/api/v1/tenants/{tenant_id}/business-semantic`:
 - `GET, POST /relationships` — create and inspect explicit relationships and their versions;
   history is available with `include_history=true`.
 
-Reads require the existing Company Context read permission. Writes require the existing Company
-Context write permission. The authenticated tenant resolves to its one active Company; clients
-cannot choose a different Company. The API also applies the existing seeded-demo write guard.
+The static catalog and ordinary Company Context identities use `company_context:read`; writes require `company_context:write`. Employee identities and employee-linked mappings/relationships additionally require `workforce:read`. Universal Data-backed identities, mappings, and relationships require `universal_data:read`; without it, broad lists omit those records and explicit Universal Data filters fail closed. The default role matrix grants both `workforce:read` and `universal_data:read` only to owners and admins. This separates raw source-data access from customer-data processing approval: BI processing can remain blocked even for an authorized source reader. The authenticated tenant resolves to its one active Company; clients cannot choose a different Company. The API also applies the existing seeded-demo write guard.
 
 The built-in vocabulary covers Company Context business units, departments, employees, and
 projects, plus Universal Data customer, supplier, product, sales-transaction, expense,
@@ -59,6 +57,9 @@ The initial verifiable relationships are deliberately bounded:
   key to match the reviewed references.
 - Project → employee requires a committed or completed Company Context resource assignment; a
   proposed assignment is not sufficient.
+- Project → manager employee requires the current `Project.project_manager_employee_id` reference to
+  match the mapped employee. The relationship type is versioned in the semantic catalog; the
+  project-manager reference alone is not exposed to callers without workforce access.
 
 A `source_verified` relationship must cite the exact reviewed mapping versions. On reads, the
 service rechecks that the relationship version and mappings are current and that the stored source
@@ -72,7 +73,11 @@ relationship versions.
 The tables use forced PostgreSQL row-level security on both tenant and Company context, composite
 Company/tenant foreign keys, same-scope references, and database append-only triggers. Runtime
 permissions are limited to the operations needed by the API. Mapping and relationship changes are
-audited without copying source values into audit metadata.
+audited without copying source values into audit metadata. Migration `0024_company_wide_intelligence`
+extends the allowed relationship vocabulary with the verified project-manager edge and adds a
+Company-scoped workforce-sensitivity marker used to protect saved BI analysis snapshots. The marker
+is backfilled from People/M5 definitions, pinned dependencies, and employee-linked relationships;
+legacy BI input snapshots remain immutable.
 
 A Universal Data amount is still a source amount, not an approved accounting fact, revenue,
 expense, margin, or cash measure. Semantic identity and relationship evidence do not create

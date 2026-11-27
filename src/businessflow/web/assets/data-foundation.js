@@ -39,11 +39,15 @@
     loadSequence: 0,
     contracts: [],
     coverage: null,
+    coverageAccessDenied: false,
     sources: [],
     sourceTotal: 0,
+    sourceAccessDenied: false,
     imports: [],
     importTotal: 0,
+    importAccessDenied: false,
     commitments: [],
+    commitmentAccessDenied: false,
     commitmentTotal: 0,
     commitmentFilter: "",
     selectedCommitment: null,
@@ -52,6 +56,7 @@
     commitmentHistoryTotal: 0,
     universalSources: [],
     universalSourceTotal: 0,
+    universalSourceAccessDenied: false,
     universalLoadError: null,
     universalEntities: [],
     universalMappings: [],
@@ -115,6 +120,15 @@
     onAuthCleared: showSignedOut,
   });
   const { clearAuth, request, requestBlob } = api;
+
+  async function requestWithExpectedPermission(path) {
+    try {
+      return await request(path);
+    } catch (error) {
+      if (error.status === 403) return null;
+      throw error;
+    }
+  }
 
   function setStatus(message, kind = "muted") {
     const target = $("#workspace-status");
@@ -186,7 +200,7 @@
       ? "Loading Company permissions and evidence. Write actions stay disabled until the selected workspace is loaded."
       : roleCanWrite
         ? "Owner/admin write access is active for M12 source registration, Universal Data review/promotion, and M4 import evidence. The server remains authoritative for every permission check."
-        : "M12 and Universal Data are read-only for members; M4 import recording is also owner/admin-only. Active members can create and submit their own manual customer-commitment drafts; only an owner/admin can review them.";
+        : "M4/M12 workforce evidence and raw Universal Data are hidden without workforce:read or universal_data:read; static catalogs remain available. Manual customer commitments keep their separate customer_commitment permissions, so members can still manage their own drafts and owner/admins review them.";
     notice.hidden = state.canWrite;
     for (const selector of ["#source-form", "#ingestion-form", "#ud-source-form", "#ud-upload-form", "#ud-sync-form", "#ud-mapping-form"]) {
       for (const field of $$("input, select, textarea, button", $(selector))) field.disabled = !state.canWrite;
@@ -217,11 +231,15 @@
     state.tenantDataReady = false;
     state.contracts = [];
     state.coverage = null;
+    state.coverageAccessDenied = false;
     state.sources = [];
     state.sourceTotal = 0;
+    state.sourceAccessDenied = false;
     state.imports = [];
     state.importTotal = 0;
+    state.importAccessDenied = false;
     state.commitments = [];
+    state.commitmentAccessDenied = false;
     state.commitmentTotal = 0;
     state.commitmentFilter = "";
     state.selectedCommitment = null;
@@ -230,6 +248,7 @@
     state.commitmentHistoryTotal = 0;
     state.universalSources = [];
     state.universalSourceTotal = 0;
+    state.universalSourceAccessDenied = false;
     state.universalLoadError = null;
     state.universalEntities = [];
     state.universalMappings = [];
@@ -306,6 +325,10 @@
     const target = $("#coverage-grid");
     target.replaceChildren();
     const coverage = state.coverage;
+    if (state.coverageAccessDenied) {
+      target.append(node("p", "df-finding", "M12 coverage can expose workforce source metadata and requires workforce:read. This restriction does not affect the separately permissioned customer-commitment workflow."));
+      return;
+    }
     if (!coverage?.datasets?.length) {
       target.append(node("p", "df-empty", "No published M4 contract coverage is available."));
       return;
@@ -402,7 +425,8 @@
     }
     if (previous && eligible.some((item) => item.id === previous)) select.value = previous;
     const note = $("#import-picker-note");
-    if (!source) note.textContent = "Select a registered source to see applied imports with the same dataset type.";
+    if (state.importAccessDenied) note.textContent = "M4 staged-import metadata requires workforce:read and is hidden for this role.";
+    else if (!source) note.textContent = "Select a registered source to see applied imports with the same dataset type.";
     else if (!eligible.length) note.textContent = `No applied ${DATASET_LABELS[source.dataset_type] || source.dataset_type} imports are loaded. Import data in the Capacity workflow first.`;
     else note.textContent = "An M4 import can be bound to one M12 source only. If already linked elsewhere, the server will reject the duplicate.";
     const more = $("#load-more-imports-button");
@@ -415,7 +439,9 @@
     const previous = select.value;
     select.replaceChildren();
     const m4Sources = state.sources.filter((source) => M4_DATASET_TYPES.has(source.dataset_type));
-    const placeholder = node("option", "", m4Sources.length ? "Choose a registered M4 source…" : "Register an M4 source first…");
+    const placeholder = node("option", "", state.sourceAccessDenied
+      ? "M12 sources require workforce access…"
+      : m4Sources.length ? "Choose a registered M4 source…" : "Register an M4 source first…");
     placeholder.value = "";
     select.append(placeholder);
     for (const source of m4Sources) {
@@ -426,8 +452,8 @@
     if (previous && m4Sources.some((source) => source.id === previous)) select.value = previous;
     renderIngestionImportOptions();
     const more = $("#load-more-sources-button");
-    more.hidden = state.sources.length >= state.sourceTotal;
-    more.disabled = !state.tenant || state.sources.length >= state.sourceTotal;
+    more.hidden = state.sourceAccessDenied || state.sources.length >= state.sourceTotal;
+    more.disabled = state.sourceAccessDenied || !state.tenant || state.sources.length >= state.sourceTotal;
   }
 
   function badge(text, kind = "") {
@@ -437,6 +463,10 @@
   function renderSources() {
     const target = $("#source-list");
     target.replaceChildren();
+    if (state.sourceAccessDenied) {
+      target.append(node("p", "df-finding", "The M12 source registry contains workforce evidence and requires workforce:read. Customer-commitment records remain available through their separate workflow permissions."));
+      return;
+    }
     const m12Sources = state.sources.filter((source) => source.dataset_type !== "universal_records");
     if (!m12Sources.length) {
       target.append(node("p", "df-empty", "No M4 or manual customer-commitment source is registered in this Company yet. This means it is not tracked here; it is not evidence that the business has no data."));
@@ -513,51 +543,85 @@
       const commitmentQuery = commitmentFilter ? `&status=${encodeURIComponent(commitmentFilter)}` : "";
       const universalBase = `${base}/universal`;
       const universalRequest = Promise.all([
-        request(`${universalBase}/sources?limit=${PAGE_SIZE}&offset=0`),
+        requestWithExpectedPermission(`${universalBase}/sources?limit=${PAGE_SIZE}&offset=0`),
         request(`${universalBase}/entities`),
-      ]).then(([sources, entities]) => ({ sources, entities, error: null }))
-        .catch((error) => ({ sources: null, entities: null, error }));
+      ]).then(([sources, entities]) => ({
+        sources,
+        entities,
+        sourceAccessDenied: sources === null,
+        error: null,
+      })).catch((error) => ({
+        sources: null,
+        entities: null,
+        sourceAccessDenied: false,
+        error,
+      }));
       const [coreResults, universalResult] = await Promise.all([
         Promise.all([
           request(`${base}/contracts`),
-          request(`${base}/coverage`),
-          request(`${base}/sources?limit=${PAGE_SIZE}&offset=0`),
-          request(`/tenants/${encodeURIComponent(tenantId)}/imports?limit=${PAGE_SIZE}&offset=0`),
-          request(`${commitmentPath}?limit=${PAGE_SIZE}&offset=0${commitmentQuery}`),
+          requestWithExpectedPermission(`${base}/coverage`),
+          requestWithExpectedPermission(`${base}/sources?limit=${PAGE_SIZE}&offset=0`),
+          requestWithExpectedPermission(`/tenants/${encodeURIComponent(tenantId)}/imports?limit=${PAGE_SIZE}&offset=0`),
+          requestWithExpectedPermission(`${commitmentPath}?limit=${PAGE_SIZE}&offset=0${commitmentQuery}`),
         ]),
         universalRequest,
       ]);
       if (sequence !== state.loadSequence || state.tenant?.id !== tenantId) return;
       const [contractsResult, coverageResult, sourcesResult, importsResult, commitmentsResult] = coreResults;
       state.contracts = contractsResult.data?.items || [];
-      state.coverage = coverageResult.data;
-      state.sources = sourcesResult.data?.items || [];
-      state.sourceTotal = sourcesResult.data?.total || 0;
-      state.imports = importsResult.data?.items || [];
-      state.importTotal = importsResult.data?.total || 0;
-      state.commitments = commitmentsResult.data?.items || [];
-      state.commitmentTotal = commitmentsResult.data?.total || 0;
+      state.coverageAccessDenied = coverageResult === null;
+      state.coverage = coverageResult?.data || null;
+      state.sourceAccessDenied = sourcesResult === null;
+      state.sources = sourcesResult?.data?.items || [];
+      state.sourceTotal = sourcesResult?.data?.total || 0;
+      state.importAccessDenied = importsResult === null;
+      state.imports = importsResult?.data?.items || [];
+      state.importTotal = importsResult?.data?.total || 0;
+      state.commitmentAccessDenied = commitmentsResult === null;
+      state.commitments = commitmentsResult?.data?.items || [];
+      state.commitmentTotal = commitmentsResult?.data?.total || 0;
       state.universalLoadError = universalResult.error
         ? universalResult.error.message || "Universal Data could not be loaded."
         : null;
+      state.universalSourceAccessDenied = universalResult.sourceAccessDenied;
       state.universalSources = universalResult.sources?.data?.items || [];
       state.universalSourceTotal = universalResult.sources?.data?.total || 0;
       state.universalEntities = universalResult.entities?.data?.items || [];
-      if (state.universalLoadError) {
+      if (state.universalLoadError || state.universalSourceAccessDenied) {
         state.universalCurrent = null;
         state.universalMappingDraft = null;
+        state.universalIngestionsSourceId = null;
+        state.universalProfileHistorySourceId = null;
+        state.universalProfileHistory = [];
+        state.universalProfileHistoryTotal = 0;
         state.universalIngestions = [];
         state.universalIngestionTotal = 0;
         state.universalRecords = [];
         state.universalRecordTotal = 0;
+        if (state.universalLoadError) state.universalEntities = [];
       }
       state.commitmentFilter = commitmentFilter;
       state.tenantDataReady = true;
       renderWorkspace();
-      setStatus(`Company data evidence loaded · ${state.tenant.role || "member"} · ${state.sourceTotal} registered sources · ${state.importTotal} M4 imports in history.`, "is-success");
+      const restrictedEvidence = [];
+      if (state.coverageAccessDenied || state.sourceAccessDenied || state.importAccessDenied) {
+        restrictedEvidence.push("M4/M12 workforce evidence requires workforce access");
+      }
+      if (state.universalSourceAccessDenied) {
+        restrictedEvidence.push("raw Universal Data requires universal_data:read");
+      }
+      if (state.commitmentAccessDenied) {
+        restrictedEvidence.push("customer commitments require customer_commitment:read");
+      }
+      setStatus(
+        `Company workspace loaded · ${state.tenant.role || "member"} · ${restrictedEvidence.length ? restrictedEvidence.join(" · ") : `${state.sourceTotal} registered sources · ${state.importTotal} M4 imports in history`}.`,
+        "is-success",
+      );
       const historySourceId = $("#ud-history-source").value;
-      if (historySourceId) void loadUniversalIngestions(historySourceId);
-      void loadUniversalRecords();
+      if (historySourceId && !state.universalSourceAccessDenied && !state.universalLoadError) {
+        void loadUniversalIngestions(historySourceId);
+      }
+      if (!state.universalSourceAccessDenied && !state.universalLoadError) void loadUniversalRecords();
     } catch (error) {
       if (sequence !== state.loadSequence) return;
       if ([403, 404].includes(error.status)) clearTenantWorkspace();
@@ -940,6 +1004,10 @@
     target.replaceChildren();
     more.hidden = state.commitments.length >= state.commitmentTotal;
     more.disabled = more.hidden || !state.tenantDataReady;
+    if (state.commitmentAccessDenied) {
+      target.append(node("p", "df-finding", "Customer commitments are not visible with this role's current customer_commitment:read permission."));
+      return;
+    }
     if (!state.commitments.length) {
       target.append(node("p", "df-empty", state.commitmentFilter
         ? "No customer commitments match this status filter."
@@ -1319,8 +1387,8 @@
   function renderUniversalSources() {
     const target = $("#ud-source-list");
     const more = $("#ud-sources-load-more");
-    more.hidden = state.universalSources.length >= state.universalSourceTotal;
-    more.disabled = !state.tenant || state.universalSources.length >= state.universalSourceTotal;
+    more.hidden = state.universalSourceAccessDenied || state.universalSources.length >= state.universalSourceTotal;
+    more.disabled = state.universalSourceAccessDenied || !state.tenant || state.universalSources.length >= state.universalSourceTotal;
     target.replaceChildren();
     if (!state.universalSources.length) {
       target.append(node("p", "df-empty", "No Universal Data source is registered for this Company. Registration is metadata only; it does not verify a provider or source authority."));
@@ -1511,6 +1579,22 @@
   function renderUniversalData() {
     renderUniversalOptions();
     renderUniversalEntityOptions();
+    if (state.universalSourceAccessDenied) {
+      $("#ud-source-list").replaceChildren(node("p", "df-finding", "Universal source profiles, records, and evidence require universal_data:read. The static entity catalog remains Company-Context-readable and is listed below."));
+      $("#ud-ingestion-list").replaceChildren(node("p", "df-finding", "Universal ingestion history requires universal_data:read."));
+      $("#ud-record-list").replaceChildren(node("p", "df-finding", `Static entities: ${state.universalEntities.map((item) => item.label).join(", ") || "catalog metadata could not be loaded"}. Raw canonical records require universal_data:read.`));
+      $("#ud-profile-history").replaceChildren();
+      $("#ud-profile-history").hidden = true;
+      $("#ud-record-lineage").replaceChildren();
+      $("#ud-record-lineage").hidden = true;
+      $("#ud-review-panel").hidden = true;
+      for (const selector of ["#ud-sources-load-more", "#ud-ingestions-load-more", "#ud-records-load-more"]) {
+        $(selector).hidden = true;
+        $(selector).disabled = true;
+      }
+      setUniversalStatus("Static Universal Data catalog available · raw source data is restricted for this role.");
+      return;
+    }
     if (state.universalLoadError) {
       $("#ud-source-list").replaceChildren(node("p", "df-finding", state.universalLoadError));
       $("#ud-ingestion-list").replaceChildren(node("p", "df-finding", "Universal ingestion history is unavailable."));
@@ -2206,7 +2290,7 @@
   }
 
   async function loadUniversalRecords({ append = false } = {}) {
-    if (!state.tenant) return;
+    if (!state.tenant || state.universalSourceAccessDenied || state.universalLoadError) return;
     const context = captureWorkspace();
     const entityType = $("#ud-record-entity").value;
     if (append && state.universalRecordFilter !== entityType) return;

@@ -275,7 +275,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0023_core_financial_guardrails"
+                "0025_domain_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -347,7 +347,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
                         is False
                     )
 
-            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 8
+            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 9
             assert (
                 connection.scalar(
                     text(
@@ -662,7 +662,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
             os.environ["MIGRATION_DATABASE_URL"] = migration_url
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0023_core_financial_guardrails"
+                "0025_domain_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -864,7 +864,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(migration_config, "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0023_core_financial_guardrails"
+                "0025_domain_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -928,7 +928,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(migration_config, "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0023_core_financial_guardrails"
+                "0025_domain_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -1008,7 +1008,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0023_core_financial_guardrails"
+                "0025_domain_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -1082,7 +1082,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0023_core_financial_guardrails"
+                "0025_domain_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -1163,14 +1163,14 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0023_core_financial_guardrails"
+                "0025_domain_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
                 expected_insert=False,
                 table_wide_update=False,
             )
-            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 8
+            assert connection.scalar(text("SELECT count(*) FROM company_data_contracts")) == 9
             assert (
                 connection.scalar(text("SELECT to_regclass('public.company_data_sources')"))
                 == "company_data_sources"

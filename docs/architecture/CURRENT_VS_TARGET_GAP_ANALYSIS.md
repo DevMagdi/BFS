@@ -1,6 +1,6 @@
 # BusinessFlow — Current-versus-Target Gap Analysis
 
-- **Status:** The detailed seven-answer assessment below is a frozen M9 snapshot. Current implementation and target boundaries are summarized here and mapped in [`../roadmap/PRODUCT_ROADMAP.md`](../roadmap/PRODUCT_ROADMAP.md). This current summary includes the separate Phase 3 semantic and Business Intelligence increments through migrations 0021–0022.
+- **Status:** The detailed seven-answer assessment below is a frozen M9 snapshot. Current implementation and target boundaries are summarized here and mapped in [`../roadmap/PRODUCT_ROADMAP.md`](../roadmap/PRODUCT_ROADMAP.md). This current summary includes the separate Phase 3 semantic and Business Intelligence increments through migrations 0021–0022 and 0024, with 0023 dedicated to Core Financials guardrails.
 - **Method:** Reviewed migration history, modules, API/service contracts, tests, CI, and browser workflows; code and test evidence take precedence over stale prose.
 - **Scope:** Compare the current modular monolith and bounded M2–M16/Core Financials slices, PR #26, Company Data Foundation coverage/UI, Phase 1 manual customer commitments, Phase 2 Universal Data, Phase 3 semantic identity/relationship foundation, and Phase 3 Business Intelligence API to the owner-directed integrated BI, Financial, Operational, and Decision Intelligence platform. This is not customer validation or production/finance-policy approval.
 

@@ -4,6 +4,7 @@ from datetime import date, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -13,6 +14,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     Uuid,
+    false,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -105,7 +107,8 @@ class BusinessMetricDefinitionVersion(Base):
         CheckConstraint(
             "calculation_key IN ('universal_record_count', 'universal_source_amount_sum', "
             "'universal_distinct_source_values', 'm5_metric', "
-            "'core_financial_measure', 'custom_formula')",
+            "'core_financial_measure', 'custom_formula', "
+            "'manual_customer_commitment_count')",
             name="ck_bmi_metric_definition_calculator",
         ),
         CheckConstraint(
@@ -352,7 +355,8 @@ class BusinessCompanySemanticSourcePrecedence(Base):
             name="uq_bmi_source_precedence_source",
         ),
         CheckConstraint(
-            "dataset_type = 'universal_records'", name="ck_bmi_source_precedence_dataset"
+            "dataset_type IN ('universal_records', 'customer_commitments')",
+            name="ck_bmi_source_precedence_dataset",
         ),
         CheckConstraint("priority >= 1", name="ck_bmi_source_precedence_priority"),
         Index(
@@ -491,6 +495,15 @@ class BusinessIntelligenceAnalysisRun(Base):
     result_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     input_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     result_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    workforce_sensitive: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=false(),
+        comment=(
+            "Company-scoped authorization flag for M5/People analysis snapshots containing "
+            "individual workforce evidence; enforced in addition to RLS."
+        ),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

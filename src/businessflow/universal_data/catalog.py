@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 CanonicalFieldType = Literal["text", "date", "decimal"]
@@ -33,8 +33,12 @@ class CanonicalEntity:
 
 UNIVERSAL_DATASET_TYPE = "universal_records"
 UNIVERSAL_CONTRACT_KEY = "businessflow.universal.business_records"
-UNIVERSAL_CONTRACT_VERSION = "1.0.0"
-VALIDATION_RULE_VERSION = "universal-business-records/1.0.0"
+LEGACY_UNIVERSAL_CONTRACT_VERSION = "1.0.0"
+UNIVERSAL_CONTRACT_VERSION = "1.1.0"
+SUPPORTED_UNIVERSAL_CONTRACT_VERSIONS = frozenset(
+    {LEGACY_UNIVERSAL_CONTRACT_VERSION, UNIVERSAL_CONTRACT_VERSION}
+)
+VALIDATION_RULE_VERSION = "universal-business-records/1.1.0"
 
 CANONICAL_ENTITIES: dict[str, CanonicalEntity] = {
     "customer": CanonicalEntity(
@@ -106,6 +110,7 @@ CANONICAL_ENTITIES: dict[str, CanonicalEntity] = {
             ),
             CanonicalField("transaction_date", "date", True, "Transaction date as supplied."),
             CanonicalField("customer_code", "text", False, "Optional source customer reference."),
+            CanonicalField("product_code", "text", False, "Optional source product reference."),
             CanonicalField(
                 "currency_code", "text", True, "Currency code supplied with the amount."
             ),
@@ -174,11 +179,31 @@ CANONICAL_ENTITIES: dict[str, CanonicalEntity] = {
 }
 
 
-def canonical_contract_definition() -> dict[str, object]:
+def entity_for_contract_version(entity_type: str, version: str) -> CanonicalEntity | None:
+    if version not in SUPPORTED_UNIVERSAL_CONTRACT_VERSIONS:
+        return None
+    entity = CANONICAL_ENTITIES.get(entity_type)
+    if entity is None:
+        return None
+    if version == LEGACY_UNIVERSAL_CONTRACT_VERSION and entity_type == "sales_transaction":
+        return replace(
+            entity, fields=tuple(field for field in entity.fields if field.name != "product_code")
+        )
+    return entity
+
+
+def canonical_contract_definition(
+    version: str = UNIVERSAL_CONTRACT_VERSION,
+) -> dict[str, object]:
+    if version not in SUPPORTED_UNIVERSAL_CONTRACT_VERSIONS:
+        raise ValueError("the Universal Data contract version is unsupported")
+    entities = [
+        entity_for_contract_version(entity_type, version) for entity_type in CANONICAL_ENTITIES
+    ]
     return {
         "dataset_type": UNIVERSAL_DATASET_TYPE,
         "source_kind": "universal_business_data",
-        "version": UNIVERSAL_CONTRACT_VERSION,
+        "version": version,
         "entities": [
             {
                 "entity_type": entity.entity_type,
@@ -195,7 +220,8 @@ def canonical_contract_definition() -> dict[str, object]:
                     for field in entity.fields
                 ],
             }
-            for entity in CANONICAL_ENTITIES.values()
+            for entity in entities
+            if entity is not None
         ],
         "promotion_boundary": (
             "Accepted source records are not automatically financial facts or "
@@ -204,8 +230,11 @@ def canonical_contract_definition() -> dict[str, object]:
     }
 
 
-def entity_schema(entity_type: str) -> dict[str, object] | None:
-    entity = CANONICAL_ENTITIES.get(entity_type)
+def entity_schema(
+    entity_type: str,
+    contract_version: str = UNIVERSAL_CONTRACT_VERSION,
+) -> dict[str, object] | None:
+    entity = entity_for_contract_version(entity_type, contract_version)
     if entity is None:
         return None
     return {

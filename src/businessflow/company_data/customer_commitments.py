@@ -50,6 +50,7 @@ from businessflow.services.company_context_access import (
     CompanyContextAccess,
     require_company_context_access,
 )
+from businessflow.universal_data.models import CompanyDataSourceProfileVersion
 
 MANUAL_SOURCE_KEY = "manual.customer-commitments"
 MANUAL_SOURCE_NAME = "Manual customer commitments"
@@ -98,6 +99,42 @@ def _contract(session: Session) -> CompanyDataContract:
     return contract
 
 
+def _ensure_manual_source_profile(
+    session: Session,
+    source: CompanyDataSource,
+    user: UserAccount,
+) -> CompanyDataSourceProfileVersion:
+    latest = session.scalar(
+        select(CompanyDataSourceProfileVersion)
+        .where(
+            CompanyDataSourceProfileVersion.tenant_id == source.tenant_id,
+            CompanyDataSourceProfileVersion.company_id == source.company_id,
+            CompanyDataSourceProfileVersion.source_id == source.id,
+        )
+        .order_by(CompanyDataSourceProfileVersion.version.desc())
+        .limit(1)
+    )
+    if latest is not None:
+        return latest
+    profile = CompanyDataSourceProfileVersion(
+        id=uuid4(),
+        tenant_id=source.tenant_id,
+        company_id=source.company_id,
+        source_id=source.id,
+        version=1,
+        source_type="manual_entry",
+        display_name=source.display_name,
+        business_domain="operations",
+        owner_user_id=source.owner_user_id,
+        source_status="enabled",
+        authority_classification="manual_assertion",
+        created_by_user_id=user.id,
+    )
+    session.add(profile)
+    session.flush()
+    return profile
+
+
 def _ensure_manual_source(
     session: Session, user: UserAccount, access: CompanyContextAccess, request_id: UUID
 ) -> CompanyDataSource:
@@ -125,6 +162,7 @@ def _ensure_manual_source(
                 "manual_customer_commitment_source_integrity_error",
                 "The registered manual source does not match its published contract.",
             )
+        _ensure_manual_source_profile(session, source, user)
         return source
 
     membership = session.scalar(
@@ -151,6 +189,7 @@ def _ensure_manual_source(
     )
     session.add(source)
     session.flush()
+    _ensure_manual_source_profile(session, source, user)
     record_event(
         session,
         "company_data.source_registered",

@@ -14,6 +14,14 @@ from businessflow.business_intelligence.engine import (
     BI_RESULT_SCHEMA_VERSION,
     calculate_saved_analysis,
 )
+from businessflow.business_intelligence.governance import (
+    RETENTION_STATUS,
+    UNRESOLVED_GOVERNANCE_BLOCKERS,
+    requires_customer_commitment_read,
+    requires_customer_data_processing_authorization,
+    requires_universal_data_read,
+    requires_workforce_read,
+)
 from businessflow.business_intelligence.models import (
     BusinessCompanySemanticConfigVersion,
     BusinessCompanySemanticSourcePrecedence,
@@ -23,16 +31,25 @@ from businessflow.business_intelligence.models import (
 from businessflow.business_intelligence.registry import (
     METRIC_REGISTRY_VERSION,
     SYSTEM_METRIC_BY_KEY,
-    SYSTEM_METRICS,
     system_metric_definition_hash,
+    system_metric_dimensions,
     system_metric_payloads,
+    system_metric_time_granularity,
 )
 from businessflow.business_intelligence.registry_service import (
     _config_precedence_rows,
+    definition_requires_customer_commitment_read,
     dependency_by_key,
     get_scoped_configuration,
     get_scoped_metric_definition,
+    has_customer_commitment_read_access,
+    has_universal_data_read_access,
+    has_workforce_read_access,
+    metric_definition_requires_customer_commitment_read,
+    metric_definition_requires_customer_data_processing_authorization,
     metric_definition_requires_finance_read,
+    metric_definition_requires_universal_data_read,
+    metric_definition_requires_workforce_read,
 )
 from businessflow.business_intelligence.registry_service import (
     definition_requires_finance_read as _definition_requires_finance_read,
@@ -59,7 +76,19 @@ from businessflow.business_semantic.service import (
     _current_evidence_mappings,
     _is_current_relationship,
 )
-from businessflow.company_data.models import CompanyDataSource
+from businessflow.company_data.contracts import (
+    MANUAL_COMMITMENT_CONTRACT_DEFINITION,
+    MANUAL_COMMITMENT_CONTRACT_HASH,
+    MANUAL_COMMITMENT_CONTRACT_KEY,
+    MANUAL_COMMITMENT_CONTRACT_VERSION,
+)
+from businessflow.company_data.customer_commitments import MANUAL_SOURCE_KEY, _event_hash_payload
+from businessflow.company_data.models import (
+    CompanyDataContract,
+    CompanyDataSource,
+    ManualCustomerCommitment,
+    ManualCustomerCommitmentEvent,
+)
 from businessflow.config import Settings
 from businessflow.core_financials.models import CoreFinancialRun
 from businessflow.core_financials.service import (
@@ -67,12 +96,19 @@ from businessflow.core_financials.service import (
     verify_core_financial_run,
 )
 from businessflow.errors import ApiError
+from businessflow.metrics.catalog import METRIC_DEFINITIONS
 from businessflow.metrics.insight_service import _validate_metric_run
 from businessflow.metrics.service import get_metric_run
 from businessflow.metrics.snapshot import content_hash
 from businessflow.models import UserAccount
 from businessflow.services.company_context_access import require_company_context_access
-from businessflow.universal_data.catalog import CANONICAL_ENTITIES
+from businessflow.universal_data.catalog import (
+    CANONICAL_ENTITIES,
+    UNIVERSAL_CONTRACT_KEY,
+    UNIVERSAL_DATASET_TYPE,
+    canonical_contract_definition,
+    entity_for_contract_version,
+)
 from businessflow.universal_data.models import (
     CanonicalBusinessRecord,
     CanonicalBusinessRecordRevision,
@@ -121,6 +157,13 @@ def _system_definition(metric_key: str) -> dict[str, object] | None:
     )
     if payload is None:
         return None
+    system_metric = SYSTEM_METRIC_BY_KEY.get(metric_key)
+    if system_metric is None:
+        raise _error(
+            409,
+            "system_metric_registry_invalid",
+            "The requested system metric is not present in the versioned registry.",
+        )
     result = dict(payload)
     result["calculation_key"] = _dict(result.get("calculation")).get("kind")
     result["filters"] = []
@@ -139,23 +182,62 @@ def _system_definition(metric_key: str) -> dict[str, object] | None:
     result["dependencies"] = []
     result["required_source_datasets"] = []
     result["required_fields"] = []
-    if result["calculation_key"] == "m5_metric":
-        metric_id = _dict(result.get("calculation")).get("metric_id")
-        is_weekly = metric_id != "recorded_skill_inventory_coverage"
-        result["dimensions"] = ["week"] if is_weekly else []
-        result["time_granularity"] = "week" if is_weekly else "none"
+    calculation_key = str(result["calculation_key"])
+    if calculation_key in {
+        "m5_metric",
+        "universal_record_count",
+        "universal_source_amount_sum",
+        "manual_customer_commitment_count",
+    }:
+        result["dimensions"] = list(system_metric_dimensions(system_metric))
+        result["time_granularity"] = system_metric_time_granularity(system_metric)
+        grouping_dimension = _dict(result.get("calculation")).get("grouping_dimension")
+        result["required_dimensions"] = (
+            [grouping_dimension] if isinstance(grouping_dimension, str) else []
+        )
     else:
         result["dimensions"] = []
         result["time_granularity"] = "none"
-    system_metric = SYSTEM_METRIC_BY_KEY.get(metric_key)
-    if system_metric is None:
-        raise _error(
-            409,
-            "system_metric_registry_invalid",
-            "The requested system metric is not present in the versioned registry.",
+    if calculation_key in {
+        "universal_record_count",
+        "universal_source_amount_sum",
+        "manual_customer_commitment_count",
+    }:
+        result["aggregation_method"] = (
+            "sum" if calculation_key == "universal_source_amount_sum" else "count"
         )
+    if calculation_key in {"universal_record_count", "universal_source_amount_sum"}:
+        policy = cast(dict[str, object], result["policy"])
+        policy["currency_behavior"] = (
+            "group_by_currency"
+            if calculation_key == "universal_source_amount_sum"
+            else "not_applicable"
+        )
+        result["required_source_datasets"] = [
+            {"dataset_type": "universal_records", "required": True}
+        ]
+        if _dict(result.get("calculation")).get("grouping_dimension") == "product":
+            result["required_fields"] = [
+                {"entity_type": "sales_transaction", "field": "product_code"}
+            ]
+    elif calculation_key == "manual_customer_commitment_count":
+        result["required_source_datasets"] = [
+            {"dataset_type": "customer_commitments", "required": True}
+        ]
     result["definition_hash"] = system_metric_definition_hash(system_metric)
     return result
+
+
+def _effective_dimensions(
+    definition: dict[str, object], requested_dimensions: list[str]
+) -> list[str]:
+    dimensions = list(requested_dimensions)
+    required_dimensions = [str(item) for item in _list(definition.get("required_dimensions", []))]
+    time_granularity = str(definition.get("time_granularity", "none"))
+    for dimension in [*required_dimensions, time_granularity]:
+        if dimension != "none" and dimension not in dimensions:
+            dimensions.append(dimension)
+    return dimensions
 
 
 def _resolve_definition(
@@ -445,6 +527,40 @@ def _source_authority_requirement_failure(
     )
 
 
+def _universal_source_contract_issues(
+    session: Session,
+    source: CompanyDataSource,
+    *,
+    entity_type: str,
+    required_fields: set[str],
+) -> list[str]:
+    if (
+        source.dataset_type != UNIVERSAL_DATASET_TYPE
+        or source.contract_key != UNIVERSAL_CONTRACT_KEY
+    ):
+        return ["source_contract_integrity_invalid"]
+    try:
+        expected_definition = canonical_contract_definition(source.contract_version)
+    except ValueError:
+        return ["source_contract_version_unsupported"]
+    contract = session.get(CompanyDataContract, (source.contract_key, source.contract_version))
+    expected_hash = content_hash(expected_definition)
+    if (
+        contract is None
+        or contract.dataset_type != UNIVERSAL_DATASET_TYPE
+        or contract.definition != expected_definition
+        or contract.definition_hash != expected_hash
+        or content_hash(contract.definition) != contract.definition_hash
+    ):
+        return ["source_contract_integrity_invalid"]
+    entity = entity_for_contract_version(entity_type, source.contract_version)
+    if entity is None:
+        return ["source_contract_entity_unsupported"]
+    if required_fields - set(entity.field_by_name):
+        return ["required_field_not_supported_by_source_contract"]
+    return []
+
+
 def _source_candidate_state(
     session: Session,
     *,
@@ -454,6 +570,7 @@ def _source_candidate_state(
     source: CompanyDataSource,
     pinned_profile: CompanyDataSourceProfileVersion,
     entity_type: str,
+    required_fields: set[str],
     period_start: str | None,
     period_end: str | None,
     authority_requirement: str,
@@ -580,6 +697,26 @@ def _source_candidate_state(
                 ),
             }
         )
+    contract_issue_messages = {
+        "source_contract_integrity_invalid": (
+            "The registered source contract is missing or does not match its canonical version."
+        ),
+        "source_contract_version_unsupported": (
+            "The registered source uses an unsupported Universal Data contract version."
+        ),
+        "source_contract_entity_unsupported": (
+            f"The source contract does not include the {entity_type} entity "
+            "required by this metric."
+        ),
+        "required_field_not_supported_by_source_contract": (
+            "The source contract does not include one or more required analysis fields."
+        ),
+    }
+    for issue in _universal_source_contract_issues(
+        session, source, entity_type=entity_type, required_fields=required_fields
+    ):
+        status = "blocked"
+        blockers.append({"check_key": issue, "message": contract_issue_messages[issue]})
     current_authority = (
         latest_profile.authority_classification
         if latest_profile is not None
@@ -628,6 +765,96 @@ def _source_candidate_state(
     return candidate, status == "ready"
 
 
+def _universal_required_fields(
+    definition: dict[str, object],
+    *,
+    dimensions: list[str],
+    analysis_filters: list[dict[str, object]],
+    period_scoped: bool,
+) -> set[str]:
+    calculation = _dict(definition.get("calculation"))
+    entity_type = str(calculation.get("entity_type"))
+    kind = str(calculation.get("kind"))
+    fields: set[str] = set()
+    if kind == "universal_source_amount_sum":
+        fields.update({"amount", "currency_code"})
+    elif kind == "universal_distinct_source_values":
+        field = calculation.get("field")
+        if isinstance(field, str):
+            fields.add(field)
+
+    for item in _list(definition.get("required_fields", [])):
+        field = _dict(item).get("field")
+        if isinstance(field, str):
+            fields.add(field)
+    filters = [
+        *_list(definition.get("filters", [])),
+        *_list(definition.get("exclusions", [])),
+        *analysis_filters,
+    ]
+    for item in filters:
+        field = _dict(item).get("field")
+        if isinstance(field, str):
+            fields.add(field)
+
+    field_by_dimension = {
+        "customer": {
+            "customer": "customer_code",
+            "country": "country",
+            "customer_segment": "customer_segment",
+        },
+        "supplier": {"supplier": "supplier_code", "country": "country"},
+        "product": {"product": "product_code", "category": "category"},
+        "sales_transaction": {
+            "customer": "customer_code",
+            "product": "product_code",
+            "currency_code": "currency_code",
+            "status": "status",
+        },
+        "expense": {
+            "supplier": "supplier_code",
+            "category": "category",
+            "currency_code": "currency_code",
+        },
+        "business_activity": {"activity_type": "activity_type", "status": "status"},
+        "operational_record": {"record_type": "record_type", "status": "status"},
+    }
+    for dimension in dimensions:
+        field = field_by_dimension.get(entity_type, {}).get(dimension)
+        if field is not None:
+            fields.add(field)
+    date_field = {
+        "sales_transaction": "transaction_date",
+        "expense": "expense_date",
+        "business_activity": "activity_date",
+        "operational_record": "record_date",
+    }.get(entity_type)
+    if date_field is not None and (
+        period_scoped or set(dimensions) & {"day", "week", "month", "quarter", "year"}
+    ):
+        fields.add(date_field)
+    return fields
+
+
+def _project_universal_records(
+    records: list[dict[str, object]], required_fields: set[str]
+) -> list[dict[str, object]]:
+    projected: list[dict[str, object]] = []
+    for record in records:
+        attributes = _dict(record.get("attributes", {}))
+        projected.append(
+            {
+                **record,
+                "attributes": {
+                    field: attributes[field]
+                    for field in sorted(required_fields)
+                    if field in attributes
+                },
+            }
+        )
+    return projected
+
+
 def _universal_input_snapshot(
     session: Session,
     *,
@@ -637,6 +864,8 @@ def _universal_input_snapshot(
     config_row: BusinessCompanySemanticConfigVersion,
     period_start: str | None,
     period_end: str | None,
+    analysis_dimensions: list[str] | None = None,
+    analysis_filters: list[dict[str, object]] | None = None,
 ) -> tuple[dict[str, object], list[MetricReadinessCheck], list[str], list[str]]:
     calculation = _dict(definition.get("calculation"))
     policy = _dict(definition.get("policy", {}))
@@ -715,6 +944,12 @@ def _universal_input_snapshot(
             policy_warnings,
         )
 
+    required_fields = _universal_required_fields(
+        definition,
+        dimensions=analysis_dimensions or [],
+        analysis_filters=analysis_filters or [],
+        period_scoped=period_start is not None or period_end is not None,
+    )
     now = datetime.now(UTC)
     candidates: list[tuple[dict[str, object], bool]] = []
     for precedence, source, profile in precedence_rows:
@@ -727,6 +962,7 @@ def _universal_input_snapshot(
                 source=source,
                 pinned_profile=profile,
                 entity_type=entity_type,
+                required_fields=required_fields,
                 period_start=period_start,
                 period_end=period_end,
                 authority_requirement=str(
@@ -825,6 +1061,40 @@ def _universal_input_snapshot(
             period_start=period_start,
             period_end=period_end,
         )
+        if not exceeded_limit:
+            contract_entity = entity_for_contract_version(
+                entity_type, selected_company_source.contract_version
+            )
+            if contract_entity is None:
+                blocker = "source_contract_entity_unsupported"
+                blockers.append(blocker)
+                checks.append(
+                    MetricReadinessCheck(
+                        check_key=blocker,
+                        status="blocked",
+                        message=(
+                            f"The selected source contract does not include the {entity_type} "
+                            "entity required by this metric."
+                        ),
+                    )
+                )
+            else:
+                unsupported_fields = sorted(required_fields - set(contract_entity.field_by_name))
+                if unsupported_fields:
+                    blocker = "required_field_not_supported_by_source_contract"
+                    blockers.append(blocker)
+                    checks.append(
+                        MetricReadinessCheck(
+                            check_key=blocker,
+                            status="blocked",
+                            message=(
+                                "The selected source contract does not contain required "
+                                "analysis fields: " + ", ".join(unsupported_fields) + "."
+                            ),
+                            evidence={"unsupported_fields": unsupported_fields},
+                        )
+                    )
+            selected_records = _project_universal_records(selected_records, required_fields)
         if exceeded_limit or not selected_records:
             raise _error(
                 409,
@@ -842,9 +1112,11 @@ def _universal_input_snapshot(
         selected_records = []
         selected_evidence = []
     if selected_records:
-        required_fields = [_dict(item) for item in _list(definition.get("required_fields", []))]
-        if required_fields:
-            for item in required_fields:
+        declared_field_requirements = [
+            _dict(item) for item in _list(definition.get("required_fields", []))
+        ]
+        if declared_field_requirements:
+            for item in declared_field_requirements:
                 if item.get("entity_type") != entity_type:
                     blockers.append("required_field_entity_mismatch")
                     continue
@@ -888,6 +1160,362 @@ def _universal_input_snapshot(
         "semantic_relationships": [],
     }
     return input_data, checks, sorted(set(blockers)), sorted(set(warnings))
+
+
+def _manual_commitment_input_snapshot(
+    session: Session,
+    *,
+    tenant_id: UUID,
+    company_id: UUID,
+    definition: dict[str, object],
+    config_row: BusinessCompanySemanticConfigVersion,
+    period_start: date | None,
+    period_end: date | None,
+    dimensions: list[str],
+) -> tuple[dict[str, object], list[MetricReadinessCheck], list[str], list[str]]:
+    calculation = _dict(definition.get("calculation"))
+    date_field = str(calculation.get("date_field", "requested_delivery_date"))
+    if date_field not in {"order_date", "requested_delivery_date"}:
+        return (
+            {
+                "records": [],
+                "evidence": [],
+                "external_evidence": [],
+                "blockers": ["manual_commitment_date_field_unsupported"],
+                "warnings": [],
+                "source_selection": None,
+            },
+            [],
+            ["manual_commitment_date_field_unsupported"],
+            [],
+        )
+
+    inputs: dict[str, object] = {
+        "records": [],
+        "evidence": [],
+        "external_evidence": [],
+        "blockers": [],
+        "warnings": [],
+        "source_selection": None,
+    }
+    checks: list[MetricReadinessCheck] = []
+    blockers: list[str] = []
+    warnings: list[str] = []
+    precedence_rows = [
+        item
+        for item in _config_precedence_rows(session, config_row)
+        if item[0].dataset_type == "customer_commitments"
+    ]
+    if not precedence_rows:
+        blocker = "customer_commitment_source_precedence_missing"
+        checks.append(
+            MetricReadinessCheck(
+                check_key=blocker,
+                status="blocked",
+                message=(
+                    "Configure the manual customer commitment source in the published "
+                    "Company configuration before analyzing delivery commitments."
+                ),
+            )
+        )
+        inputs["blockers"] = [blocker]
+        return inputs, checks, [blocker], warnings
+
+    source_candidates: list[tuple[dict[str, object], bool, CompanyDataSource]] = []
+    for precedence, source, pinned_profile in precedence_rows:
+        latest_profile = session.scalar(
+            select(CompanyDataSourceProfileVersion)
+            .where(
+                CompanyDataSourceProfileVersion.tenant_id == tenant_id,
+                CompanyDataSourceProfileVersion.company_id == company_id,
+                CompanyDataSourceProfileVersion.source_id == source.id,
+            )
+            .order_by(CompanyDataSourceProfileVersion.version.desc())
+            .limit(1)
+        )
+        source_reasons: list[str] = []
+        if pinned_profile.source_type != "manual_entry":
+            source_reasons.append("manual_commitment_source_profile_type_invalid")
+        if (
+            source.dataset_type != "customer_commitments"
+            or source.source_key != MANUAL_SOURCE_KEY
+            or source.contract_key != MANUAL_COMMITMENT_CONTRACT_KEY
+            or source.contract_version != MANUAL_COMMITMENT_CONTRACT_VERSION
+        ):
+            source_reasons.append("manual_commitment_source_contract_invalid")
+        contract = session.get(
+            CompanyDataContract,
+            (MANUAL_COMMITMENT_CONTRACT_KEY, MANUAL_COMMITMENT_CONTRACT_VERSION),
+        )
+        if (
+            contract is None
+            or contract.dataset_type != "customer_commitments"
+            or contract.definition != MANUAL_COMMITMENT_CONTRACT_DEFINITION
+            or contract.definition_hash != MANUAL_COMMITMENT_CONTRACT_HASH
+            or content_hash(contract.definition) != contract.definition_hash
+        ):
+            source_reasons.append("manual_commitment_source_contract_invalid")
+        if pinned_profile.source_status != "enabled":
+            source_reasons.append("source_disabled")
+        if latest_profile is None:
+            source_reasons.append("manual_commitment_source_profile_missing")
+        elif latest_profile.id != pinned_profile.id:
+            warnings.append("source_profile_version_changed")
+            if latest_profile.source_status != "enabled":
+                source_reasons.append("current_source_disabled")
+        candidate: dict[str, object] = {
+            "dataset_type": "customer_commitments",
+            "source_id": str(source.id),
+            "source_name": source.display_name,
+            "source_profile_version_id": str(pinned_profile.id),
+            "source_profile_version": pinned_profile.version,
+            "source_status": pinned_profile.source_status,
+            "authority_classification": pinned_profile.authority_classification,
+            "priority": precedence.priority,
+            "record_count": None,
+            "reason_keys": sorted(set(source_reasons)),
+        }
+        ready = not source_reasons
+        source_candidates.append((candidate, ready, source))
+        checks.append(
+            MetricReadinessCheck(
+                check_key=f"source:{source.id}",
+                status="ready" if ready else "blocked",
+                message=(
+                    f"{source.display_name} is eligible at precedence {precedence.priority}."
+                    if ready
+                    else (
+                        f"{source.display_name} is not ready: "
+                        f"{', '.join(sorted(set(source_reasons)))}."
+                    )
+                ),
+                evidence={
+                    "source_id": str(source.id),
+                    "source_profile_version_id": str(pinned_profile.id),
+                    "source_profile_version": pinned_profile.version,
+                    "priority": precedence.priority,
+                    "status": "ready" if ready else "blocked",
+                },
+            )
+        )
+
+    selected: tuple[dict[str, object], bool, CompanyDataSource] | None = None
+    if config_row.fallback_policy == "strict_primary":
+        if source_candidates and source_candidates[0][1]:
+            selected = source_candidates[0]
+    else:
+        selected = next((candidate for candidate in source_candidates if candidate[1]), None)
+    if selected is None:
+        blockers.append(
+            "primary_customer_commitment_source_not_ready"
+            if config_row.fallback_policy == "strict_primary"
+            else "no_ready_customer_commitment_source"
+        )
+        for candidate, ready, _source in source_candidates:
+            if not ready:
+                blockers.extend(str(item) for item in _list(candidate.get("reason_keys", [])))
+        inputs["blockers"] = sorted(set(blockers))
+        return inputs, checks, sorted(set(blockers)), warnings
+
+    candidate, _ready, source = selected
+    selected_profile = next(
+        profile
+        for precedence, item_source, profile in _config_precedence_rows(session, config_row)
+        if item_source.id == source.id and precedence.dataset_type == "customer_commitments"
+    )
+    date_column = getattr(ManualCustomerCommitment, date_field)
+    accepted_query = select(ManualCustomerCommitment).where(
+        ManualCustomerCommitment.tenant_id == tenant_id,
+        ManualCustomerCommitment.company_id == company_id,
+        ManualCustomerCommitment.source_id == source.id,
+        ManualCustomerCommitment.contract_key == MANUAL_COMMITMENT_CONTRACT_KEY,
+        ManualCustomerCommitment.contract_version == MANUAL_COMMITMENT_CONTRACT_VERSION,
+        ManualCustomerCommitment.status == "accepted",
+    )
+    if period_start is not None:
+        accepted_query = accepted_query.where(date_column >= period_start)
+    if period_end is not None:
+        accepted_query = accepted_query.where(date_column <= period_end)
+    accepted_rows = list(
+        session.scalars(
+            accepted_query.order_by(ManualCustomerCommitment.id).limit(MAX_BI_SOURCE_RECORDS + 1)
+        )
+    )
+    if len(accepted_rows) > MAX_BI_SOURCE_RECORDS:
+        blocker = "source_record_limit_exceeded"
+        blockers.append(blocker)
+        checks.append(
+            MetricReadinessCheck(
+                check_key=blocker,
+                status="blocked",
+                message=(
+                    "Accepted customer commitments exceed the bounded 10,000-record analysis "
+                    "limit. Narrow the requested period or use a smaller reviewed source."
+                ),
+                evidence={"record_count_at_least": len(accepted_rows)},
+            )
+        )
+        inputs["blockers"] = sorted(set(blockers))
+        return inputs, checks, sorted(set(blockers)), warnings
+
+    if accepted_rows:
+        record_ids = [item.id for item in accepted_rows]
+        history_rows = list(
+            session.scalars(
+                select(ManualCustomerCommitmentEvent)
+                .where(
+                    ManualCustomerCommitmentEvent.tenant_id == tenant_id,
+                    ManualCustomerCommitmentEvent.company_id == company_id,
+                    ManualCustomerCommitmentEvent.commitment_id.in_(record_ids),
+                )
+                .order_by(
+                    ManualCustomerCommitmentEvent.commitment_id,
+                    ManualCustomerCommitmentEvent.current_revision,
+                )
+                .limit(MAX_BI_EVIDENCE_REFERENCES + 1)
+            )
+        )
+        if len(history_rows) > MAX_BI_EVIDENCE_REFERENCES:
+            raise _error(
+                409,
+                "business_intelligence_evidence_limit_exceeded",
+                "Manual customer commitment history exceeds the bounded evidence limit.",
+            )
+        history_by_commitment: dict[UUID, list[ManualCustomerCommitmentEvent]] = {}
+        for event in history_rows:
+            history_by_commitment.setdefault(event.commitment_id, []).append(event)
+        latest_events: dict[UUID, ManualCustomerCommitmentEvent] = {}
+        for record in accepted_rows:
+            history = history_by_commitment.get(record.id, [])
+            previous_hash: str | None = None
+            if len(history) != record.current_revision:
+                raise _error(
+                    409,
+                    "manual_customer_commitment_history_unverifiable",
+                    "A selected customer commitment has incomplete revision history.",
+                )
+            for expected_revision, event in enumerate(history, start=1):
+                if (
+                    event.current_revision != expected_revision
+                    or event.previous_event_hash != previous_hash
+                    or content_hash(event.snapshot) != event.snapshot_hash
+                    or content_hash(_event_hash_payload(event)) != event.event_hash
+                ):
+                    raise _error(
+                        409,
+                        "manual_customer_commitment_history_unverifiable",
+                        "A selected customer commitment failed its history integrity check.",
+                    )
+                previous_hash = event.event_hash
+            latest = history[-1] if history else None
+            if latest is None:
+                raise _error(
+                    409,
+                    "manual_customer_commitment_history_unverifiable",
+                    "A selected customer commitment has no accepted history event.",
+                )
+            snapshot = _dict(latest.snapshot)
+            source_snapshot = _dict(snapshot.get("source"))
+            expected_date = getattr(record, date_field)
+            if (
+                latest.status_after != "accepted"
+                or latest.tenant_id != tenant_id
+                or latest.company_id != company_id
+                or latest.commitment_id != record.id
+                or snapshot.get("tenant_id") != str(tenant_id)
+                or snapshot.get("company_id") != str(company_id)
+                or snapshot.get("origin") != "manual"
+                or snapshot.get("commitment_id") != str(record.id)
+                or snapshot.get("revision") != record.current_revision
+                or snapshot.get("status") != "accepted"
+                or snapshot.get(date_field)
+                != (expected_date.isoformat() if expected_date else None)
+                or source_snapshot.get("source_id") != str(source.id)
+                or source_snapshot.get("source_key") != MANUAL_SOURCE_KEY
+                or source_snapshot.get("dataset_type") != "customer_commitments"
+                or source_snapshot.get("contract_key") != MANUAL_COMMITMENT_CONTRACT_KEY
+                or source_snapshot.get("contract_version") != MANUAL_COMMITMENT_CONTRACT_VERSION
+                or source_snapshot.get("contract_hash") != MANUAL_COMMITMENT_CONTRACT_HASH
+            ):
+                raise _error(
+                    409,
+                    "manual_customer_commitment_history_unverifiable",
+                    "A selected customer commitment does not match its accepted source snapshot.",
+                )
+            latest_events[record.id] = latest
+
+    source_profile_id = selected_profile.id
+    calculation_records: list[dict[str, object]] = []
+    evidence_refs: list[dict[str, object]] = []
+    missing_date_count = 0
+    for record in accepted_rows:
+        value_date = getattr(record, date_field)
+        if value_date is None:
+            missing_date_count += 1
+            if period_start is not None or period_end is not None:
+                continue
+        elif (period_start is not None and value_date < period_start) or (
+            period_end is not None and value_date > period_end
+        ):
+            continue
+        calculation_records.append(
+            {
+                "entity_type": "manual_customer_commitment",
+                "attributes": {"analysis_date": value_date.isoformat() if value_date else None},
+            }
+        )
+        event = latest_events[record.id]
+        evidence_refs.append(
+            {
+                "evidence_kind": "manual_customer_commitment",
+                "source_id": str(source.id),
+                "source_profile_version_id": str(source_profile_id),
+                "commitment_id": str(record.id),
+                "revision": record.current_revision,
+                "commitment_status": "accepted",
+                "commitment_event_id": str(event.id),
+                "commitment_event_hash": event.event_hash,
+                "commitment_snapshot_hash": event.snapshot_hash,
+                "analysis_date": value_date.isoformat() if value_date else None,
+                "analysis_date_field": date_field,
+            }
+        )
+    if missing_date_count and (
+        period_start is not None
+        or period_end is not None
+        or set(dimensions) & {"day", "week", "month", "quarter", "year"}
+    ):
+        warnings.append(f"commitment_analysis_date_missing:{date_field}")
+    if candidate.get("authority_classification") == "manual_assertion":
+        warnings.append("manual_commitment_source_is_a_human_assertion")
+    candidate["record_count"] = len(calculation_records)
+    inputs.update(
+        {
+            "records": calculation_records,
+            "evidence": [],
+            "external_evidence": evidence_refs,
+            "blockers": sorted(set(blockers)),
+            "warnings": sorted(set(warnings)),
+            "source_selection": candidate,
+        }
+    )
+    checks.append(
+        MetricReadinessCheck(
+            check_key="accepted_manual_commitment_records",
+            status="warning" if warnings else "ready",
+            message=(
+                f"{len(calculation_records)} current, accepted manual commitments were selected "
+                "without copying customer names, references, summaries, or notes."
+            ),
+            evidence={
+                "accepted_record_count": len(calculation_records),
+                "missing_analysis_date_count": missing_date_count,
+                "source_id": str(source.id),
+                "source_profile_version_id": str(source_profile_id),
+            },
+        )
+    )
+    return inputs, checks, sorted(set(blockers)), sorted(set(warnings))
 
 
 def _relationship_snapshots(
@@ -975,10 +1603,17 @@ def _relationship_snapshots(
 
 def _readiness_response(
     *,
+    tenant_id: UUID,
+    company_id: UUID,
+    domain: str,
     definition: dict[str, object],
     definition_hash: str,
     metric_version: int | None,
     configuration_version: int | None,
+    analysis_id: UUID | None,
+    period_start: date | None,
+    period_end: date | None,
+    dimensions: list[str],
     calculation_supported: bool,
     checks: list[MetricReadinessCheck],
     blockers: list[str],
@@ -995,16 +1630,25 @@ def _readiness_response(
     else:
         status = "ready"
     return MetricReadinessResponse(
+        tenant_id=tenant_id,
+        company_id=company_id,
+        domain=cast(Any, domain),
         metric_key=str(definition.get("metric_key")),
         metric_version=metric_version,
         definition_hash=definition_hash,
         configuration_version=configuration_version,
+        analysis_id=analysis_id,
+        period_start=period_start,
+        period_end=period_end,
+        dimensions=dimensions,
         readiness_status=cast(Any, status),
         calculation_supported=calculation_supported,
         checks=checks,
         blockers=sorted(set(blockers)),
         warnings=sorted(set(warnings)),
         limitations=[str(item) for item in _list(definition.get("limitations", []))],
+        governance_blockers=list(UNRESOLVED_GOVERNANCE_BLOCKERS),
+        retention_status=RETENTION_STATUS,
     )
 
 
@@ -1016,8 +1660,22 @@ def assess_metric_readiness(
     *,
     version: int | None,
     configuration_version: int | None,
+    domain: str | None,
+    period_start: date | None,
+    period_end: date | None,
+    dimensions: list[str],
     settings: Settings,
 ) -> MetricReadinessResponse:
+    if (period_start is None) != (period_end is None):
+        raise _error(422, "metric_readiness_period_invalid", "Supply both period dates or neither.")
+    if period_start is not None and period_end is not None and period_end < period_start:
+        raise _error(
+            422,
+            "metric_readiness_period_invalid",
+            "The period end must be on or after the period start.",
+        )
+    if len(dimensions) != len(set(dimensions)):
+        raise _error(422, "metric_readiness_dimensions_invalid", "Dimensions must be unique.")
     access = _company_scope(session, user, tenant_id)
     definition, metric_row, definition_hash, metric_version, _system_version = _resolve_definition(
         session,
@@ -1026,6 +1684,13 @@ def assess_metric_readiness(
         metric_key=metric_key,
         version=version,
     )
+    metric_domain = str(definition.get("domain"))
+    if domain is not None and domain != metric_domain:
+        raise _error(
+            422,
+            "metric_readiness_domain_mismatch",
+            "The requested domain does not match the pinned metric definition.",
+        )
     finance_sensitive = (
         metric_definition_requires_finance_read(session, metric_row)
         if metric_row is not None
@@ -1033,7 +1698,76 @@ def assess_metric_readiness(
     )
     if finance_sensitive:
         require_company_context_access(session, user, tenant_id, "finance:read")
-    checks = [
+    workforce_sensitive = (
+        metric_definition_requires_workforce_read(session, metric_row)
+        if metric_row is not None
+        else requires_workforce_read(definition, requested_dimensions=dimensions)
+    )
+    if workforce_sensitive:
+        require_company_context_access(session, user, tenant_id, "workforce:read")
+    universal_data_sensitive = (
+        metric_definition_requires_universal_data_read(session, metric_row)
+        if metric_row is not None
+        else requires_universal_data_read(definition)
+    )
+    if universal_data_sensitive:
+        require_company_context_access(session, user, tenant_id, "universal_data:read")
+    customer_commitment_sensitive = (
+        metric_definition_requires_customer_commitment_read(session, metric_row)
+        if metric_row is not None
+        else definition_requires_customer_commitment_read(definition)
+    )
+    if customer_commitment_sensitive:
+        require_company_context_access(session, user, tenant_id, "customer_commitment:read")
+    calculation_key = str(definition.get("calculation_key"))
+    effective_dimensions = _effective_dimensions(definition, list(dimensions))
+    declared_dimensions = {str(item) for item in _list(definition.get("dimensions", []))}
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if len(effective_dimensions) > 2:
+        blockers.append("metric_dimension_limit_exceeded")
+        checks = [
+            MetricReadinessCheck(
+                check_key="requested_dimensions",
+                status="blocked",
+                message="The analysis exceeds the supported two-dimension grouping limit.",
+                evidence={"requested": effective_dimensions, "maximum": 2},
+            )
+        ]
+    elif not set(effective_dimensions) <= declared_dimensions:
+        blockers.append("metric_dimension_unsupported")
+        checks = [
+            MetricReadinessCheck(
+                check_key="requested_dimensions",
+                status="blocked",
+                message="Requested dimensions are not declared by this metric version.",
+                evidence={
+                    "requested": effective_dimensions,
+                    "declared": sorted(declared_dimensions),
+                },
+            )
+        ]
+    else:
+        checks = []
+    customer_processing_required = requires_customer_data_processing_authorization(
+        definition, requested_dimensions=effective_dimensions
+    ) or (
+        metric_row is not None
+        and metric_definition_requires_customer_data_processing_authorization(session, metric_row)
+    )
+    if customer_processing_required:
+        blockers.append("customer_data_processing_authorization_required")
+        checks.append(
+            MetricReadinessCheck(
+                check_key="customer_data_processing_authorization",
+                status="blocked",
+                message=(
+                    "Customer-data processing authorization has not been established; "
+                    "no customer-level analysis is performed."
+                ),
+            )
+        )
+    checks.append(
         MetricReadinessCheck(
             check_key="metric_definition_published",
             status="ready",
@@ -1044,12 +1778,13 @@ def assess_metric_readiness(
                 "definition_hash": definition_hash,
             },
         )
-    ]
+    )
     calculation_key = str(definition.get("calculation_key"))
     calculation_supported = calculation_key in {
         "universal_record_count",
         "universal_source_amount_sum",
         "universal_distinct_source_values",
+        "manual_customer_commitment_count",
         "m5_metric",
         "core_financial_measure",
         "custom_formula",
@@ -1085,14 +1820,21 @@ def assess_metric_readiness(
             )
         )
         return _readiness_response(
+            tenant_id=tenant_id,
+            company_id=access.company.id,
+            domain=metric_domain,
             definition=definition,
             definition_hash=definition_hash,
             metric_version=metric_version,
             configuration_version=None,
+            analysis_id=None,
+            period_start=period_start,
+            period_end=period_end,
+            dimensions=effective_dimensions,
             calculation_supported=calculation_supported,
             checks=checks,
-            blockers=["company_semantic_configuration_missing"],
-            warnings=[],
+            blockers=[*blockers, "company_semantic_configuration_missing"],
+            warnings=warnings,
         )
     checks.append(
         MetricReadinessCheck(
@@ -1105,21 +1847,54 @@ def assess_metric_readiness(
             },
         )
     )
-    blockers: list[str] = []
-    warnings: list[str] = []
-    if calculation_key in {
-        "universal_record_count",
-        "universal_source_amount_sum",
-        "universal_distinct_source_values",
-    }:
+    if period_start is not None and period_end is not None:
+        checks.append(
+            MetricReadinessCheck(
+                check_key="analysis_period_scope",
+                status="ready",
+                message="Readiness is scoped to the requested inclusive period.",
+                evidence={
+                    "period_start": period_start.isoformat(),
+                    "period_end": period_end.isoformat(),
+                },
+            )
+        )
+    if (
+        calculation_key == "m5_metric"
+        and period_start is not None
+        and period_end is not None
+        and (period_start.isoweekday() != 1 or period_end.isoweekday() != 7)
+    ):
+        blockers.append("m5_period_must_cover_complete_monday_sunday_weeks")
+        checks.append(
+            MetricReadinessCheck(
+                check_key="m5_period_boundary",
+                status="blocked",
+                message="M5 weekly analyses require Monday through Sunday period bounds.",
+            )
+        )
+    if (
+        calculation_key
+        in {
+            "universal_record_count",
+            "universal_source_amount_sum",
+            "universal_distinct_source_values",
+        }
+        and not customer_processing_required
+        and not {
+            "metric_dimension_unsupported",
+            "metric_dimension_limit_exceeded",
+        }.intersection(blockers)
+    ):
         input_data, source_checks, source_blockers, source_warnings = _universal_input_snapshot(
             session,
             tenant_id=tenant_id,
             company_id=access.company.id,
             definition=definition,
             config_row=config_row,
-            period_start=None,
-            period_end=None,
+            period_start=period_start.isoformat() if period_start else None,
+            period_end=period_end.isoformat() if period_end else None,
+            analysis_dimensions=effective_dimensions,
         )
         del input_data
         checks.extend(source_checks)
@@ -1160,6 +1935,25 @@ def assess_metric_readiness(
                         evidence={"relationship_types": relationship_types},
                     )
                 )
+    elif calculation_key == "manual_customer_commitment_count" and not {
+        "metric_dimension_unsupported",
+        "metric_dimension_limit_exceeded",
+    }.intersection(blockers):
+        _input_data, source_checks, source_blockers, source_warnings = (
+            _manual_commitment_input_snapshot(
+                session,
+                tenant_id=tenant_id,
+                company_id=access.company.id,
+                definition=definition,
+                config_row=config_row,
+                period_start=period_start,
+                period_end=period_end,
+                dimensions=effective_dimensions,
+            )
+        )
+        checks.extend(source_checks)
+        blockers.extend(source_blockers)
+        warnings.extend(source_warnings)
     elif calculation_key == "m5_metric":
         checks.append(
             MetricReadinessCheck(
@@ -1211,10 +2005,107 @@ def assess_metric_readiness(
             )
         )
     return _readiness_response(
+        tenant_id=tenant_id,
+        company_id=access.company.id,
+        domain=metric_domain,
         definition=definition,
         definition_hash=definition_hash,
         metric_version=metric_version,
         configuration_version=config_row.version,
+        analysis_id=None,
+        period_start=period_start,
+        period_end=period_end,
+        dimensions=effective_dimensions,
+        calculation_supported=calculation_supported,
+        checks=checks,
+        blockers=blockers,
+        warnings=warnings,
+    )
+
+
+def assess_saved_analysis_readiness(
+    session: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    analysis_id: UUID,
+    *,
+    settings: Settings | None,
+) -> MetricReadinessResponse:
+    access = _company_scope(session, user, tenant_id)
+    row = _get_analysis(
+        session,
+        tenant_id=tenant_id,
+        company_id=access.company.id,
+        analysis_id=analysis_id,
+    )
+    _require_analysis_integrity(row)
+    _require_analysis_sensitive_scope(session, user, tenant_id, row, settings=settings)
+    definition = _dict(row.definition_snapshot)
+    domain = str(definition.get("domain", ""))
+    calculation_key = str(definition.get("calculation_key", ""))
+    supported_keys = {
+        "universal_record_count",
+        "universal_source_amount_sum",
+        "universal_distinct_source_values",
+        "manual_customer_commitment_count",
+        "m5_metric",
+        "core_financial_measure",
+        "custom_formula",
+    }
+    calculation_supported = (
+        calculation_key in supported_keys and row.calculation_version == BI_CALCULATION_VERSION
+    )
+    checks = [
+        MetricReadinessCheck(
+            check_key="saved_analysis_integrity",
+            status="ready",
+            message="The exact saved analysis passed snapshot, scope, and lineage checks.",
+            evidence={
+                "analysis_id": str(row.id),
+                "input_hash": row.input_hash,
+                "result_hash": row.result_hash,
+                "definition_hash": row.definition_hash,
+                "configuration_version": row.configuration_version,
+            },
+        )
+    ]
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if row.status == "complete":
+        result_status = "ready"
+        message = "The exact saved analysis completed from its pinned evidence."
+    elif row.status == "partial":
+        result_status = "warning"
+        message = "The exact saved analysis is partial; its completeness is not promoted."
+        warnings.extend(str(item) for item in _list(row.result_snapshot.get("reasons", [])))
+    else:
+        result_status = "blocked"
+        message = "The exact saved analysis abstained from producing a complete value."
+        blockers.extend(str(item) for item in _list(row.result_snapshot.get("reasons", [])))
+        if not blockers:
+            blockers.append("analysis_abstained")
+    checks.append(
+        MetricReadinessCheck(
+            check_key="saved_analysis_result_status",
+            status=result_status,
+            message=message,
+            evidence={"analysis_status": row.status},
+        )
+    )
+    if not calculation_supported:
+        blockers.append("calculation_version_unsupported")
+    return _readiness_response(
+        tenant_id=tenant_id,
+        company_id=access.company.id,
+        domain=domain,
+        definition=definition,
+        definition_hash=row.definition_hash,
+        metric_version=row.metric_version,
+        configuration_version=row.configuration_version,
+        analysis_id=row.id,
+        period_start=row.period_start,
+        period_end=row.period_end,
+        dimensions=[str(item) for item in _list(row.input_snapshot.get("dimensions", []))],
         calculation_supported=calculation_supported,
         checks=checks,
         blockers=blockers,
@@ -1233,6 +2124,9 @@ def _analysis_response(
     )
     return MetricAnalysisResponse(
         id=row.id,
+        tenant_id=row.tenant_id,
+        company_id=row.company_id,
+        domain=cast(Any, row.definition_snapshot.get("domain")),
         metric_key=row.metric_key,
         metric_version=row.metric_version,
         system_metric_version=row.system_metric_version,
@@ -1247,6 +2141,8 @@ def _analysis_response(
         result_hash=row.result_hash,
         result_snapshot=row.result_snapshot,
         evidence_count=evidence_count,
+        governance_blockers=list(UNRESOLVED_GOVERNANCE_BLOCKERS),
+        retention_status=RETENTION_STATUS,
         created_at=row.created_at,
     )
 
@@ -1357,6 +2253,16 @@ def _validate_dependency_analyses(
                 "result_hash": analysis.result_hash,
                 "status": analysis.status,
                 "sensitivity_scope": sensitivity_scope,
+                "workforce_sensitive": analysis.workforce_sensitive,
+                "customer_data_processing_required": (
+                    requires_customer_data_processing_authorization(
+                        analysis.definition_snapshot,
+                        requested_dimensions=dep_dimensions,
+                        analysis_filters=[
+                            _dict(item) for item in _list(dep_input.get("analysis_filters", []))
+                        ],
+                    )
+                ),
                 "core_financials_used": analysis.input_snapshot.get("core_financials_used") is True,
                 "result_snapshot": analysis.result_snapshot,
             }
@@ -1398,9 +2304,9 @@ def _validate_direct_m5_run(
     _validate_metric_run(run, tenant_id, company_id)
     metric_versions = _dict(run.result_snapshot.get("metric_versions", {}))
     expected = next(
-        (item.version for item in SYSTEM_METRICS if item.metric_key == f"m5.{metric_id}"), None
+        (item.version for item in METRIC_DEFINITIONS if item.metric_id == metric_id), None
     )
-    if expected is None or metric_versions.get(metric_id) != expected.rsplit(":", 1)[-1]:
+    if expected is None or metric_versions.get(metric_id) != expected:
         raise _error(
             409,
             "m5_metric_version_mismatch",
@@ -1518,6 +2424,18 @@ def _check_analysis_request(
                 "metric_filter_entity_mismatch",
                 "Every analysis filter must use the metric's declared canonical entity.",
             )
+    elif calculation_key == "manual_customer_commitment_count":
+        if (
+            body.source_run_id
+            or body.core_financial_run_id
+            or body.dependency_analyses
+            or body.filters
+        ):
+            raise _error(
+                422,
+                "metric_analysis_input_invalid",
+                "Manual commitment analyses use the pinned Company source configuration only.",
+            )
     elif calculation_key == "m5_metric":
         if not body.source_run_id:
             raise _error(
@@ -1595,6 +2513,41 @@ def create_metric_analysis(
     )
     if finance_sensitive:
         require_company_context_access(session, user, tenant_id, "finance:read")
+    workforce_sensitive = (
+        metric_definition_requires_workforce_read(session, metric_row)
+        if metric_row is not None
+        else requires_workforce_read(definition, requested_dimensions=body.dimensions)
+    )
+    if workforce_sensitive:
+        require_company_context_access(session, user, tenant_id, "workforce:read")
+    universal_data_sensitive = (
+        metric_definition_requires_universal_data_read(session, metric_row)
+        if metric_row is not None
+        else requires_universal_data_read(definition)
+    )
+    if universal_data_sensitive:
+        require_company_context_access(session, user, tenant_id, "universal_data:read")
+    customer_commitment_sensitive = (
+        metric_definition_requires_customer_commitment_read(session, metric_row)
+        if metric_row is not None
+        else definition_requires_customer_commitment_read(definition)
+    )
+    if customer_commitment_sensitive:
+        require_company_context_access(session, user, tenant_id, "customer_commitment:read")
+    customer_processing_required = requires_customer_data_processing_authorization(
+        definition,
+        requested_dimensions=body.dimensions,
+        analysis_filters=[item.model_dump(mode="json", exclude_none=True) for item in body.filters],
+    ) or (
+        metric_row is not None
+        and metric_definition_requires_customer_data_processing_authorization(session, metric_row)
+    )
+    if customer_processing_required:
+        raise _error(
+            409,
+            "customer_data_processing_authorization_required",
+            "Customer-data processing authorization is unresolved; this analysis is blocked.",
+        )
     _check_analysis_request(definition, body)
     config_row = get_scoped_configuration(
         session,
@@ -1615,17 +2568,15 @@ def create_metric_analysis(
     period_start = body.period_start
     period_end = body.period_end
     calculation_key = str(definition.get("calculation_key"))
-    effective_dimensions: list[str] = [str(item) for item in body.dimensions]
-    time_granularity = str(definition.get("time_granularity", "none"))
-    if time_granularity != "none" and time_granularity not in effective_dimensions:
-        if len(effective_dimensions) >= 2:
-            raise _error(
-                422,
-                "metric_dimension_limit_exceeded",
-                "The declared time granularity plus requested dimensions exceeds the "
-                "supported group limit.",
-            )
-        effective_dimensions.append(time_granularity)
+    effective_dimensions = _effective_dimensions(
+        definition, [str(item) for item in body.dimensions]
+    )
+    if len(effective_dimensions) > 2:
+        raise _error(
+            422,
+            "metric_dimension_limit_exceeded",
+            "The required dimensions plus requested dimensions exceed the supported group limit.",
+        )
     calculation_inputs: dict[str, object] = {
         "records": [],
         "evidence": [],
@@ -1651,6 +2602,10 @@ def create_metric_analysis(
             config_row=config_row,
             period_start=period_start.isoformat() if period_start else None,
             period_end=period_end.isoformat() if period_end else None,
+            analysis_dimensions=effective_dimensions,
+            analysis_filters=[
+                item.model_dump(mode="json", exclude_none=True) for item in body.filters
+            ],
         )
         calculation_inputs = universal_inputs
         source_selection = cast(dict[str, object] | None, universal_inputs.get("source_selection"))
@@ -1671,6 +2626,22 @@ def create_metric_analysis(
                 blockers = [str(item) for item in _list(calculation_inputs.get("blockers", []))]
                 blockers.append("required_semantic_relationship_missing")
                 calculation_inputs["blockers"] = sorted(set(blockers))
+    elif calculation_key == "manual_customer_commitment_count":
+        manual_inputs, _checks, _blockers, _warnings = _manual_commitment_input_snapshot(
+            session,
+            tenant_id=tenant_id,
+            company_id=access.company.id,
+            definition=definition,
+            config_row=config_row,
+            period_start=period_start,
+            period_end=period_end,
+            dimensions=effective_dimensions,
+        )
+        calculation_inputs = manual_inputs
+        source_selection = cast(dict[str, object] | None, manual_inputs.get("source_selection"))
+        external_evidence_refs.extend(
+            _dict(item) for item in _list(manual_inputs.get("external_evidence", []))
+        )
     elif calculation_key == "m5_metric":
         calculation = _dict(definition.get("calculation"))
         metric_id = str(calculation.get("metric_id"))
@@ -1830,6 +2801,7 @@ def create_metric_analysis(
     input_snapshot: dict[str, object] = {
         "schema_version": BI_INPUT_SCHEMA_VERSION,
         "sensitivity_scope": sensitivity_scope,
+        "workforce_sensitive": workforce_sensitive,
         "core_financials_used": core_financials_used,
         "tenant_id": str(tenant_id),
         "company_id": str(access.company.id),
@@ -1895,6 +2867,7 @@ def create_metric_analysis(
         result_hash=content_hash(result_snapshot),
         input_snapshot=input_snapshot,
         result_snapshot=result_snapshot,
+        workforce_sensitive=workforce_sensitive,
     )
     session.add(run)
     session.flush()
@@ -1940,6 +2913,100 @@ def _get_analysis(
     return row
 
 
+def _analysis_requires_workforce_read(
+    session: Session, row: BusinessIntelligenceAnalysisRun
+) -> bool:
+    direct_requirement = requires_workforce_read(
+        row.definition_snapshot,
+        requested_dimensions=[
+            str(item) for item in _list(row.input_snapshot.get("dimensions", []))
+        ],
+    )
+    if row.metric_definition_version_id is None:
+        return direct_requirement
+    definition_row = session.scalar(
+        select(BusinessMetricDefinitionVersion).where(
+            BusinessMetricDefinitionVersion.id == row.metric_definition_version_id,
+            BusinessMetricDefinitionVersion.tenant_id == row.tenant_id,
+            BusinessMetricDefinitionVersion.company_id == row.company_id,
+            BusinessMetricDefinitionVersion.metric_key == row.metric_key,
+        )
+    )
+    if definition_row is None or definition_row.definition_hash != row.definition_hash:
+        return True
+    return direct_requirement or metric_definition_requires_workforce_read(session, definition_row)
+
+
+def _analysis_requires_universal_data_read(
+    session: Session, row: BusinessIntelligenceAnalysisRun
+) -> bool:
+    direct_requirement = requires_universal_data_read(row.definition_snapshot)
+    if row.metric_definition_version_id is None:
+        return direct_requirement
+    definition_row = session.scalar(
+        select(BusinessMetricDefinitionVersion).where(
+            BusinessMetricDefinitionVersion.id == row.metric_definition_version_id,
+            BusinessMetricDefinitionVersion.tenant_id == row.tenant_id,
+            BusinessMetricDefinitionVersion.company_id == row.company_id,
+            BusinessMetricDefinitionVersion.metric_key == row.metric_key,
+        )
+    )
+    if definition_row is None or definition_row.definition_hash != row.definition_hash:
+        return True
+    return direct_requirement or metric_definition_requires_universal_data_read(
+        session, definition_row
+    )
+
+
+def _analysis_requires_customer_commitment_read(
+    session: Session, row: BusinessIntelligenceAnalysisRun
+) -> bool:
+    direct_requirement = requires_customer_commitment_read(row.definition_snapshot)
+    if row.metric_definition_version_id is None:
+        return direct_requirement
+    definition_row = session.scalar(
+        select(BusinessMetricDefinitionVersion).where(
+            BusinessMetricDefinitionVersion.id == row.metric_definition_version_id,
+            BusinessMetricDefinitionVersion.tenant_id == row.tenant_id,
+            BusinessMetricDefinitionVersion.company_id == row.company_id,
+            BusinessMetricDefinitionVersion.metric_key == row.metric_key,
+        )
+    )
+    if definition_row is None or definition_row.definition_hash != row.definition_hash:
+        return True
+    return direct_requirement or metric_definition_requires_customer_commitment_read(
+        session, definition_row
+    )
+
+
+def _analysis_requires_customer_data_processing_authorization(
+    session: Session, row: BusinessIntelligenceAnalysisRun
+) -> bool:
+    input_snapshot = row.input_snapshot
+    direct_requirement = requires_customer_data_processing_authorization(
+        row.definition_snapshot,
+        requested_dimensions=[str(item) for item in _list(input_snapshot.get("dimensions", []))],
+        analysis_filters=[
+            _dict(item) for item in _list(input_snapshot.get("analysis_filters", []))
+        ],
+    )
+    if row.metric_definition_version_id is None:
+        return direct_requirement
+    definition_row = session.scalar(
+        select(BusinessMetricDefinitionVersion).where(
+            BusinessMetricDefinitionVersion.id == row.metric_definition_version_id,
+            BusinessMetricDefinitionVersion.tenant_id == row.tenant_id,
+            BusinessMetricDefinitionVersion.company_id == row.company_id,
+            BusinessMetricDefinitionVersion.metric_key == row.metric_key,
+        )
+    )
+    if definition_row is None or definition_row.definition_hash != row.definition_hash:
+        return True
+    return direct_requirement or metric_definition_requires_customer_data_processing_authorization(
+        session, definition_row
+    )
+
+
 def _require_analysis_sensitive_scope(
     session: Session,
     user: UserAccount,
@@ -1956,6 +3023,18 @@ def _require_analysis_sensitive_scope(
             409,
             "business_intelligence_analysis_integrity_error",
             "The saved analysis has an unsupported sensitivity scope.",
+        )
+    if _analysis_requires_workforce_read(session, row):
+        require_company_context_access(session, user, tenant_id, "workforce:read")
+    if _analysis_requires_universal_data_read(session, row):
+        require_company_context_access(session, user, tenant_id, "universal_data:read")
+    if _analysis_requires_customer_commitment_read(session, row):
+        require_company_context_access(session, user, tenant_id, "customer_commitment:read")
+    if _analysis_requires_customer_data_processing_authorization(session, row):
+        raise _error(
+            409,
+            "customer_data_processing_authorization_required",
+            "Customer-data processing authorization is unresolved; this saved analysis is blocked.",
         )
     if row.input_snapshot.get("core_financials_used") is True and (
         settings is None
@@ -1979,14 +3058,36 @@ def _require_analysis_integrity(row: BusinessIntelligenceAnalysisRun) -> None:
         "start": row.period_start.isoformat() if row.period_start is not None else None,
         "end": row.period_end.isoformat() if row.period_end is not None else None,
     }
-    if not isinstance(input_snapshot.get("core_financials_used"), bool):
+    input_schema_version = input_snapshot.get("schema_version")
+    if input_schema_version == 1:
+        workforce_marker_valid = "workforce_sensitive" not in input_snapshot
+    elif input_schema_version == BI_INPUT_SCHEMA_VERSION:
+        workforce_marker = input_snapshot.get("workforce_sensitive")
+        workforce_marker_valid = (
+            isinstance(workforce_marker, bool) and workforce_marker is row.workforce_sensitive
+        )
+    else:
+        workforce_marker_valid = False
+    if (
+        not isinstance(input_snapshot.get("core_financials_used"), bool)
+        or not workforce_marker_valid
+        or (
+            requires_workforce_read(
+                definition_snapshot,
+                requested_dimensions=[
+                    str(item) for item in _list(input_snapshot.get("dimensions", []))
+                ],
+            )
+            and not row.workforce_sensitive
+        )
+    ):
         raise _error(
             409,
             "business_intelligence_analysis_integrity_error",
             "The saved analysis has an invalid feature-scope marker.",
         )
     if (
-        input_snapshot.get("schema_version") != BI_INPUT_SCHEMA_VERSION
+        input_schema_version not in {1, BI_INPUT_SCHEMA_VERSION}
         or result_snapshot.get("schema_version") != BI_RESULT_SCHEMA_VERSION
         or content_hash(input_snapshot) != row.input_hash
         or content_hash(result_snapshot) != row.result_hash
@@ -2104,28 +3205,38 @@ def list_metric_analyses(
             BusinessIntelligenceAnalysisRun.input_snapshot["sensitivity_scope"].as_string()
             == "company_context"
         )
+    can_read_workforce = has_workforce_read_access(session, user, tenant_id)
+    if not can_read_workforce:
+        filters.append(BusinessIntelligenceAnalysisRun.workforce_sensitive.is_(False))
+    can_read_universal_data = has_universal_data_read_access(session, user, tenant_id)
+    can_read_customer_commitments = has_customer_commitment_read_access(session, user, tenant_id)
     if metric_key is not None:
         filters.append(BusinessIntelligenceAnalysisRun.metric_key == metric_key)
-    total = (
-        session.scalar(
-            select(func.count()).select_from(BusinessIntelligenceAnalysisRun).where(*filters)
-        )
-        or 0
-    )
-    rows = list(
-        session.scalars(
-            select(BusinessIntelligenceAnalysisRun)
-            .where(*filters)
-            .order_by(
-                BusinessIntelligenceAnalysisRun.created_at.desc(),
-                BusinessIntelligenceAnalysisRun.id.desc(),
-            )
-            .limit(limit)
-            .offset(offset)
+    ordered_statement = (
+        select(BusinessIntelligenceAnalysisRun)
+        .where(*filters)
+        .order_by(
+            BusinessIntelligenceAnalysisRun.created_at.desc(),
+            BusinessIntelligenceAnalysisRun.id.desc(),
         )
     )
-    for row in rows:
+    visible_rows: list[BusinessIntelligenceAnalysisRun] = []
+    for row in session.scalars(ordered_statement).yield_per(100):
         _require_analysis_integrity(row)
+        if not can_read_workforce and _analysis_requires_workforce_read(session, row):
+            continue
+        if not can_read_universal_data and _analysis_requires_universal_data_read(session, row):
+            continue
+        if not can_read_customer_commitments and _analysis_requires_customer_commitment_read(
+            session, row
+        ):
+            continue
+        if _analysis_requires_customer_data_processing_authorization(session, row):
+            continue
+        visible_rows.append(row)
+    total = len(visible_rows)
+    rows = visible_rows[offset : offset + limit]
+    for row in rows:
         _require_analysis_sensitive_scope(session, user, tenant_id, row, settings=settings)
     return MetricAnalysisPage(
         items=[_analysis_response(row) for row in rows], total=total, limit=limit, offset=offset
@@ -2175,12 +3286,17 @@ def replay_metric_analysis(
             "The deterministic replay does not match the saved result.",
         )
     return MetricAnalysisReplayResponse(
+        tenant_id=row.tenant_id,
+        company_id=row.company_id,
+        domain=cast(Any, row.definition_snapshot.get("domain")),
         analysis_id=row.id,
         replay_status="verified",
         input_hash=row.input_hash,
         stored_result_hash=row.result_hash,
         replayed_result_hash=replayed_hash,
         result_snapshot=replayed,
+        governance_blockers=list(UNRESOLVED_GOVERNANCE_BLOCKERS),
+        retention_status=RETENTION_STATUS,
     )
 
 
@@ -2234,9 +3350,17 @@ def list_metric_evidence(
         for index, item in enumerate(all_evidence[offset : offset + limit])
     ]
     return MetricEvidencePage(
+        tenant_id=row.tenant_id,
+        company_id=row.company_id,
         analysis_id=row.id,
+        metric_key=row.metric_key,
+        domain=cast(Any, row.definition_snapshot.get("domain")),
+        period_start=row.period_start,
+        period_end=row.period_end,
         items=items,
         total=len(all_evidence),
         limit=limit,
         offset=offset,
+        governance_blockers=list(UNRESOLVED_GOVERNANCE_BLOCKERS),
+        retention_status=RETENTION_STATUS,
     )

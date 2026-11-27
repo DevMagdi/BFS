@@ -7,9 +7,11 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
 
 from tests.helpers import auth_headers, create_member, create_tenant, register_user
+from tests.migration_helpers import invoke_downgrade_function
 
 
 def _base(tenant_id: str) -> str:
@@ -853,3 +855,91 @@ def test_retention_purge_plan_blocks_promoted_canonical_dependencies(
             )
     finally:
         _cleanup_retention_rows(admin_engine, tenant_id)
+
+
+def test_0028_downgrade_directly_refuses_retained_policy_and_lifecycle_evidence(
+    client, migration_engine, admin_engine, retention_row_cleanup
+):
+    tenant_key = f"universal-migration-guard-{uuid4().hex[:12]}"
+    _owner, owner_headers, tenant, _approver, approver_headers = _make_owner_and_approver(
+        client, tenant_key
+    )
+    tenant_id = str(tenant["id"])
+    retention_row_cleanup(tenant_id)
+    base = _base(tenant_id)
+    source = _source(client, base, owner_headers, "retention.migration-guard")
+    source_id = str(source["source_id"])
+    policy = _configure_and_approve(
+        client, base, owner_headers, approver_headers, retention_days=30
+    )
+    revoked = client.post(
+        f"{base}/sources/{source_id}/revoke",
+        json={"reason_code": "owner_request"},
+        headers=owner_headers,
+    )
+    assert revoked.status_code == 200, revoked.text
+
+    with admin_engine.connect() as connection:
+        assert (
+            connection.scalar(
+                text(
+                    "SELECT count(*) FROM universal_retention_policy_versions "
+                    "WHERE tenant_id = :tenant_id"
+                ),
+                {"tenant_id": UUID(tenant_id)},
+            )
+            == 1
+        )
+        assert (
+            connection.scalar(
+                text(
+                    "SELECT count(*) FROM universal_retention_policy_approvals "
+                    "WHERE tenant_id = :tenant_id"
+                ),
+                {"tenant_id": UUID(tenant_id)},
+            )
+            == 1
+        )
+        assert (
+            connection.scalar(
+                text(
+                    "SELECT count(*) FROM universal_source_lifecycle_events "
+                    "WHERE tenant_id = :tenant_id AND source_id = :source_id "
+                    "AND event_type = 'revoked'"
+                ),
+                {"tenant_id": UUID(tenant_id), "source_id": UUID(source_id)},
+            )
+            == 1
+        )
+
+    with pytest.raises(
+        DBAPIError,
+        match="cannot downgrade while retention or lifecycle evidence exists",
+    ):
+        invoke_downgrade_function(migration_engine, "0028_universal_data_retention.py")
+
+    with migration_engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0028_universal_data_retention"
+        )
+        assert connection.scalar(text("SELECT current_user")) == "bf_migrator"
+    with admin_engine.connect() as connection:
+        assert (
+            connection.scalar(
+                text(
+                    "SELECT count(*) FROM universal_retention_policy_versions "
+                    "WHERE tenant_id = :tenant_id AND id = :policy_id"
+                ),
+                {"tenant_id": UUID(tenant_id), "policy_id": UUID(policy["policy_version_id"])},
+            )
+            == 1
+        )
+        assert (
+            connection.scalar(
+                text(
+                    "SELECT relrowsecurity AND relforcerowsecurity FROM pg_class "
+                    "WHERE relname = 'universal_source_lifecycle_events'"
+                )
+            )
+            is True
+        )

@@ -2,7 +2,7 @@
 
 - **Assessment date/cutoff:** 2026-11-21 (UTC).
 - **Scope:** Internal BFS code reuse and external OSS screening for the accepted API-only Operations Intelligence proof.
-- **Decision status:** Engineering classification for the accepted Phase 1 scope. Final-tree local verification passed 475 PostgreSQL-backed tests and a separate 17-test focused Operations run, repository Ruff format/lint, mypy, Alembic parity, final `git diff --check`, and focused implementation/security review. Current-branch GitHub CI remains unrun; formal technical closure and owner decisions for customer, KPI, sensitive-data, and production uses remain separate. This is not legal approval, production approval, or a complete SBOM/security audit.
+- **Decision status:** Engineering classification for the accepted Phase 1 scope. Local verification passed 475 PostgreSQL-backed tests and a separate 17-test focused Operations run, repository Ruff format/lint, mypy, Alembic parity, final `git diff --check`, and focused implementation/security review. PR #41 and push CI passed on the reviewed head; post-merge `main` CI passed on the merge commit. The bounded engineering scope is closed; owner decisions for customer, KPI, sensitive-data, and production uses remain separate. This is not legal approval, production approval, or a complete SBOM/security audit; see [`PHASE1_ACCEPTANCE_REPORT.md`](PHASE1_ACCEPTANCE_REPORT.md).
 - **Classification vocabulary:** Reuse the established categories from [`OPENFPA_TECHNICAL_REUSE_AUDIT.md`](OPENFPA_TECHNICAL_REUSE_AUDIT.md): **REUSE DIRECTLY**, **ADAPT**, **BFS-NATIVE IMPLEMENTATION**, **DESIGN INSPIRATION ONLY**, **DEFER**, and **REJECT**.
 
 ## Internal BFS reuse register

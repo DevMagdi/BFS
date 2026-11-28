@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     BaseModel,
@@ -12,6 +13,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    field_validator,
     model_validator,
 )
 
@@ -48,7 +50,31 @@ def _parse_period_date(value: object) -> date:
         raise ValueError("period_start must be a real calendar date") from exc
 
 
+def _parse_aware_datetime(value: object) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        if (
+            not isinstance(value, str)
+            or re.fullmatch(
+                r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+                r"(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})",
+                value,
+            )
+            is None
+        ):
+            raise ValueError("timestamp must be an ISO-8601 datetime with a timezone")
+        try:
+            parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+        except ValueError as exc:
+            raise ValueError("timestamp must be a real ISO-8601 datetime") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("timestamp must include a timezone")
+    return parsed
+
+
 PeriodDate = Annotated[date, BeforeValidator(_parse_period_date)]
+AwareDateTime = Annotated[datetime, BeforeValidator(_parse_aware_datetime)]
 
 
 class ForecastContractModel(BaseModel):
@@ -87,6 +113,8 @@ class ForecastDatasetObservation(ForecastContractModel):
     missing_reason: Annotated[
         str | None, StringConstraints(strict=True, min_length=1, max_length=256)
     ] = None
+    period_coverage: Literal["complete", "incomplete", "unknown"] | None = None
+    coverage_evidence_hash: HashText | None = None
     source_reference: ForecastSourceReference
 
     @model_validator(mode="after")
@@ -100,12 +128,84 @@ class ForecastDatasetObservation(ForecastContractModel):
         return self
 
 
+class ForecastDatasetSourceLineage(ForecastContractModel):
+    """Bounded synthetic Operations lineage; never authenticates a real source."""
+
+    schema_version: Literal[1] = 1
+    target_contract_key: Literal["operations.weekly_work_requests.first_received.v1"]
+    company_id: UUIDText
+    source_id: CodeText
+    source_profile_version_id: UUIDText
+    source_snapshot_id: UUIDText
+    source_snapshot_hash: HashText
+    source_authority: Literal["synthetic_only_not_independent_source_verification"]
+    workflow_key: CodeText
+    workflow_support_evidence_hash: HashText
+    calendar_timezone: Annotated[
+        str,
+        StringConstraints(
+            strict=True,
+            min_length=1,
+            max_length=64,
+            pattern=r"^[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+.-]+)*$",
+        ),
+    ]
+    week_start: Literal["monday"]
+    snapshot_as_of: AwareDateTime
+    first_received_semantics: Literal["explicit_synthetic_fixture_timestamp"]
+    replayed_event_version_count: Annotated[int, Field(strict=True, ge=0)]
+    duplicate_request_stream_count: Annotated[int, Field(strict=True, ge=0)]
+    corrected_request_count: Annotated[int, Field(strict=True, ge=0)]
+    readiness_status: Literal["ready_for_synthetic_evaluation", "blocked"]
+    readiness_reason_codes: Annotated[list[CodeText], Field(max_length=16)] = Field(
+        default_factory=list
+    )
+    point_in_time_status: Literal["eligible", "blocked"]
+    point_in_time_reason_codes: Annotated[list[CodeText], Field(max_length=16)] = Field(
+        default_factory=list
+    )
+
+    @field_validator("calendar_timezone")
+    @classmethod
+    def known_calendar_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("calendar_timezone must be a recognized IANA timezone") from exc
+        return value
+
+    @field_validator("snapshot_as_of")
+    @classmethod
+    def require_snapshot_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("snapshot_as_of must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def validate_lineage_status(self) -> ForecastDatasetSourceLineage:
+        if len(self.readiness_reason_codes) != len(set(self.readiness_reason_codes)):
+            raise ValueError("readiness reason codes must be unique")
+        if self.readiness_status == "ready_for_synthetic_evaluation":
+            if self.readiness_reason_codes or self.point_in_time_status != "eligible":
+                raise ValueError("ready lineage cannot include readiness or point-in-time blockers")
+        elif not self.readiness_reason_codes:
+            raise ValueError("blocked readiness lineage requires an explicit reason")
+        if len(self.point_in_time_reason_codes) != len(set(self.point_in_time_reason_codes)):
+            raise ValueError("point-in-time reason codes must be unique")
+        if self.point_in_time_status == "eligible" and self.point_in_time_reason_codes:
+            raise ValueError("eligible point-in-time lineage cannot include blockers")
+        if self.point_in_time_status == "blocked" and not self.point_in_time_reason_codes:
+            raise ValueError("blocked point-in-time lineage requires an explicit reason")
+        return self
+
+
 class ForecastDatasetCreate(ForecastContractModel):
     schema_version: Literal[1] = 1
     dataset_key: CodeText
     expected_version: Annotated[int, Field(strict=True, ge=1, le=1_000_000)] | None = None
     display_name: LabelText
     data_origin: Literal["synthetic_fixture", "caller_assertion"]
+    source_lineage: ForecastDatasetSourceLineage | None = None
     target_key: CodeText
     target_label: LabelText
     unit: Annotated[
@@ -135,6 +235,15 @@ class ForecastDatasetCreate(ForecastContractModel):
         expected_evidence = (
             "synthetic_fixture" if self.data_origin == "synthetic_fixture" else "caller_assertion"
         )
+        if self.source_lineage is not None and (
+            self.data_origin != "synthetic_fixture"
+            or self.target_key != "operations.weekly_work_requests"
+            or self.unit != "requests/week"
+            or self.frequency != "weekly"
+            or self.currency_code is not None
+            or dimension_keys != ["workflow"]
+        ):
+            raise ValueError("synthetic work-request lineage does not match the dataset contract")
         for observation in self.observations:
             if set(observation.dimension_values) != expected_dimensions:
                 raise ValueError("each observation must provide exactly the declared dimensions")
@@ -151,6 +260,31 @@ class ForecastDatasetCreate(ForecastContractModel):
             identities.add(identity)
             if observation.source_reference.evidence_type != expected_evidence:
                 raise ValueError("source evidence type must match the dataset's declared origin")
+            if self.source_lineage is not None:
+                if (
+                    observation.dimension_values.get("workflow") != self.source_lineage.workflow_key
+                    or observation.source_reference.evidence_type != "synthetic_fixture"
+                    or observation.source_reference.source_id != self.source_lineage.source_id
+                    or observation.source_reference.source_hash
+                    != self.source_lineage.source_snapshot_hash
+                    or observation.period_coverage is None
+                ):
+                    raise ValueError(
+                        "observation source reference or period coverage does not match lineage"
+                    )
+                if observation.period_coverage == "complete":
+                    if observation.value is None or observation.coverage_evidence_hash is None:
+                        raise ValueError("complete work-request periods require value and evidence")
+                    count = parse_decimal_text(observation.value)
+                    if count < 0 or count != count.to_integral_value():
+                        raise ValueError("work-request counts must be non-negative integers")
+                elif observation.value is not None:
+                    raise ValueError("incomplete work-request periods cannot be assigned a count")
+                if (
+                    self.source_lineage.readiness_status == "ready_for_synthetic_evaluation"
+                    and observation.period_coverage != "complete"
+                ):
+                    raise ValueError("ready work-request lineage requires complete periods")
         return self
 
 

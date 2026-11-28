@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -11,6 +11,12 @@ from sqlalchemy import MetaData, Table, delete, func, select, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
 
+from businessflow.forecasting.weekly_work_requests import (
+    WeeklyWorkRequestCoverage,
+    WeeklyWorkRequestSnapshot,
+    WorkRequestReceiptVersion,
+    build_weekly_work_request_dataset,
+)
 from businessflow.main import create_app
 from tests.helpers import auth_headers, create_member, create_tenant, register_user
 from tests.migration_helpers import invoke_downgrade_function
@@ -71,6 +77,69 @@ def _dataset_body(
         "frequency": "daily",
         "observations": observations,
     }
+
+
+def _weekly_request_dataset_body(company_id: str, *, complete: bool = True) -> dict[str, object]:
+    week_start = date(2026, 1, 5)
+    next_week = datetime.combine(week_start + timedelta(days=7), time.min, tzinfo=UTC)
+    event_id = uuid4()
+    receipt = WorkRequestReceiptVersion.model_validate(
+        {
+            "event_id": event_id,
+            "event_version_id": uuid4(),
+            "source_event_key": f"synthetic-request:{uuid4().hex}",
+            "request_key_hash": hashlib.sha256(b"synthetic-request-1").hexdigest(),
+            "version": 1,
+            "event_hash": hashlib.sha256(b"synthetic-request-event-v1").hexdigest(),
+            "receipt_state": "received",
+            "first_received_at": datetime(2026, 1, 6, 9, tzinfo=UTC),
+            "workflow_key": "ops.intake",
+            "recorded_at": datetime(2026, 1, 6, 9, 5, tzinfo=UTC),
+        }
+    )
+    coverage = (
+        WeeklyWorkRequestCoverage.model_validate(
+            {
+                "week_start": week_start,
+                "status": "complete",
+                "covered_through": next_week,
+                "known_at": next_week,
+                "evidence_hash": hashlib.sha256(b"synthetic-week-coverage").hexdigest(),
+            }
+        )
+        if complete
+        else WeeklyWorkRequestCoverage.model_validate(
+            {
+                "week_start": week_start,
+                "status": "unknown",
+                "reason_code": "coverage_unknown",
+            }
+        )
+    )
+    snapshot = WeeklyWorkRequestSnapshot.model_validate(
+        {
+            "data_origin": "synthetic_fixture",
+            "company_id": UUID(company_id),
+            "source_id": "synthetic.operations-intake",
+            "source_profile_version_id": uuid4(),
+            "source_snapshot_id": uuid4(),
+            "workflow_key": "ops.intake",
+            "workflow_label": "Operations intake",
+            "workflow_support_evidence_hash": hashlib.sha256(
+                b"synthetic-workflow-support"
+            ).hexdigest(),
+            "calendar_timezone": "Etc/UTC",
+            "period_start": week_start,
+            "period_end": week_start,
+            "snapshot_as_of": datetime(2026, 1, 13, 12, tzinfo=UTC),
+            "first_received_semantics": "explicit_synthetic_fixture_timestamp",
+            "receipt_versions": [receipt],
+            "period_coverage": [coverage],
+        }
+    )
+    dataset = build_weekly_work_request_dataset(snapshot).dataset
+    assert dataset is not None
+    return dataset.model_dump(mode="json", exclude={"expected_version"})
 
 
 def _assert_forecast_storage_controls(
@@ -229,6 +298,81 @@ def _assert_forecast_storage_controls(
                     {"company_id": str(company_id)},
                 )
                 connection.execute(statement)
+
+
+def test_weekly_request_lineage_is_company_scoped_and_readiness_blocks_evaluation(
+    _clear_forecast_evidence, client, settings
+) -> None:
+    owner_tokens = register_user(client, f"weekly-request-owner-{uuid4().hex}@example.com")
+    owner_headers = auth_headers(owner_tokens)
+    tenant_one = create_tenant(
+        client,
+        owner_tokens,
+        name="Weekly request tenant one",
+        company_name="Weekly request company one",
+        key=f"weekly-requests-one-{uuid4().hex}",
+    )
+    tenant_two = create_tenant(
+        client,
+        owner_tokens,
+        name="Weekly request tenant two",
+        company_name="Weekly request company two",
+        key=f"weekly-requests-two-{uuid4().hex}",
+    )
+    enabled_settings = settings.model_copy(update={"forecasting_enabled": True})
+
+    with TestClient(create_app(enabled_settings), raise_server_exceptions=False) as forecast_client:
+        ready_body = _weekly_request_dataset_body(tenant_one["company"]["id"])
+        created_ready = forecast_client.post(
+            f"{_base(tenant_one['id'])}/datasets", json=ready_body, headers=owner_headers
+        )
+        assert created_ready.status_code == 201, created_ready.text
+        ready_snapshot = created_ready.json()["snapshot"]
+        assert ready_snapshot["source_lineage"]["company_id"] == tenant_one["company"]["id"]
+        assert ready_snapshot["source_lineage"]["readiness_status"] == (
+            "ready_for_synthetic_evaluation"
+        )
+        assert ready_snapshot["data_origin"] == "synthetic_fixture"
+
+        cross_company = forecast_client.post(
+            f"{_base(tenant_two['id'])}/datasets", json=ready_body, headers=owner_headers
+        )
+        assert cross_company.status_code == 403
+        assert cross_company.json()["error"]["code"] == ("forecast_dataset_company_scope_mismatch")
+
+        blocked_body = _weekly_request_dataset_body(tenant_two["company"]["id"], complete=False)
+        created_blocked = forecast_client.post(
+            f"{_base(tenant_two['id'])}/datasets", json=blocked_body, headers=owner_headers
+        )
+        assert created_blocked.status_code == 201, created_blocked.text
+        blocked_dataset = created_blocked.json()
+        assert blocked_dataset["snapshot"]["observations"][0]["value"] is None
+        assert blocked_dataset["snapshot"]["source_lineage"]["readiness_status"] == "blocked"
+
+        blocked_evaluation = forecast_client.post(
+            f"{_base(tenant_two['id'])}/evaluations",
+            json={
+                "dataset_version_id": blocked_dataset["dataset"]["id"],
+                "protocol_version_id": str(uuid4()),
+                "model_version_ids": [str(uuid4())],
+                "stage": "validation",
+            },
+            headers=owner_headers,
+        )
+        assert blocked_evaluation.status_code == 409
+        assert blocked_evaluation.json()["error"]["code"] == "forecast_dataset_not_ready"
+
+        blocked_run = forecast_client.post(
+            f"{_base(tenant_two['id'])}/runs",
+            json={
+                "dataset_version_id": blocked_dataset["dataset"]["id"],
+                "protocol_version_id": str(uuid4()),
+                "model_version_id": str(uuid4()),
+            },
+            headers=owner_headers,
+        )
+        assert blocked_run.status_code == 409
+        assert blocked_run.json()["error"]["code"] == "forecast_dataset_not_ready"
 
 
 def test_forecasting_api_versions_replays_and_requires_independent_reviewer(

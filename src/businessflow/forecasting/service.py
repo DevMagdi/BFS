@@ -319,9 +319,27 @@ def _verify_dataset(row: ForecastDatasetVersion) -> ForecastDatasetCreate:
         or row.end_period != max(item.period_start for item in dataset.observations)
         or row.observation_count != len(dataset.observations)
         or row.series_count != _dataset_series_count(dataset)
+        or (
+            dataset.source_lineage is not None
+            and dataset.source_lineage.company_id != row.company_id
+        )
     ):
         raise _integrity_error()
     return dataset
+
+
+def _require_dataset_ready_for_forecast(row: ForecastDatasetVersion) -> None:
+    dataset = _verify_dataset(row)
+    lineage = dataset.source_lineage
+    if lineage is not None and (
+        lineage.readiness_status != "ready_for_synthetic_evaluation"
+        or lineage.point_in_time_status != "eligible"
+    ):
+        raise ApiError(
+            409,
+            "forecast_dataset_not_ready",
+            "Dataset readiness or point-in-time lineage blocks forecasting and evaluation.",
+        )
 
 
 def _dataset_eligibility(row: ForecastDatasetVersion) -> ForecastDatasetEligibility:
@@ -1013,6 +1031,12 @@ def create_forecast_dataset(
     access = require_company_context_access(
         session, user, tenant_id, "forecast:write", request_id=request_id
     )
+    if body.source_lineage is not None and body.source_lineage.company_id != access.company.id:
+        raise ApiError(
+            403,
+            "forecast_dataset_company_scope_mismatch",
+            "Synthetic dataset lineage does not match the authenticated Company scope.",
+        )
     _lock_company(session, tenant_id, access.company.id)
     previous = session.scalar(
         select(ForecastDatasetVersion)
@@ -1086,6 +1110,19 @@ def create_forecast_dataset(
             "dataset_eligibility": eligibility.status,
             "eligibility_reason_codes": eligibility.reason_codes,
             "source_authority": "not_established",
+            "data_foundation_readiness": (
+                body.source_lineage.readiness_status if body.source_lineage is not None else None
+            ),
+            "data_foundation_reason_codes": (
+                body.source_lineage.readiness_reason_codes
+                if body.source_lineage is not None
+                else []
+            ),
+            "point_in_time_status": (
+                body.source_lineage.point_in_time_status
+                if body.source_lineage is not None
+                else "not_established"
+            ),
         },
     )
     return ForecastDatasetDetail(
@@ -1440,6 +1477,7 @@ def create_forecast_evaluation(
     )
     _lock_company(session, tenant_id, access.company.id)
     dataset = _get_dataset(session, tenant_id, access.company.id, body.dataset_version_id)
+    _require_dataset_ready_for_forecast(dataset)
     protocol = _get_protocol(session, tenant_id, access.company.id, body.protocol_version_id)
     models = [
         _get_model(session, tenant_id, access.company.id, model_id)
@@ -1815,6 +1853,7 @@ def create_forecast_run(
         session, user, tenant_id, "forecast:write", request_id=request_id
     )
     dataset = _get_dataset(session, tenant_id, access.company.id, body.dataset_version_id)
+    _require_dataset_ready_for_forecast(dataset)
     protocol = _get_protocol(session, tenant_id, access.company.id, body.protocol_version_id)
     model = _get_model(session, tenant_id, access.company.id, body.model_version_id)
     protocol_definition = ForecastEvaluationProtocolCreate.model_validate(

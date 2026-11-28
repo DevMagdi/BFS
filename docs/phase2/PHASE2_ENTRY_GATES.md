@@ -2,18 +2,20 @@
 
 - **Review date:** 2026-11-21 (UTC).
 - **Repository:** `DevMagdi/BFS`.
-- **Verified base:** `HEAD` and fetched `origin/main` were both `cc2e83575c812c136fb8bddddacdc73ba6b36cde` on branch `arena/b0cc21f6-bfs` before edits.
+- **Original Entry Gate review base:** `HEAD` and fetched `origin/main` were `cc2e83575c812c136fb8bddddacdc73ba6b36cde` on branch `arena/b0cc21f6-bfs` at that review.
+- **Current P2-01 execution base:** `c4025289a4283004ec15c66de698cf5f63082014` (`main` at branch start) on active branch `arena/6b90e06f-bfs`. Its Git metadata is dated 2026-11-28, after the 2026-11-21 session date; this chronology discrepancy is recorded and is not an approval date.
 - **P2-00:** Baseline Assessment is already documented; its existing workspace report is [`PHASE2_BASELINE_ASSESSMENT.md`](PHASE2_BASELINE_ASSESSMENT.md). This package does not repeat P2-00.
-- **Overall Entry Gates status:** **BLOCKED** — owner decisions, source authorization, governance, and evaluation approval are missing.
-- **P2-01 status:** **Not started and not authorized**.
+- **Human/business Entry Gates status:** **PENDING** — no Use-case Selection, Source Authorization, Governance, or Evaluation Protocol Approval has been recorded.
+- **Engineering authorization:** Phase 2 owner has authorized sequential synthetic/non-production engineering. P2-01 may proceed within [`OWNER_DECISION_BRIEF.md`](OWNER_DECISION_BRIEF.md); this does not close any Entry Gate or authorize real-source or production use.
+- **P2-01 status:** Synthetic/non-production implementation is in progress on the active branch. The typed builder and M17 lineage/readiness guards are implemented; Ruff, mypy, and 289 unit tests pass. PostgreSQL-backed API verification and PR/CI remain pending. No real source or customer/production data is available or authorized.
 
 ## Executive determination
 
-**Engineering preparation is documented; the Entry Gates are not closed.** The repository supports a bounded Phase 1 Operations observation path and a separate deterministic M17 forecasting/evaluation prototype. It does not establish a real operational-demand dataset, a source authorized for prediction, an accountable Business Owner, an approved target or current planning process, acceptable error, or a target-specific evaluation protocol.
+**Engineering is authorized; the Entry Gates are not closed.** The repository supports a bounded Phase 1 Operations observation path and a separate deterministic M17 forecasting/evaluation prototype. It does not establish a real operational-demand dataset, a source authorized for prediction, an accountable Business Owner, an approved business target or current planning process, acceptable business error, or a human-approved evaluation protocol.
 
-The recommended discussion candidate is **weekly incoming operational work-request volume for one owner-selected workflow**, with a proposed one-week horizon and a proposed human capacity-planning decision. This is a **RECOMMENDED discovery candidate**, not a selected or owner-approved use case. The target entity and `first received` event are not typed in the current Operations contract, and no real time series exists in the tracked repository. Gate A therefore remains **PENDING**. See [`PREDICTIVE_USE_CASE.md`](PREDICTIVE_USE_CASE.md).
+The adopted **engineering target** is weekly incoming work-request count for distinct requests first received in a week, for one explicit workflow, with a one-week horizon. This adoption is limited to synthetic/non-production engineering. It is not Use-case Selection approval by an Operations Business Owner. Phase 1 Operations counts generic event labels, not typed requests or demand; its current contract does not establish authoritative `first received` semantics, and no real time series exists in the tracked repository. Gate A remains **PENDING** for business use. See [`PREDICTIVE_USE_CASE.md`](PREDICTIVE_USE_CASE.md) and the separate engineering-decision record in [`ENTRY_GATE_APPROVAL_REGISTER.md`](ENTRY_GATE_APPROVAL_REGISTER.md).
 
-No actual source, production database, or customer dataset was accessed or authorized. No connector was activated and no retention setting was changed. Synthetic fixtures are suitable only for technical tests and are not customer evidence. M17 forecasting and promotion flags remain default-off; M17 hard-blocks both in `APP_ENV=production`. This documentation does not change the code or these restrictions.
+No actual source, production database, or customer dataset was accessed or authorized. No connector was activated and no retention setting was changed. Synthetic fixtures and the P2-01 synthetic builder are suitable only for technical tests and are not customer evidence. M17 forecasting and promotion flags remain default-off; M17 hard-blocks both in `APP_ENV=production`. The P2-01 code changes do not alter these restrictions.
 
 ## Entry-gate status
 
@@ -21,7 +23,7 @@ The four mandatory implementation-entry gates remain distinct: **Use-case Select
 
 | Gate | Status | Evidence-based result | Decision required to close |
 |---|---|---|---|
-| **A — Predictive Use-case Selection** | **PENDING**. Candidate is **RECOMMENDED**, not approved. | Operations has generic source-scoped event observations and exact-label counts, not a typed request/demand target. No real historical series, business decision, incumbent planning record, or target acceptance threshold is recorded. | Business Owner records whether this candidate is accepted or rejected; if accepted, approves one precise entity, target, decision, horizon, population, data requirement, measurable outcome, and abstention condition. A rejected candidate does not authorize a substitute without a recorded selection. |
+| **A — Predictive Use-case Selection** | **PENDING** for business use; target adopted for synthetic engineering only. | Operations has generic source-scoped observations, not a typed request/demand target. No real historical series, business decision, incumbent planning record, or acceptance threshold is recorded. | Business Owner records whether this use case is accepted or rejected; if accepted, approves one precise entity, target, decision, horizon, population, data requirement, measurable outcome, and abstention condition. Engineering adoption is not this approval. |
 | **B — Business Owner** | **PENDING** — `PENDING_BUSINESS_OWNER_APPROVAL`. | The repository defines application `owner`/`admin` roles but does not identify the Operations Business Owner or establish business decision authority for any person. | Designate the accountable business/decision role and record decisions on target meaning, operational interpretation, tolerable error, consequences, acceptance criteria, and result review. |
 | **C — Source Authorization** | **PENDING** — `PENDING_SOURCE_AUTHORIZATION`. | Technically accessible source patterns exist (manual assertions, uploaded CSV/XLSX, configured local-directory files, and M17 caller-submitted snapshots); none is approved for this predictive purpose or backed by real history in the repository. | Source/Data Owner identifies the exact source, Company, records/fields, rights, purpose, access, coverage, freshness, correction history, classification, and retention basis. |
 | **D — Governance Approval** | **PENDING**. | Existing Tenant/Company authorization, RLS, immutable evidence and Universal Data retention controls are technical safeguards; they do not approve source use, retention of forecasts, data classification, or predictive uses. | Accountable Data Governance, Security/Privacy/Legal, Operations, and Retention owners approve the controls in [`PREDICTIVE_GOVERNANCE.md`](PREDICTIVE_GOVERNANCE.md). |
@@ -56,26 +58,26 @@ The repository provides source *mechanisms*, not an approved or verified predict
 
 No real operational time series or customer dataset is tracked in the reviewed repository. Operations/M17 tests contain inline synthetic values; no production data was queried. History length, independent periods, gaps, seasonal behavior, target consistency, forecast-error impact, and the current manual planning process therefore cannot be measured. These are explicit gaps, not assumed zeros. The use-case assessment lists the evidence required.
 
-## Mandatory conditions to start P2-01
+## Boundary before real-source or business use
 
-P2-01 may start only after the owner review produces verifiable, recorded approvals for **all four implementation-entry gates** and the Business Owner role is named:
+P2-01 synthetic/non-production engineering is authorized under the separate Phase 2 owner instruction and does **not** wait on human/business approvals. The following remain required before any real-source processing or business acceptance; production also requires separate release and operational approvals:
 
-1. **Use-case Selection:** one precise, owner-approved predictive question, target/entity, decision, Company/process population, horizon, calendar, data requirement, measurable outcome, error consequences, and abstention conditions.
-2. **Business Owner:** a designated person/role with verified authority to own the objective, target meaning, operational interpretation, acceptable error, decision consequences, acceptance criteria, and review.
-3. **Source Authorization:** a specific source and fields approved for this purpose, with rights, Company scope, access path, historical coverage, freshness, completeness, corrections, classification, lineage, and retention documented. No source is activated by this package.
-4. **Governance:** Data Governance, security/privacy/legal as applicable, Operations, and retention owners approve access, purpose limitation, prohibited use, data minimization, correction/invalidation, output retention, and revocation behavior.
-5. **Evaluation Protocol Approval:** the Evaluation Owner and Business Owner approve the exact time-aware protocol, valid-window minimum, baselines, metrics, error thresholds, missing/zero behavior, holdout independence/reuse controls, uncertainty, and acceptance criteria.
+1. **Use-case Selection:** a Business Owner selects and accepts the precise target/entity, decision, Company/workflow population, horizon, calendar, data requirement, measurable outcome, error consequences, and abstention conditions.
+2. **Business Owner:** a person/role with verified authority owns the objective, target meaning, operational interpretation, acceptable error, decision consequences, acceptance criteria, and review.
+3. **Source Authorization:** a specific source and fields are approved for this purpose, with rights, Company scope, access path, historical coverage, freshness, completeness, corrections, classification, lineage, and retention documented. No source is activated by engineering.
+4. **Governance:** Data Governance, Security/Privacy/Legal as applicable, Operations, and retention owners approve access, purpose limitation, prohibited use, minimization, correction/invalidation, output retention, and revocation behavior.
+5. **Evaluation Protocol Approval:** the Evaluation Owner and Business Owner approve the time-aware protocol, valid-window/training-history minimums, baselines, metrics, business thresholds, missing/zero behavior, holdout independence/reuse controls, uncertainty, and acceptance criteria.
 
-These five sign-off rows preserve the four mandatory entry gates: Business Owner designation is a cross-cutting prerequisite; it does not replace, merge, rename, or remove any entry gate. The approvals must exist before implementation—not merely before production use. If an approval or required evidence is absent, record it as `PENDING` and do not start P2-01.
+These five human sign-off rows preserve the four mandatory gate names: Business Owner designation is a cross-cutting prerequisite; it does not replace, merge, rename, or remove an Entry Gate. Until each required decision is recorded, keep its status `PENDING`; synthetic tests and engineering adoption do not close it.
 
 ## Approved Phase 2 milestone sequence (unchanged)
 
 1. **P2-00: Baseline Assessment** — already assessed and documented; no repetition authorized.
-2. **P2-01: Predictive Data Foundation** — not started; blocked by open entry gates.
-3. **P2-02: Forecasting Engine** — not started; reuse M17 if a selected use case needs forecasts; no second engine or new dependency authorized.
-4. **P2-03: Model Evaluation** — not started; candidate protocol is pending; required before any result is accepted as independently evaluated.
-5. **P2-04: Scenario Analysis** — not started; remains separate and conditional on an owner-approved scenario need.
-6. **P2-05: Optimization Readiness** — not started; remains separate and conditional on an owner-approved optimization problem.
+2. **P2-01: Predictive Data Foundation** — bounded synthetic/non-production implementation is in progress; real-source integration remains blocked by pending external approvals and missing authoritative first-received source semantics.
+3. **P2-02: Forecasting Engine** — not started; bounded synthetic integration is authorized for the adopted weekly target using M17 only; no competing engine or new dependency.
+4. **P2-03: Model Evaluation** — not started; synthetic minimums are adopted for engineering, while human protocol approval remains pending for business acceptance and independent-evidence claims.
+5. **P2-04: Scenario Analysis** — not started; bounded synthetic scenario engineering is authorized, but real business variables and interpretation remain pending owner approval.
+6. **P2-05: Optimization Readiness** — not started; bounded readiness assessment is authorized; no solver or real optimization use without a demonstrated use case and separate approval.
 7. **P2-06: Hardening & Acceptance** — not started; remains the approved hardening/acceptance milestone for any implementation that is later authorized.
 
 Entry Gates are pre-implementation approvals, not replacement milestones. This package changes no approved order or name.
@@ -85,7 +87,8 @@ Entry Gates are pre-implementation approvals, not replacement milestones. This p
 - [`PREDICTIVE_USE_CASE.md`](PREDICTIVE_USE_CASE.md) — bounded candidate recommendation, repository evidence, source inventory, missing evidence, owner decisions and abstention.
 - [`PREDICTIVE_GOVERNANCE.md`](PREDICTIVE_GOVERNANCE.md) — required controls, verified technical evidence, gaps, accountable roles and approval status.
 - [`PREDICTIVE_EVALUATION_PROTOCOL.md`](PREDICTIVE_EVALUATION_PROTOCOL.md) — proposed chronology, metrics, baselines, holdout/leakage, revision, uncertainty and acceptance design.
-- [`ENTRY_GATE_APPROVAL_REGISTER.md`](ENTRY_GATE_APPROVAL_REGISTER.md) — approval roles, decisions, evidence requirements, pending tokens and recorded-date/reference fields.
-- [`PHASE2_BASELINE_ASSESSMENT.md`](PHASE2_BASELINE_ASSESSMENT.md) — existing P2-00 assessment with corrected date chronology and its prior holdout-reuse design-only proposal.
+- [`ENTRY_GATE_APPROVAL_REGISTER.md`](ENTRY_GATE_APPROVAL_REGISTER.md) — owner-adopted engineering decisions kept separate from human approvals, pending tokens and recorded-date/reference fields.
+- [`OWNER_DECISION_BRIEF.md`](OWNER_DECISION_BRIEF.md) — explicit synthetic/non-production authorization, target, engineering controls, remaining approval requirements and production restrictions.
+- [`PHASE2_BASELINE_ASSESSMENT.md`](PHASE2_BASELINE_ASSESSMENT.md) — historical P2-00 assessment, chronology, later authorization update and P2-01 implementation status.
 
-The documentation package is decision preparation, **not** approval or implementation. No P2-01 work, M17 change, migration, test, dependency, API, RLS, retention, authentication, frontend, connector activation, production forecast, customer-data access, or infrastructure change is included. Stop after this package for owner review; do not start P2-01 until the approval register contains verifiable approvals for every required gate.
+This package is decision preparation and approval tracking, not human/business approval. Phase 2 synthetic/non-production engineering is separately authorized; P2-01 implementation may proceed within the adopted scope. No customer or production data access, real connector activation, or production forecast is authorized. Pending external approvals remain explicit and must not be manufactured or treated as closed.

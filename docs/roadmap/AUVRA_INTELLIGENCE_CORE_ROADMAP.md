@@ -1,7 +1,7 @@
 # AUVRA Intelligence Core — Phase Roadmap and Delivery Backlog
 
 - **Date:** 2026-11-21 (UTC).
-- **Status:** The owner-approved, four-pillar product direction and bounded Operations-first Phase 1 engineering scope are recorded in [`../architecture/PHASE1_SCOPE_ACCEPTANCE.md`](../architecture/PHASE1_SCOPE_ACCEPTANCE.md). The final-tree PostgreSQL-backed suite passed 475 tests; Ruff format/lint, mypy, Alembic parity, final `git diff --check`, and the focused implementation/security review passed. Formal technical closure remains pending current-branch GitHub CI. No release date, customer validation, production-data authorization, or broader product acceptance is implied.
+- **Status:** **Phase 1 engineering closure is recorded** for the accepted Operations-first scope after PR [#41](https://github.com/DevMagdi/BFS/pull/41) merged to `main` at `366649e36b9d6cb5eaab53a4050b588cee4efeb6`. PR and push checks on reviewed head `463207710c78e74d18a24862bda1b40d7da21069`, plus post-merge `main` CI, passed; the detailed local and CI evidence is in [`../architecture/PHASE1_ACCEPTANCE_REPORT.md`](../architecture/PHASE1_ACCEPTANCE_REPORT.md). This is engineering closure only—not product-wide completion, deployment, release, production readiness, customer-data authorization, or external business approval.
 - **Authoritative requirements:** [`../product/AUVRA_INTELLIGENCE_CORE_PHASE1.md`](../product/AUVRA_INTELLIGENCE_CORE_PHASE1.md); the evidence matrix is [`../REQUIREMENTS_TRACEABILITY.md`](../REQUIREMENTS_TRACEABILITY.md).
 - **Repository assessment:** [`../architecture/AUVRA_PHASE1_REPOSITORY_ASSESSMENT.md`](../architecture/AUVRA_PHASE1_REPOSITORY_ASSESSMENT.md).
 - **Historical implementation tracking:** Existing M-numbered roadmap content is retained as implementation history only; it is not a replacement for the AUVRA product requirements.
@@ -9,6 +9,19 @@
 ## Product phases remain company-wide
 
 The approved product direction retains four first-class company-wide pillars: **Business Intelligence**, **Financial Intelligence**, **Operational Intelligence**, and **Decision Intelligence**. Operations is accepted as the first implementation proof, not the permanent product boundary. Each company may enable selected domains only. The pillar names do not imply that every domain, measure, organization dimension, source, or workflow is mandatory or already shipped.
+
+## Four-phase AUVRA strategy
+
+This preserves the agreed strategic sequence; the labels below do not redefine the Phase 2 scope.
+
+| Phase | Strategy stage | Status and sequencing |
+|---|---|---|
+| **1** | **Intelligence Core** | Engineering scope closed for the accepted Operations-first proof, as recorded above. This does not mean the whole product is complete. |
+| **2** | **Predictive Intelligence** | **Not started.** Phase 2 planning is the next planned activity; planning is not implementation or a Phase 2 start. |
+| **3** | **Decision & AI Intelligence** | Later phase; not started by this closure. |
+| **4** | **Enterprise Release & Final UI/UX** | Final phase; not started by this closure. UI/UX remains deferred until this phase. |
+
+These AUVRA strategic phase numbers are distinct from labels for existing feature slices such as “Phase 2 Universal Data” in the legacy [`PRODUCT_ROADMAP.md`](PRODUCT_ROADMAP.md). That implemented Company Data Foundation slice does not mean AUVRA Phase 2 has started.
 
 ## Phase 1 — Intelligence Core foundation + Operations proof
 
@@ -23,15 +36,15 @@ The approved product direction retains four first-class company-wide pillars: **
 | ID | Increment | Depends on | Acceptance gate | Current evidence/status |
 |---|---|---|---|---|
 | **P1-01** | Repository assessment, requirements derived from Product Vision and code, internal/OSS reuse register, risk register, traceability, and acceptance record. | Existing code/docs review | Documents distinguish approved direction, accepted bounded scope, baseline implementation, current branch code, tests present/run, and policy-dependent approvals. Do not reconstruct the historical checklist. | **Scope accepted; records reconciled.** Requirement evidence matrix and document consistency review are complete for this delivery. |
-| **P1-02** | Operations event-version schema, migration, Company RLS, grants, append-only/chain guards, and downgrade protection. | P1-01; existing Universal Data source/profile/revision schema | PostgreSQL migration/model parity; exact scope; same-scope FKs; two-Tenant RLS and privilege assertions. | **Implemented and verified locally.** Clean upgrade/downgrade/re-upgrade and final-tree Alembic parity passed; CI remains outstanding. |
-| **P1-03** | Source-bound event create, idempotency, exact revision linkage/manual assertion, correction append, list/history/evidence API. | P1-02 | Auth/member denial, source enabled status, same-source revision, no identity merge, correction stale-version conflict, history/hash checks. | **Implemented; focused PostgreSQL/API coverage passes**, including full-chain ancestor tamper and concurrent correction behavior. No customer/source-authority claim. |
-| **P1-04** | Deterministic Operations observations, bounded saved input/output snapshots, evidence pagination, and replay. | P1-02/P1-03 | Single-source explicit period; current leaf versions only; no implicit zero-fill/truncation; deterministic replay verifies hashes. | **Implemented; focused unit/API coverage passes**, including saved-snapshot tampering, empty/over-limit behavior, and bounded version queries. No business KPI claim. |
-| **P1-05** | Focused synthetic unit tests, isolated PostgreSQL migration/API/RLS/retention tests, static/type checks, migration drift, diff/security review, and CI. | P1-02–P1-04 | All applicable AC-01–AC-11 need current-branch evidence; destructive fixtures require a verified disposable database. | **Local verification passed:** 475 full-suite tests, Ruff format/lint, mypy, Alembic parity, final `git diff --check`, and focused implementation/security review. Current-branch GitHub CI remains outstanding under AC-10. |
+| **P1-02** | Operations event-version schema, migration, Company RLS, grants, append-only/chain guards, and downgrade protection. | P1-01; existing Universal Data source/profile/revision schema | PostgreSQL migration/model parity; exact scope; same-scope FKs; two-Tenant RLS and privilege assertions. | **Implemented and verified locally and in CI.** Clean upgrade/downgrade/re-upgrade and Alembic parity passed; PR #41 and post-merge `main` PostgreSQL checks passed. |
+| **P1-03** | Source-bound event create, idempotency, exact revision linkage/manual assertion, correction append, list/history/evidence API. | P1-02 | Auth/member denial, source enabled status, same-source revision, no identity merge, correction stale-version conflict, history/hash checks. | **Implemented and verified:** focused PostgreSQL/API coverage and PR #41/post-merge PostgreSQL CI passed, including full-chain ancestor tamper and concurrent correction behavior. No customer/source-authority claim. |
+| **P1-04** | Deterministic Operations observations, bounded saved input/output snapshots, evidence pagination, and replay. | P1-02/P1-03 | Single-source explicit period; current leaf versions only; no implicit zero-fill/truncation; deterministic replay verifies hashes. | **Implemented and verified:** focused unit/API coverage and PR #41/post-merge PostgreSQL CI passed, including saved-snapshot tampering, empty/over-limit behavior, and bounded version queries. No business KPI claim. |
+| **P1-05** | Focused synthetic unit tests, isolated PostgreSQL migration/API/RLS/retention tests, static/type checks, migration drift, diff/security review, and CI. | P1-02–P1-04 | All applicable AC-01–AC-11 require evidence; destructive fixtures require a verified disposable database. | **Closed:** local verification passed (475 PostgreSQL-backed tests, 17 focused Operations tests, Ruff format/lint, mypy, Alembic parity, `git diff --check`, and focused review); PR #41 checks and post-merge `main` CI passed. See the [acceptance report](../architecture/PHASE1_ACCEPTANCE_REPORT.md). |
 | **P1-06** | Owner review of Operations fields/source authority/freshness/completeness/retention/roles and first real recurring question. | P1-01–P1-05 plus accountable owner | Record domain, sensitive-data, KPI, retention/purge, and customer/production-data decisions without invented policy. | **Business/data-use decisions open** as listed in [`../architecture/PHASE1_SCOPE_ACCEPTANCE.md`](../architecture/PHASE1_SCOPE_ACCEPTANCE.md); these do not reopen the accepted engineering scope, but block corresponding external use. |
 
-The current branch may contain P1-02–P1-04 in one patch to keep schema/service/API behavior coherent. The table is a review breakdown and dependency order; no claim is made that separate PRs exist.
+PR #41 delivered the coherent P1-02–P1-04 schema/service/API implementation together. The table remains a review breakdown and dependency order, not a claim that each increment had a separate PR.
 
-## Later product phases — gated, not implementation promises
+## Pillar capabilities beyond Phase 1 — gated, not implementation promises
 
 ### Business Intelligence
 

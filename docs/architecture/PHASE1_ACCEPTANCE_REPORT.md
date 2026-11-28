@@ -1,16 +1,18 @@
 # AUVRA Phase 1 — Technical Acceptance and Verification Record
 
-- **As of:** 2026-11-21 (UTC; final local verification and document review).
+- **Local verification date:** 2026-11-21 (UTC; final local verification and document review).
 - **Scope status:** The bounded Phase 1 engineering scope and Operations-first sequencing are accepted in [`PHASE1_SCOPE_ACCEPTANCE.md`](PHASE1_SCOPE_ACCEPTANCE.md).
-- **Technical status:** **Final local technical verification passed; formal closure remains pending current-branch CI.** The final-tree PostgreSQL-backed suite passed 475 tests; repository Ruff format/lint, mypy, Alembic parity, and final `git diff --check` passed. No current-branch GitHub CI result is recorded.
-- **Branch:** `arena/f5138e90-bfs`, based on `b928ee7758b882c00a40fdda4941a75f609b407c`.
+- **Technical status:** **CLOSED for the accepted Phase 1 engineering scope (AC-01–AC-11).** PR [#41](https://github.com/DevMagdi/BFS/pull/41) merged the bounded Operations slice into `main`; this is engineering closure only, not product-wide completion, deployment, release, production readiness, customer-data authorization, or external business approval.
+- **Implementation PR:** PR #41, reviewed head `463207710c78e74d18a24862bda1b40d7da21069`, merged as `366649e36b9d6cb5eaab53a4050b588cee4efeb6`.
+- **GitHub CI:** PR run [46132652499](https://github.com/DevMagdi/BFS/actions/runs/46132652499) and push run [46132631550](https://github.com/DevMagdi/BFS/actions/runs/46132631550) passed on the reviewed head; post-merge `main` run [46135079122](https://github.com/DevMagdi/BFS/actions/runs/46135079122) passed on the merge commit. Checks covered formatting/lint, type checking, migration/model drift, and PostgreSQL integration.
+- **Implementation branch:** `arena/f5138e90-bfs`, based on `b928ee7758b882c00a40fdda4941a75f609b407c`.
 - **Authoritative requirements:** [`../product/AUVRA_INTELLIGENCE_CORE_PHASE1.md`](../product/AUVRA_INTELLIGENCE_CORE_PHASE1.md).
 - **Evidence matrix:** [`../REQUIREMENTS_TRACEABILITY.md`](../REQUIREMENTS_TRACEABILITY.md).
 - **Assessment:** [`AUVRA_PHASE1_REPOSITORY_ASSESSMENT.md`](AUVRA_PHASE1_REPOSITORY_ASSESSMENT.md).
 
 ## Scope and evidence boundary
 
-The accepted deliverable is an API-only, source-scoped Operations observation lifecycle proving a bounded slice of the shared Intelligence Core. The repository baseline at the branch point used migration head `0028_universal_data_retention`; the active branch adds migration `0029_operations_intelligence`, Operations models/schemas/engine/service/router, authorization wiring, and tests. The four company-wide pillars remain first-class; Operations is the first implementation proof, not the product boundary.
+The accepted deliverable is an API-only, source-scoped Operations observation lifecycle proving a bounded slice of the shared Intelligence Core. The implementation branch was based on migration head `0028_universal_data_retention`; PR #41 added migration `0029_operations_intelligence`, Operations models/schemas/engine/service/router, authorization wiring, and tests, then merged that implementation into `main` at `366649e36b9d6cb5eaab53a4050b588cee4efeb6`. The four company-wide pillars remain first-class; Operations is the first implementation proof, not the product boundary.
 
 This report separates **scope acceptance** from **technical verification** and **external policy decisions**. The evidence below establishes only software properties exercised by local checks. It does not establish source authority, customer value, business correctness, customer-data authorization, legal/security approval, production readiness, or release readiness. Accountable owner decisions and use restrictions are listed in the scope record.
 
@@ -36,7 +38,8 @@ This report separates **scope acceptance** from **technical verification** and *
 | mypy | **Passed:** no issues in 172 source files. | `python -m mypy src/businessflow`. |
 | `git diff --check` | **Passed** after the implementation/document edits reviewed for this report. | Whitespace/conflict-marker check only; not semantic review. |
 | Focused implementation/security review | **Completed for this bounded repository diff.** | Reviewed Operations API/service/schema/engine/models/migration, role wiring, tenant/company RLS, runtime grants, trigger guards, source advisory-lock reuse, retention dependencies, fixture isolation, tests, and Phase 1 documents. The review corrected a read-side correction-chain race by locking the current pointer before paginated history reads; a PostgreSQL regression test asserts lock-before-read ordering. This is not a complete threat model, penetration test, dependency/SBOM audit, or production security certification. |
-| Current-branch GitHub CI / PR / release | **Not run or claimed.** | Local validation is not CI. No push, PR, merge, release, or deployment is claimed. |
+| PR #41 GitHub CI | **Passed:** PR run `46132652499` and push run `46132631550` on reviewed head `463207710c78e74d18a24862bda1b40d7da21069`. | Formatting/lint, type checking, migration/model drift, and PostgreSQL integration checks passed. |
+| Post-merge `main` CI | **Passed:** run `46135079122` on merge commit `366649e36b9d6cb5eaab53a4050b588cee4efeb6`. | Confirms the merged Phase 1 implementation on `main`; it is not deployment or release evidence. |
 | Customer, source-authority, production, legal/privacy acceptance | **Not performed.** | Separate accountable owner/domain/security/privacy/legal decisions are required for the relevant use. |
 
 ## Evidence coverage and limits
@@ -48,10 +51,11 @@ This report separates **scope acceptance** from **technical verification** and *
 - A performance regression test covers 12 events with two versions each and asserts no more than two Operations version-table SELECTs. Correction-chain length is not technically capped; the test does not exercise long histories or high-volume load. A prior local timing was 29.743 ms; it is not a load benchmark, production latency measurement, or SLO.
 - These are focused repository checks, not a complete threat model, penetration test, high-volume concurrency benchmark, production deployment test, customer validation, or browser E2E run. This API-only scope has no UI.
 
-## Remaining closure and use gates
+## Engineering closure and remaining external-use gates
 
-1. **Current-branch CI:** run and review CI when this branch is pushed/eligible. Until then, technical closure remains pending under AC-10; local checks do not substitute for CI.
-2. **Policy decisions:** Operations retention/purge and legal-hold treatment; sensitive-data classification; source authority/completeness/freshness and first business question; whether the observation count may become a KPI; and authorization for customer or production data remain open in [`PHASE1_SCOPE_ACCEPTANCE.md`](PHASE1_SCOPE_ACCEPTANCE.md). They block the corresponding business/customer/production use, not the accepted four-pillar direction or bounded engineering scope.
-3. **Future deployment/security:** customer/production use requires its separate data-use, security, retention, operational, legal/privacy, and release approvals. This repository review does not supply them.
+AC-01–AC-11 are closed for the accepted engineering scope based on the local evidence above, PR #41 checks, and the passing post-merge `main` run. This does not authorize implementation beyond Phase 1; the [AUVRA roadmap](../roadmap/AUVRA_INTELLIGENCE_CORE_ROADMAP.md) records Phase 2 planning as the next planned activity while Phase 2 itself remains not started.
+
+1. **Policy decisions:** Operations retention/purge and legal-hold treatment; sensitive-data classification; source ownership/authority, completeness/freshness and the first business question; whether the observation count may become an approved KPI; and authorization for customer or production data remain open in [`PHASE1_SCOPE_ACCEPTANCE.md`](PHASE1_SCOPE_ACCEPTANCE.md). They block the corresponding business/customer/production use, not closure of the bounded engineering scope or the accepted four-pillar direction.
+2. **Future deployment/security:** Customer/production use requires separate data-use, security, retention, operational, legal/privacy, and release approvals. This repository review does not supply them.
 
 Passing technical checks establishes only tested software behavior. It does not establish market fit, source authority, customer validation, production readiness, accounting correctness, complete security, legal/privacy approval, release readiness, or owner approval of any KPI or external use.

@@ -29,7 +29,7 @@ These are company-wide product pillars, not a claim that the current repository 
 |---|---|
 | Four-pillar product direction and evidence principles | Owner-directed in [`PRODUCT_VISION.md`](PRODUCT_VISION.md). |
 | API-only, source-scoped Operations observation lifecycle below | Accepted bounded Phase 1 engineering scope; see the [scope acceptance record](../architecture/PHASE1_SCOPE_ACCEPTANCE.md). |
-| `operations_intelligence` package, API router, migration `0029_operations_intelligence`, role wiring, and focused test files | Present in the active branch. Local PostgreSQL-backed, static/type, and migration-parity evidence is recorded in the [technical acceptance report](../architecture/PHASE1_ACCEPTANCE_REPORT.md). External domain, customer-data, and production approvals remain separate. |
+| `operations_intelligence` package, API router, migration `0029_operations_intelligence`, role wiring, and focused test files | Implemented and merged by PR #41 at `366649e36b9d6cb5eaab53a4050b588cee4efeb6`. Local PostgreSQL-backed, static/type, migration-parity, PR/push CI, and post-merge CI evidence is recorded in the [technical acceptance report](../architecture/PHASE1_ACCEPTANCE_REPORT.md). External domain, customer-data, and production approvals remain separate. |
 | Customer/source authority, completeness, freshness, accuracy, retention, production use, or domain-owner approval | Not established by this engineering baseline, source registrations, code, or test files. |
 
 ## Design constraints for this baseline

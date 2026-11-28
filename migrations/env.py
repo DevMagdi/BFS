@@ -21,6 +21,7 @@ from businessflow.financial_assessments import models as financial_assessment_mo
 from businessflow.financial_calculations import models as financial_calculation_models  # noqa: F401
 from businessflow.forecasting import models as forecasting_models  # noqa: F401
 from businessflow.metrics import models as metrics_models  # noqa: F401
+from businessflow.operations_intelligence import models as operations_intelligence_models  # noqa: F401
 from businessflow.position_reviews import models as position_review_models  # noqa: F401
 from businessflow.project_assessments import models as project_assessment_models  # noqa: F401
 from businessflow.project_decisions import models as project_decision_models  # noqa: F401

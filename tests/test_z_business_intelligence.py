@@ -6,14 +6,10 @@ Keep these append-only records after migration-downgrade probes in the suite.
 from __future__ import annotations
 
 import json
-import os
 from datetime import date, timedelta
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
@@ -21,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from businessflow.database import set_company_context, set_tenant_context, set_user_context
 from tests.helpers import auth_headers, create_member, create_tenant, register_user
+from tests.migration_helpers import invoke_downgrade_function
 
 
 def _bi_base(tenant_id: str) -> str:
@@ -278,9 +275,6 @@ def test_business_intelligence_metric_migration_downgrade_refuses_retained_defin
     )
     assert metric.status_code == 201, metric.text
 
-    migration_url = os.environ["TEST_MIGRATION_DATABASE_URL"]
-    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    config.set_main_option("sqlalchemy.url", migration_url.replace("%", "%%"))
     with pytest.raises(
         DBAPIError,
         match=(
@@ -291,12 +285,12 @@ def test_business_intelligence_metric_migration_downgrade_refuses_retained_defin
             r"workforce-sensitive analysis evidence is retained"
         ),
     ):
-        command.downgrade(config, "0020_business_semantic_layer")
+        invoke_downgrade_function(migration_engine, "0021_business_intelligence_registry.py")
 
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0028_universal_data_retention"
+            == "0029_operations_intelligence"
         )
         assert (
             connection.scalar(
@@ -1578,9 +1572,6 @@ def test_business_intelligence_tables_force_company_rls_and_restrict_runtime_gra
 def test_business_intelligence_migration_downgrade_refuses_retained_evidence(
     migration_engine,
 ):
-    migration_url = os.environ["TEST_MIGRATION_DATABASE_URL"]
-    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    config.set_main_option("sqlalchemy.url", migration_url.replace("%", "%%"))
 
     with pytest.raises(
         DBAPIError,
@@ -1592,12 +1583,14 @@ def test_business_intelligence_migration_downgrade_refuses_retained_evidence(
             r"workforce-sensitive analysis evidence is retained"
         ),
     ):
-        command.downgrade(config, "0021_bi_registry")
+        invoke_downgrade_function(
+            migration_engine, "0022_business_semantic_configuration_and_analysis.py"
+        )
 
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0028_universal_data_retention"
+            == "0029_operations_intelligence"
         )
         assert (
             connection.scalar(

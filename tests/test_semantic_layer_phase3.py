@@ -6,13 +6,9 @@ append-only records intentionally block downgrades through the semantic migratio
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from uuid import UUID
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
@@ -21,6 +17,7 @@ from sqlalchemy.orm import Session
 from businessflow.business_semantic.models import BusinessSemanticEntity
 from businessflow.database import set_company_context, set_tenant_context
 from tests.helpers import auth_headers, create_member, create_tenant, register_user
+from tests.migration_helpers import invoke_downgrade_function
 
 
 def _semantic_base(tenant_id: str) -> str:
@@ -1100,9 +1097,7 @@ def test_semantic_tables_force_company_rls_and_are_append_only(
             connection.execute(text(statement), {"entity_id": entity_id})
 
 
-def test_semantic_migration_downgrade_is_rejected_when_data_is_retained(
-    client, migration_engine, monkeypatch
-):
+def test_semantic_migration_downgrade_is_rejected_when_data_is_retained(client, migration_engine):
     owner = register_user(client, "semantic-downgrade-owner@example.com")
     tenant = create_tenant(
         client,
@@ -1120,10 +1115,6 @@ def test_semantic_migration_downgrade_is_rejected_when_data_is_retained(
         display_name="Retained semantic identity",
     )
 
-    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    migration_url = os.environ["TEST_MIGRATION_DATABASE_URL"]
-    monkeypatch.setenv("MIGRATION_DATABASE_URL", migration_url)
-    config.set_main_option("sqlalchemy.url", migration_url.replace("%", "%%"))
     with pytest.raises(
         DBAPIError,
         match=(
@@ -1133,12 +1124,12 @@ def test_semantic_migration_downgrade_is_rejected_when_data_is_retained(
             r"workforce-sensitive analysis evidence is retained"
         ),
     ):
-        command.downgrade(config, "0019_universal_data_foundation")
+        invoke_downgrade_function(migration_engine, "0020_business_semantic_layer.py")
 
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0028_universal_data_retention"
+            == "0029_operations_intelligence"
         )
         assert (
             connection.scalar(

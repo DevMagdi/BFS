@@ -920,7 +920,7 @@ def test_0028_downgrade_directly_refuses_retained_policy_and_lifecycle_evidence(
 
     with migration_engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0028_universal_data_retention"
+            "0029_operations_intelligence"
         )
         assert connection.scalar(text("SELECT current_user")) == "bf_migrator"
     with admin_engine.connect() as connection:

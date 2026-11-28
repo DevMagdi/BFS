@@ -2,14 +2,10 @@ from __future__ import annotations
 
 import io
 import logging
-import os
 from datetime import UTC, datetime
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from sqlalchemy import delete, func, select, text, update
@@ -23,6 +19,7 @@ from businessflow.business_reports.models import (
 )
 from businessflow.database import set_company_context, set_tenant_context, set_user_context
 from tests.helpers import auth_headers, create_member, create_tenant, register_user
+from tests.migration_helpers import invoke_downgrade_function
 from tests.test_direct_cash_forecasts import (
     _complete_request as _complete_direct_cash_request,
 )
@@ -542,17 +539,14 @@ def test_m18_downgrade_is_guarded_when_report_evidence_is_retained(client, migra
     created = client.post(base, json=_report_body(analysis_id, "json"), headers=owner_headers)
     assert created.status_code == 201, created.text
 
-    migration_url = os.environ["TEST_MIGRATION_DATABASE_URL"]
-    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    config.set_main_option("sqlalchemy.url", migration_url.replace("%", "%%"))
     with pytest.raises(
         DBAPIError,
         match="cannot downgrade while immutable report export or retention evidence is retained",
     ):
-        command.downgrade(config, "0026_forecasting_engine")
+        invoke_downgrade_function(migration_engine, "0027_business_reports.py")
 
     with migration_engine.connect() as connection:
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0028_universal_data_retention"
+            == "0029_operations_intelligence"
         )

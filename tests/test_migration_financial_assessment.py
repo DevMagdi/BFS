@@ -275,7 +275,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0028_universal_data_retention"
+                "0029_operations_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -662,7 +662,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
             os.environ["MIGRATION_DATABASE_URL"] = migration_url
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0028_universal_data_retention"
+                "0029_operations_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -864,7 +864,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(migration_config, "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0028_universal_data_retention"
+                "0029_operations_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -928,7 +928,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(migration_config, "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0028_universal_data_retention"
+                "0029_operations_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -1008,7 +1008,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0028_universal_data_retention"
+                "0029_operations_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -1082,7 +1082,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0028_universal_data_retention"
+                "0029_operations_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -1163,7 +1163,7 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
         command.upgrade(_config_for_database(migration_url), "head")
         with migration_engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0028_universal_data_retention"
+                "0029_operations_intelligence"
             )
             _assert_runtime_user_privileges(
                 connection,
@@ -1213,6 +1213,51 @@ def test_migration_head_upgrade_downgrade_and_reupgrade():
                 )
                 == 2
             )
+
+        # A fresh isolated database has no Operations evidence, so 0029 may be
+        # downgraded safely; the subsequent upgrade must recreate the guarded schema.
+        migration_config = _config_for_database(migration_url)
+        command.downgrade(migration_config, "0028_universal_data_retention")
+        with migration_engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0028_universal_data_retention"
+            )
+            for table_name in (
+                "operations_event_streams",
+                "operations_event_versions",
+                "operations_event_current",
+                "operations_analysis_runs",
+            ):
+                assert (
+                    connection.scalar(
+                        text("SELECT to_regclass(:table_name)"),
+                        {"table_name": f"public.{table_name}"},
+                    )
+                    is None
+                )
+
+        command.upgrade(migration_config, "head")
+        with migration_engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0029_operations_intelligence"
+            )
+            for table_name in (
+                "operations_event_streams",
+                "operations_event_versions",
+                "operations_event_current",
+                "operations_analysis_runs",
+            ):
+                assert (
+                    connection.scalar(
+                        text(
+                            "SELECT relrowsecurity AND relforcerowsecurity "
+                            "FROM pg_class WHERE oid = to_regclass(:table_name)"
+                        ),
+                        {"table_name": f"public.{table_name}"},
+                    )
+                    is True
+                )
+
     finally:
         if migration_engine is not None:
             migration_engine.dispose()

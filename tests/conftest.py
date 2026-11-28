@@ -84,11 +84,22 @@ def migrated_clean_test_database() -> None:
 
         migration_engine = create_engine(TEST_MIGRATION_DATABASE_URL, hide_parameters=True)
         config = Config(str(ROOT / "alembic.ini"))
-        config.set_main_option("sqlalchemy.url", TEST_MIGRATION_DATABASE_URL.replace("%", "%%"))
-        command.upgrade(config, "head")
+        migration_database_url = os.environ["TEST_MIGRATION_DATABASE_URL"]
+        config.set_main_option("sqlalchemy.url", migration_database_url.replace("%", "%%"))
+        # migrations/env.py supports an explicit deployment override; pin it to this disposable
+        # test target while the fixture performs its clean upgrade, then restore the caller's env.
+        previous_migration_database_url = os.environ.get("MIGRATION_DATABASE_URL")
+        os.environ["MIGRATION_DATABASE_URL"] = migration_database_url
+        try:
+            command.upgrade(config, "head")
+        finally:
+            if previous_migration_database_url is None:
+                os.environ.pop("MIGRATION_DATABASE_URL", None)
+            else:
+                os.environ["MIGRATION_DATABASE_URL"] = previous_migration_database_url
         with migration_engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            assert revision == "0028_universal_data_retention"
+            assert revision == "0029_operations_intelligence"
     finally:
         if migration_engine is not None:
             migration_engine.dispose()

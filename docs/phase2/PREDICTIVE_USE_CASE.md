@@ -1,8 +1,8 @@
 # Phase 2 Candidate Predictive Use Case — Owner Review Only
 
 - **Assessment date:** 2026-11-21 (UTC).
-- **Recommendation status:** **RECOMMENDED** as a discovery candidate only; **not selected or owner-approved**.
-- **Use-case entry-gate status:** **PENDING**.
+- **Engineering disposition:** target adopted for synthetic/non-production engineering only under the Phase 2 owner authorization.
+- **Business Use-case Selection status:** **PENDING**; no Operations Business/Decision Owner acceptance is recorded.
 - **Required decision tracking token:** `PENDING_BUSINESS_OWNER_APPROVAL`.
 - **Repository evidence baseline:** `cc2e83575c812c136fb8bddddacdc73ba6b36cde` (`HEAD` and fetched `origin/main` at review time).
 
@@ -72,10 +72,10 @@ No alternative operational target is recommended from repository evidence. M5 co
 
 If an Operations owner confirms that one source records first-received work requests consistently, weekly intake volume is narrower than a generic “operations forecast,” can be measured in count units, aligns with the existing Operations evidence path, and can reuse M17 rather than introduce a second engine. A one-week horizon also keeps the first decision bounded.
 
-Those are **conditional suitability arguments**, not evidence that the source exists or the decision is valuable. Without an accountable Business Owner, a real authorized source, enough corrected/revision-aware history, and an agreed incumbent-process comparison, the candidate fails the mandatory entry gate. If the owner cannot supply that evidence or does not select this question, do not proceed with it and do not invent a substitute.
+Those are **conditional suitability arguments**, not evidence that the source exists or the decision is valuable. Without an accountable Business Owner, a real authorized source, enough corrected/revision-aware history, and an agreed incumbent-process comparison, real-source/business use remains blocked. Synthetic engineering may proceed under the separate owner authorization, but must record blockers and must not invent a substitute target.
 
 ## Required owner decisions before Gate A can close
 
 The accountable Operations business/decision owner must explicitly confirm or replace the proposed workflow, request entity, first-received event definition, business decision, Company timezone/calendar, one-week horizon, permitted dimensions, data requirement, cost of errors, abstention behavior, incumbent method, and measurable acceptance criteria. The source/data owner and applicable privacy/security/legal approvers must separately authorize the exact source and fields. The evaluation owner must approve the protocol in [`PREDICTIVE_EVALUATION_PROTOCOL.md`](PREDICTIVE_EVALUATION_PROTOCOL.md). Required roles and missing approvals are recorded in [`ENTRY_GATE_APPROVAL_REGISTER.md`](ENTRY_GATE_APPROVAL_REGISTER.md).
 
-**No owner approval is recorded. No source is authorized. No P2-01 implementation or production forecasting is authorized by this recommendation.**
+**No human/business owner approval is recorded and no real source is authorized.** This recommendation does not itself authorize P2-01; the separate [`OWNER_DECISION_BRIEF.md`](OWNER_DECISION_BRIEF.md) authorizes only synthetic/non-production engineering. No production forecasting, customer-data access, or real connector use is authorized.
